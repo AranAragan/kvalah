@@ -555,5 +555,10 @@
   "dev.err.modelNotFound": "Fichier GGUF introuvable : {path}",
   "dev.err.modelNotGguf": "Ce fichier n'est pas un modèle GGUF : {path}",
   "dev.err.ollamaModelNotFound": "Impossible de trouver le fichier GGUF du modèle Ollama {name}. Vérifié :\n{paths}\nChoisissez le fichier avec « Parcourir… » : Ollama stocke les modèles dans {dir} (le modèle est le plus gros fichier sha256-…).",
-  "dev.err.unsupportedArch": "llama.cpp {build} ne prend pas en charge l'architecture de ce modèle. Choisissez un autre modèle."
+  "dev.err.unsupportedArch": "llama.cpp {build} ne prend pas en charge l'architecture de ce modèle. Choisissez un autre modèle.",
+  "devices.llamaArchMismatch": "Le llama.cpp installé est compilé pour {arch}, mais ce Mac est {native} (Apple Silicon). Sous Rosetta il fonctionne sans Metal et le GPU du Mac n’est pas utilisé. Cliquez sur Télécharger pour installer la version Apple Silicon (kvalah le fait aussi tout seul au démarrage).",
+  "devices.rosetta": "kvalah tourne comme une app Intel via Rosetta. llama.cpp est quand même installé pour Apple Silicon, et la prochaine mise à jour de kvalah fera passer l’app elle-même à la version Apple Silicon. Vous pouvez aussi télécharger dès maintenant kvalah-…-mac-arm64.dmg depuis la page des versions.",
+  "dev.warn.llamaArch": "llama.cpp est compilé pour {arch}, mais ce Mac est {native} : Metal n’est pas disponible sous Rosetta. Ouvrez Appareils → Cet appareil et cliquez sur Télécharger.",
+  "dev.warn.stalled": "Le chargement du modèle n’avance plus depuis {min} min : llama-server n’écrit rien et rien n’est envoyé aux appareils. Dernières lignes du journal :\n{log}",
+  "dev.err.loadStalled": "Chargement du modèle arrêté : {min} min sans progrès (aucune nouvelle ligne de journal de llama-server, aucun trafic vers les appareils). Journal :\n{log}"
 }

@@ -550,5 +550,10 @@
   "dev.err.modelNotFound": "GGUF dosyası bulunamadı: {path}",
   "dev.err.modelNotGguf": "Bu dosya bir GGUF modeli değil: {path}",
   "dev.err.ollamaModelNotFound": "Ollama modeli {name} için GGUF dosyası bulunamadı. Denetlenen:\n{paths}\nDosyayı “Gözat…” ile seçin: Ollama modelleri {dir} içinde tutar (model, en büyük sha256-… dosyasıdır).",
-  "dev.err.unsupportedArch": "llama.cpp {build} bu modelin mimarisini desteklemiyor. Başka bir model seçin."
+  "dev.err.unsupportedArch": "llama.cpp {build} bu modelin mimarisini desteklemiyor. Başka bir model seçin.",
+  "devices.llamaArchMismatch": "Kurulu llama.cpp {arch} için derlenmiş, ancak bu Mac {native} (Apple Silicon). Rosetta altında Metal olmadan çalışır ve Mac'in GPU'su kullanılmaz. Apple Silicon sürümünü kurmak için İndir'e basın (kvalah bunu başlangıçta kendisi de yapar).",
+  "devices.rosetta": "kvalah, Rosetta üzerinden Intel uygulaması olarak çalışıyor. llama.cpp yine de Apple Silicon için kurulur ve bir sonraki kvalah güncellemesi uygulamanın kendisini de Apple Silicon sürümüne geçirir. kvalah-…-mac-arm64.dmg dosyasını sürümler sayfasından hemen de indirebilirsiniz.",
+  "dev.warn.llamaArch": "llama.cpp {arch} için derlenmiş, ancak bu Mac {native}: Rosetta altında Metal kullanılamaz. Cihazlar → Bu cihaz'ı açın ve İndir'e basın.",
+  "dev.warn.stalled": "Model yüklemesi {min} dakikadır ilerlemiyor: llama-server hiçbir şey yazmıyor ve cihazlara hiçbir şey gönderilmiyor. Son günlük satırları:\n{log}",
+  "dev.err.loadStalled": "Model yüklemesi durduruldu: {min} dakika ilerleme yok (llama-server günlüğünde yeni satır yok, cihazlara trafik yok). Günlük:\n{log}"
 }

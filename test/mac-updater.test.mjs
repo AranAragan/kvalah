@@ -139,16 +139,16 @@ test('controller: newer release outside Applications asks to move; bad checksum 
     return new Response('',{status:404});
   };
   const states=[];
-  const moved=mac.createMacUpdater({owner:'o',repo:'r',currentVersion:'0.8.1',userData,execPath:'/private/var/folders/a/T/AppTranslocation/X/d/kvalah.app/Contents/MacOS/kvalah',arch:'arm64',publish:s=>states.push(s),fetchImpl,quit:()=>{}});
+  const moved=mac.createMacUpdater({owner:'o',repo:'r',currentVersion:'0.8.1',userData,execPath:'/private/var/folders/a/T/AppTranslocation/X/d/kvalah.app/Contents/MacOS/kvalah',arch:'arm64',runningArch:'arm64',publish:s=>states.push(s),fetchImpl,quit:()=>{}});
   assert.deepEqual(await moved.check(),{available:true,version:'0.8.2',manual:true});
   assert.deepEqual(states.at(-1),{state:'available',version:'0.8.2',url:'https://github.com/o/r/releases/tag/v0.8.2',manual:true,reason:'location',progress:null});
   states.length=0;
-  const inApps=mac.createMacUpdater({owner:'o',repo:'r',currentVersion:'0.8.1',userData,execPath:'/Applications/kvalah.app/Contents/MacOS/kvalah',arch:'arm64',publish:s=>states.push(s),fetchImpl,quit:()=>{}});
+  const inApps=mac.createMacUpdater({owner:'o',repo:'r',currentVersion:'0.8.1',userData,execPath:'/Applications/kvalah.app/Contents/MacOS/kvalah',arch:'arm64',runningArch:'arm64',publish:s=>states.push(s),fetchImpl,quit:()=>{}});
   assert.deepEqual(await inApps.check(),{available:true,version:'0.8.2',manual:true});
   assert.equal(states[0].state,'downloading');assert.equal(states.at(-1).reason,'failed');
   assert.deepEqual(fs.readdirSync(path.join(userData,'updates')),[],'a bad download is deleted');
   assert.equal(inApps.install(),false,'nothing to install');
-  const same=mac.createMacUpdater({owner:'o',repo:'r',currentVersion:'0.8.2',userData,execPath:'/Applications/kvalah.app/Contents/MacOS/kvalah',arch:'arm64',publish:()=>{},fetchImpl,quit:()=>{}});
+  const same=mac.createMacUpdater({owner:'o',repo:'r',currentVersion:'0.8.2',userData,execPath:'/Applications/kvalah.app/Contents/MacOS/kvalah',arch:'arm64',runningArch:'arm64',publish:()=>{},fetchImpl,quit:()=>{}});
   assert.deepEqual(await same.check(),{available:false});
 });
 
@@ -157,7 +157,7 @@ test('controller: a failed install of the same version is not retried in a loop'
   fs.writeFileSync(path.join(userData,'updates','result.json'),JSON.stringify({ok:false,version:'0.8.2',error:'swap failed'}));
   let fetched=[];const states=[];
   const fetchImpl=async url=>{fetched.push(url);return new Response('version: 0.8.2\nfiles:\n');};
-  const u=mac.createMacUpdater({owner:'o',repo:'r',currentVersion:'0.8.1',userData,execPath:'/Applications/kvalah.app/Contents/MacOS/kvalah',arch:'arm64',publish:s=>states.push(s),fetchImpl,quit:()=>{}});
+  const u=mac.createMacUpdater({owner:'o',repo:'r',currentVersion:'0.8.1',userData,execPath:'/Applications/kvalah.app/Contents/MacOS/kvalah',arch:'arm64',runningArch:'arm64',publish:s=>states.push(s),fetchImpl,quit:()=>{}});
   await u.check();
   assert.equal(states.at(-1).reason,'failed');assert.deepEqual(fetched,['https://github.com/o/r/releases/latest/download/latest-mac.yml']);
   assert.equal(fs.existsSync(path.join(userData,'updates','result.json')),false);
@@ -166,4 +166,17 @@ test('controller: a failed install of the same version is not retried in a loop'
 test('markLaunched writes the marker the helper waits for',async()=>{
   const dir=path.join(await tempDir(),'updates');mac.markLaunched(dir,'0.8.2');
   assert.ok(fs.existsSync(path.join(dir,'launched-0.8.2')));
+});
+
+test('Rosetta: the Intel build on Apple Silicon picks the arm64 zip and switches at the same version',async()=>{
+  assert.equal(mac.nativeArch({platform:'darwin',arch:'x64',sysctl:n=>n==='sysctl.proc_translated'?'1':''}),'arm64');
+  assert.equal(mac.nativeArch({platform:'darwin',arch:'x64',sysctl:()=>'0'}),'x64');
+  assert.equal(mac.nativeArch({platform:'darwin',arch:'arm64',sysctl:()=>{throw Error('not called');}}),'arm64');
+  const fetched=[];
+  const fetchImpl=async url=>{fetched.push(url);return url.endsWith('latest-mac.yml')?new Response('version: 0.8.5\nfiles:\n'):new Response('',{status:404});};
+  const userData=await tempDir();
+  const sw=mac.createMacUpdater({owner:'o',repo:'r',currentVersion:'0.8.5',userData,execPath:'/Applications/kvalah.app/Contents/MacOS/kvalah',arch:'arm64',runningArch:'x64',publish:()=>{},fetchImpl,quit:()=>{},log:()=>{}});
+  const r=await sw.check();
+  assert.equal(r.version,'0.8.5');assert.equal(r.available,true);
+  assert.ok(fetched.includes('https://github.com/o/r/releases/download/v0.8.5/latest-mac.yml'),'went on to fetch the release for the switch');
 });

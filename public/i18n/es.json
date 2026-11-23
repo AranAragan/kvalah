@@ -555,5 +555,10 @@
   "dev.err.modelNotFound": "No se encontró el archivo GGUF: {path}",
   "dev.err.modelNotGguf": "Este archivo no es un modelo GGUF: {path}",
   "dev.err.ollamaModelNotFound": "No se encontró el archivo GGUF del modelo de Ollama {name}. Comprobado:\n{paths}\nElige el archivo con «Examinar…»: Ollama guarda los modelos en {dir} (el modelo es el archivo sha256-… más grande).",
-  "dev.err.unsupportedArch": "llama.cpp {build} no admite la arquitectura de este modelo. Elige otro modelo."
+  "dev.err.unsupportedArch": "llama.cpp {build} no admite la arquitectura de este modelo. Elige otro modelo.",
+  "devices.llamaArchMismatch": "El llama.cpp instalado está compilado para {arch}, pero este Mac es {native} (Apple Silicon). Con Rosetta funciona sin Metal y la GPU del Mac no se usa. Pulsa Descargar para instalar la versión para Apple Silicon (kvalah también lo hace solo al iniciarse).",
+  "devices.rosetta": "kvalah se está ejecutando como app para Intel mediante Rosetta. llama.cpp se instala igualmente para Apple Silicon, y la próxima actualización de kvalah cambiará la propia app a la versión para Apple Silicon. También puedes descargar ya kvalah-…-mac-arm64.dmg desde la página de versiones.",
+  "dev.warn.llamaArch": "llama.cpp está compilado para {arch}, pero este Mac es {native}: con Rosetta Metal no está disponible. Abre Dispositivos → Este dispositivo y pulsa Descargar.",
+  "dev.warn.stalled": "La carga del modelo no avanza desde hace {min} min: llama-server no escribe nada y no se envía nada a los dispositivos. Últimas líneas del registro:\n{log}",
+  "dev.err.loadStalled": "Carga del modelo detenida: {min} min sin progreso (ni líneas nuevas en el registro de llama-server ni tráfico hacia los dispositivos). Registro:\n{log}"
 }

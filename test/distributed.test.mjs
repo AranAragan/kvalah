@@ -146,3 +146,24 @@ test('devices API validation and pool preconditions',{timeout:60000},async()=>{
     assert.equal((await fetch(app.origin+'/api/devices')).status,403,'local API still needs the session token');
   }finally{await app?.stop();await model.close();}
 });
+
+test('pool: a llama-server that stops making progress ends in an error, not an endless load',{timeout:60000,skip:process.platform==='win32'},async()=>{
+  const root=await tempDir(),ws=path.join(root,'ws'),bin=path.join(root,'bin');fs.mkdirSync(ws,{recursive:true});fs.mkdirSync(bin);
+  // A stand-in llama-server: lists a CPU device, then prints one line and hangs.
+  const fake=path.join(bin,'llama-server');
+  fs.writeFileSync(fake,'#!'+process.execPath+'\nif(process.argv.includes("--list-devices")){console.log("Available devices:\\n  CPU: test (1000 MiB, 900 MiB free)");process.exit(0);}\nconsole.error("load_tensors: loading model");setInterval(()=>{},1e6);\n',{mode:0o755});
+  const gguf=path.join(root,'m.gguf');fs.writeFileSync(gguf,'GGUF');
+  const model=await mockModel(async()=>({content:'ok'}));
+  let app;
+  try{
+    app=await startApp({modelUrl:model.url,data:path.join(root,'d'),workspace:ws,env:{KVALAH_PEER_BIND:'127.0.0.1',KVALAH_DISCOVERY_PORT:String(await freePort()),KVALAH_LANG:'en',KVALAH_POOL_STALL_WARN_MS:'1500',KVALAH_POOL_STALL_STOP_MS:'4000'}});
+    assert.equal((await app.api('/api/devices/llama/path',{path:bin})).body.error,undefined);
+    const started=(await app.api('/api/devices/pool/start',{workers:[],localGpu:true,model:gguf})).body;
+    assert.equal(started.error,undefined);
+    let pool;
+    for(let i=0;i<60;i++){pool=(await app.api('/api/devices')).body.pool;if(pool.state==='error')break;await new Promise(r=>setTimeout(r,250));}
+    assert.equal(pool.state,'error');
+    assert.match(pool.error,/without progress/);assert.match(pool.error,/load_tensors: loading model/);
+    assert.ok(pool.warnings.some(w=>/made no progress/.test(w)),'warned before stopping');
+  }finally{await app?.stop();await model.close();}
+});

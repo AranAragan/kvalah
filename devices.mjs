@@ -21,6 +21,7 @@ import * as llama from './llamacpp.mjs';
 const PEER_HEADER='x-kvalah-token';
 const OLLAMA_PATHS=new Set(['api/tags','api/show','api/ps','api/chat','api/version']);
 const OPENAI_PATHS=new Set(['models','chat/completions']);
+const STALL_WARN_MS=Number(process.env.KVALAH_POOL_STALL_WARN_MS)||180000,STALL_STOP_MS=Number(process.env.KVALAH_POOL_STALL_STOP_MS)||600000;
 const deviceKindLocal=name=>llama.deviceKind(name)!=='rpc';
 const freeLocalPort=()=>new Promise((resolve,reject)=>{const s=net.createServer();s.once('error',reject);s.listen(0,'127.0.0.1',()=>{const p=s.address().port;s.close(()=>resolve(p));});});
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -317,23 +318,36 @@ export async function createDevices({dataDir,version,getLocalBackend,localModels
       if(rpcDevices.length<rpc.length){const failed=pool.tunnels.find(x=>x.t.stats.lastError);throw Error(tr('dev.err.unreachable',{name:failed?.name||names[rpcDevices.length]||'?'})+(failed?' ('+failed.t.stats.lastError+')':''));}
       pool.devices=llama.poolDeviceRows(probeResult.devices,{names,selfName:state.name,localGpu});
       // This computer's GPU was asked for but llama.cpp sees none (e.g. no Metal on a Mac, CPU-only build).
+      if(localGpu&&l.archMismatch)pool.warnings.push(tr('dev.warn.llamaArch',{arch:l.arch,native:llama.nativeArch()}));
       if(localGpu&&!pool.devices.some(d=>d.local&&d.kind==='gpu')){
         const seen=probeResult.devices.filter(d=>deviceKindLocal(d.name)).map(d=>d.name+(d.description?' ('+d.description+')':'')).join(', ')||'—';
         pool.warnings.push(process.platform==='darwin'?tr('dev.warn.noMetal',{devices:seen}):tr('dev.warn.noLocalGpu',{devices:seen}));
         log('warn','pool: no local GPU in --list-devices: '+String(probeResult.output||'').slice(-800));
       }
       pool.probe=String(probeResult.output||'').slice(-2000);
+      if(localGpu&&!pool.devices.some(d=>d.local&&d.kind==='gpu'))log('warn','llama-server --list-devices: '+pool.probe.split('\n').filter(x=>/metal|mtl|device|fail|error|blas/i.test(x)).slice(-12).join(' | ').slice(0,1500));
       pool.port=await freeLocalPort();pool.apiKey=randomBytes(24).toString('hex');
       const args=llama.llamaServerArgs({model,rpc,port:pool.port,ctx,localGpu,alias:'pool',apiKey:pool.apiKey});
       pool.state='loading';
-      const proc=llama.managedProcess(l.llamaServer,args,{onExit:s=>{if(pool.proc===proc&&pool.state!=='stopped'){pool.state='error';{const lines=proc.log(200);const log=llama.explainServerLog(lines)||s.error||('exit code '+s.exitCode);pool.error=tr('dev.err.poolExited',{log})+(lines.some(l=>/unknown model architecture/i.test(l))?'\n\n'+tr('dev.err.unsupportedArch',{build:l.build||'(custom)'}):'');}closeTunnels();onPoolStopped(poolBaseSaved);}}});
+      const proc=llama.managedProcess(l.llamaServer,args,{onLine:line=>{if(/ggml_metal|metal|vulkan|cuda|failed|error|unable|abort/i.test(line))log('warn','llama-server: '+line.slice(0,300));},onExit:s=>{if(pool.proc===proc&&pool.state!=='stopped'){pool.state='error';{const lines=proc.log(200);const log=llama.explainServerLog(lines)||s.error||('exit code '+s.exitCode);pool.error=tr('dev.err.poolExited',{log})+(lines.some(l=>/unknown model architecture/i.test(l))?'\n\n'+tr('dev.err.unsupportedArch',{build:l.build||'(custom)'}):'');}closeTunnels();onPoolStopped(poolBaseSaved);}}});
       pool.proc=proc;const poolBaseSaved=poolBase();
       waitReady(proc).catch(()=>{});
     }catch(e){closeTunnels();pool.state='error';pool.error=e.message;throw e;}
   }
   async function waitReady(proc){
-    const deadline=Date.now()+20*60*1000;
-    while(pool.proc===proc&&proc.state.running&&Date.now()<deadline){
+    // Loading prints progress and uploads tensors to the workers. No progress for 3 minutes: a warning;
+    // for 10 minutes: stop with an error instead of loading forever.
+    let lastLines=-1,lastBytes=-1,since=Date.now(),warned=false;
+    while(pool.proc===proc&&proc.state.running){
+      const bytes=pool.tunnels.reduce((n,x)=>n+(x.t.stats.bytesUp||0)+(x.t.stats.bytesDown||0),0);
+      if(proc.state.lines!==lastLines||bytes!==lastBytes){lastLines=proc.state.lines;lastBytes=bytes;since=Date.now();}
+      const idle=Date.now()-since;
+      if(!warned&&idle>STALL_WARN_MS){warned=true;pool.warnings.push(tr('dev.warn.stalled',{min:Math.max(1,Math.round(STALL_WARN_MS/60000)),log:proc.log(4).join('\n')||'—'}));log('warn','pool: no progress');}
+      if(idle>STALL_STOP_MS){
+        const msg=tr('dev.err.loadStalled',{min:Math.max(1,Math.round(STALL_STOP_MS/60000)),log:llama.explainServerLog(proc.log(200))||'—'});
+        log('error','pool: stopped after no progress');
+        const base=poolBase();pool.proc=null;proc.stop();closeTunnels();pool.state='error';pool.error=msg;pool.port=null;pool.apiKey=null;onPoolStopped(base);return;
+      }
       try{const r=await fetch('http://127.0.0.1:'+pool.port+'/health',{signal:AbortSignal.timeout(3000)});if(r.ok){pool.ctx=await actualContext();pool.state='running';return;}}catch{}
       await sleep(1000);
     }
@@ -354,12 +368,12 @@ export async function createDevices({dataDir,version,getLocalBackend,localModels
   async function snapshot(){
     if(!installedLlama&&install.state!=='downloading')await resolveLlama();
     return {
-      self:{id:state.id,name:state.name,version,platform:process.platform,arch:process.arch},
+      self:{id:state.id,name:state.name,version,platform:process.platform,arch:process.arch,nativeArch:llama.nativeArch(),translated:llama.runningTranslated()},
       share:{enabled:state.share.enabled,port:state.share.port,tasks:state.share.tasks,rpc:state.share.rpc,code:state.share.code,
         addresses:(listener?listener.listening.map(a=>({address:a.address,port:a.port})):bindAddresses().map(a=>({address:a,port:state.share.port}))),
         listening:!!listener,error:shareError,hosts:state.share.hosts.map(({hash,...h})=>h),tunnels:[...tunnels].map(t=>({host:t.host,since:t.since}))},
       rpc:{running:!!rpcProc?.state.running,error:rpcError,log:rpcProc?rpcProc.log(8):[]},
-      llama:{build:llama.LLAMA_BUILD,installed:installedLlama?{build:installedLlama.build,backend:installedLlama.backend,dir:installedLlama.dir,rpcServer:!!installedLlama.rpcServer,llamaServer:!!installedLlama.llamaServer}:null,
+      llama:{build:llama.LLAMA_BUILD,installed:installedLlama?{build:installedLlama.build,backend:installedLlama.backend,dir:installedLlama.dir,rpcServer:!!installedLlama.rpcServer,llamaServer:!!installedLlama.llamaServer,arch:installedLlama.arch||null,archMismatch:!!installedLlama.archMismatch}:null,
         path:state.llama.path,backend:state.llama.backend,supported:!!llama.pickAssets({}),install},
       discovered:discoveredList(),discoveryError,
       nodes:registry.publicList(),
@@ -416,6 +430,11 @@ export async function createDevices({dataDir,version,getLocalBackend,localModels
     throw Error('Not found');
   }
 
+  // Repair: an Intel llama.cpp on Apple Silicon (installed by kvalah's Intel build under Rosetta) has no
+  // Metal, so the Mac's GPU was never used. Re-download the native build once, in the background.
+  if(process.platform==='darwin'&&!state.llama.path)resolveLlama().then(l=>{
+    if(l?.archMismatch&&llama.pickAssets({backend:state.llama.backend||'auto'})){log('info','llama.cpp '+l.arch+' on '+llama.nativeArch()+': re-downloading the native build');return startInstall(state.llama.backend||'auto');}
+  }).catch(()=>{});
   if(state.share.enabled)applyShare().catch(e=>{shareError=e.message;});
   scheduleHealth();
   return {

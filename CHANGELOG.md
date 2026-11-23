@@ -5,6 +5,18 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.8.5] - 2026-11-23
+
+### Fixed
+- **Pool memory on Apple Silicon Macs: the Mac's GPU was never used** (“llama.cpp did not find a Metal GPU… devices: BLAS (Accelerate)”). When kvalah itself runs as the Intel build under Rosetta, it downloaded the **macOS x64** llama.cpp, and that build has no Metal backend at all: under Rosetta it lists only `BLAS: Accelerate`. Confirmed on a GitHub Apple Silicon runner (x64 build: `BLAS` only; arm64 build: `MTL0` + `BLAS`). kvalah now detects the Mac's real CPU (`sysctl.proc_translated` / `hw.optional.arm64`) and always installs the arm64 llama.cpp there (an arm64 binary runs natively even when started from a translated app).
+- An already installed Intel llama.cpp on Apple Silicon is recognised (Mach-O CPU type) and re-downloaded automatically at startup; *Devices → This device* shows the build's architecture and a warning with the *Download* button until it is fixed.
+- **Model loading could hang forever** (“Loading the model onto the devices…”, 0 MB of traffic). If llama-server prints nothing and nothing is sent to the devices for 3 minutes, the pool shows a warning with the last log lines; after 10 minutes without progress it stops with an error and the log instead of loading endlessly.
+
+### Added
+- The Mac self-updater picks the zip for the Mac's real CPU, and an Intel build running on Apple Silicon switches itself to the arm64 build of the same version (a note in *Devices → This device* explains it).
+- llama-server errors (Metal/ggml init failures, `failed to load`, etc.) and, when no local GPU is found, the relevant `--list-devices` lines are written to the journal.
+- After installing llama.cpp on macOS the quarantine attribute is cleared from its folder.
+
 ## [0.8.4] - 2026-11-23
 
 ### Fixed

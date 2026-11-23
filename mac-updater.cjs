@@ -32,8 +32,18 @@ function parseLatestYml(text){
   out.files=out.files.filter(f=>f.url).map(f=>({url:f.url,sha512:f.sha512||'',size:Number(f.size)||0}));
   return out;
 }
+// The CPU of the Mac, not of this process: the Intel build under Rosetta reports 'x64' on Apple Silicon.
+let nativeCache=null;
+function nativeArch({platform=process.platform,arch=process.arch,sysctl}={}){
+  if(platform!=='darwin'||arch!=='x64')return arch;
+  if(!sysctl&&nativeCache)return nativeCache;
+  const read=sysctl||(name=>{try{return require('node:child_process').execFileSync('/usr/sbin/sysctl',['-n',name],{encoding:'utf8',stdio:['ignore','pipe','ignore']}).trim();}catch{return '';}});
+  const r=read('sysctl.proc_translated')==='1'||read('hw.optional.arm64')==='1'?'arm64':'x64';
+  if(!sysctl)nativeCache=r;
+  return r;
+}
 // The zip (not dmg) for this CPU: kvalah-<version>-mac-<arch>.zip.
-function pickMacZip(info,arch=process.arch){
+function pickMacZip(info,arch=nativeArch()){
   const a=arch==='arm64'?'arm64':arch==='x64'?'x64':null;if(!a)return null;
   const re=new RegExp('-mac-'+a+'\\.zip$');
   return (info?.files||[]).find(f=>re.test(f.url)&&/^[\w.-]+$/.test(f.url)&&/^[A-Za-z0-9+/]{80,}={0,2}$/.test(f.sha512))||null;
@@ -178,7 +188,7 @@ async function prepareBundle(zipFile,staging,version,{log=()=>{}}={}){
   catch{log('info','signature check failed, ad-hoc signing');await run('/usr/bin/codesign',['--force','--deep','-s','-',app]);await run('/usr/bin/codesign',['--verify','--deep','--strict',app]);}
   return app;
 }
-function createMacUpdater({owner,repo,currentVersion,userData,execPath=process.execPath,arch=process.arch,publish,log=()=>{},adminPrompt=v=>'kvalah wants to install update '+v+'.',fetchImpl=fetch,quit}){
+function createMacUpdater({owner,repo,currentVersion,userData,execPath=process.execPath,arch=nativeArch(),runningArch=process.arch,publish,log=()=>{},adminPrompt=v=>'kvalah wants to install update '+v+'.',fetchImpl=fetch,quit}){
   const updates=path.join(userData,'updates');
   const bundle=bundleFromExec(execPath);
   const base=`https://github.com/${owner}/${repo}/releases`;
@@ -237,7 +247,11 @@ function createMacUpdater({owner,repo,currentVersion,userData,execPath=process.e
         if(ready)return {available:true,version:ready.version};
         const info=parseLatestYml(await text(base+'/latest/download/latest-mac.yml'));
         const {newerThan}=require('./updater.cjs');
-        if(!info.version||!/^\d+\.\d+\.\d+(-[\w.]+)?$/.test(info.version)||!newerThan(info.version,currentVersion))return {available:false};
+        // The Intel build running on Apple Silicon (Rosetta) also "updates" to the same version for arm64:
+        // under Rosetta the app is slower and llama.cpp would pick the Intel build without Metal.
+        const switchArch=arch!==runningArch&&info.version===currentVersion;
+        if(switchArch)log('info','switching from '+runningArch+' to the '+arch+' build');
+        if(!info.version||!/^\d+\.\d+\.\d+(-[\w.]+)?$/.test(info.version)||!(newerThan(info.version,currentVersion)||switchArch))return {available:false};
         try{return await prepare(info.version);}
         catch(e){log('error','mac update failed: '+String(e.message).split('\n')[0].slice(0,300));manual(info.version,'failed');return {available:true,version:info.version,manual:true};}
       }finally{busy=null;}
@@ -256,4 +270,4 @@ function createMacUpdater({owner,repo,currentVersion,userData,execPath=process.e
   return {check,install,bundle,location:()=>macInstallLocation(bundle)};
 }
 
-module.exports={prepareBundle,parseLatestYml,pickMacZip,parseSha256Sums,verifyDownload,bundleFromExec,macInstallLocation,shellQuote,helperScript,markLaunched,createMacUpdater};
+module.exports={nativeArch,prepareBundle,parseLatestYml,pickMacZip,parseSha256Sums,verifyDownload,bundleFromExec,macInstallLocation,shellQuote,helperScript,markLaunched,createMacUpdater};

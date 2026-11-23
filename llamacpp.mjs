@@ -6,7 +6,7 @@ import {createWriteStream,createReadStream} from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import {createHash} from 'node:crypto';
-import {spawn} from 'node:child_process';
+import {spawn,execFileSync} from 'node:child_process';
 import {pipeline} from 'node:stream/promises';
 import {Readable,Transform} from 'node:stream';
 
@@ -32,9 +32,33 @@ const ASSETS={
 export const BACKENDS=['auto','cpu','vulkan','cuda','metal'];
 const releaseUrl=name=>'https://github.com/ggml-org/llama.cpp/releases/download/'+LLAMA_BUILD+'/'+name;
 
+// The CPU of the machine, not of this process: kvalah's Intel build running under Rosetta on Apple
+// Silicon reports process.arch 'x64', but the macOS x64 llama.cpp build has no Metal (BLAS only), so the
+// arm64 build must be used there. Spawned arm64 binaries run natively even from a translated process.
+let nativeCache=null;
+export function nativeArch({platform=process.platform,arch=process.arch,sysctl}={}){
+  if(platform!=='darwin'||arch!=='x64')return arch;
+  const useCache=!sysctl;if(useCache&&nativeCache)return nativeCache;
+  const read=sysctl||(name=>{try{return execFileSync('/usr/sbin/sysctl',['-n',name],{encoding:'utf8',stdio:['ignore','pipe','ignore']}).trim();}catch{return '';}});
+  const result=read('sysctl.proc_translated')==='1'||read('hw.optional.arm64')==='1'?'arm64':'x64';
+  if(useCache)nativeCache=result;
+  return result;
+}
+export const runningTranslated=()=>process.platform==='darwin'&&process.arch==='x64'&&nativeArch()==='arm64';
+// CPU type of a Mach-O executable: 'arm64', 'x64', 'universal' or null.
+export async function machOArch(file){
+  let fh;
+  try{
+    fh=await fs.open(file,'r');const b=Buffer.alloc(8);await fh.read(b,0,8,0);
+    if(b.readUInt32BE(0)===0xcafebabe)return 'universal';
+    if(b.readUInt32LE(0)!==0xfeedfacf)return null;
+    const cpu=b.readUInt32LE(4);
+    return cpu===0x0100000c?'arm64':cpu===0x01000007?'x64':null;
+  }catch{return null;}finally{await fh?.close().catch(()=>{});}
+}
 // Archives for a platform/arch/backend. 'auto' = Metal on macOS, Vulkan elsewhere (it falls back
 // to the bundled CPU backend when no Vulkan driver is present).
-export function pickAssets({platform=process.platform,arch=process.arch,backend='auto'}={},assets=ASSETS){
+export function pickAssets({platform=process.platform,arch=nativeArch({platform}),backend='auto'}={},assets=ASSETS){
   const b=`llama-${LLAMA_BUILD}-bin-`;
   let want=backend==='auto'?(platform==='darwin'?'metal':'vulkan'):backend;
   let names;
@@ -262,33 +286,45 @@ export async function install({root,backend='auto',onProgress=()=>{},fetchImpl=f
       if(digest!==file.sha256)throw Error('checksum mismatch for '+file.name);
       await extract(archive,tmp);await fs.rm(archive);
     }
+    // Downloads by kvalah carry no quarantine flag, but a copy made through Finder or a browser would,
+    // and Gatekeeper then refuses the unsigned dylibs. Clearing it is harmless.
+    if(process.platform==='darwin')await new Promise(r=>spawn('/usr/bin/xattr',['-dr','com.apple.quarantine',tmp],{stdio:'ignore'}).on('exit',r).on('error',r));
     await fs.rm(dest,{recursive:true,force:true});await fs.rename(tmp,dest);
   }catch(e){await fs.rm(tmp,{recursive:true,force:true}).catch(()=>{});throw e;}
   return locate(dest,{build:plan.build,backend:plan.backend});
 }
-export async function locate(dir,meta={}){
+export async function locate(dir,meta={},{platform=process.platform,want=nativeArch()}={}){
   const rpcServer=await findBinary(dir,RPC_NAMES),llamaServer=await findBinary(dir,SERVER_NAMES);
   if(!rpcServer&&!llamaServer)return null;
-  return {dir,rpcServer,llamaServer,...meta};
+  const out={dir,rpcServer,llamaServer,...meta};
+  if(platform==='darwin'){
+    out.arch=await machOArch(llamaServer||rpcServer);
+    // An Intel build on Apple Silicon runs under Rosetta without Metal.
+    out.archMismatch=!!out.arch&&out.arch!=='universal'&&out.arch!==want;
+  }
+  return out;
 }
 // Previously installed build (if any) below root.
-export async function installed(root){
+export async function installed(root,{want=nativeArch(),platform=process.platform}={}){
   let entries;try{entries=await fs.readdir(root,{withFileTypes:true});}catch{return null;}
+  let fallback=null;
   for(const e of entries.filter(e=>e.isDirectory()&&e.name.startsWith(LLAMA_BUILD+'-')&&!e.name.endsWith('.part'))){
-    const found=await locate(path.join(root,e.name),{build:LLAMA_BUILD,backend:e.name.slice(LLAMA_BUILD.length+1)});
-    if(found)return found;
+    const found=await locate(path.join(root,e.name),{build:LLAMA_BUILD,backend:e.name.slice(LLAMA_BUILD.length+1)},{want,platform});
+    if(!found)continue;
+    if(!found.archMismatch||found.arch===undefined)return found;
+    fallback??=found;
   }
-  return null;
+  return fallback;
 }
 
 // A child process with a bounded log tail and a state the UI can show.
 export function managedProcess(file,args,{cwd=path.dirname(file),env=process.env,onExit=()=>{},onLine=()=>{}}={}){
   const lines=[];
-  const push=chunk=>{for(const l of String(chunk).split(/\r?\n/)){if(!l.trim())continue;lines.push(l.slice(0,500));onLine(l);if(lines.length>200)lines.shift();}};
+  const push=chunk=>{for(const l of String(chunk).split(/\r?\n/)){if(!l.trim())continue;lines.push(l.slice(0,500));state.lines++;onLine(l);if(lines.length>200)lines.shift();}};
   // Libraries ship next to the binaries.
   const libEnv=process.platform==='linux'?{LD_LIBRARY_PATH:[path.dirname(file),env.LD_LIBRARY_PATH].filter(Boolean).join(':')}:{};
   const child=spawn(file,args,{cwd,env:{...env,...libEnv},windowsHide:true,stdio:['ignore','pipe','pipe']});
-  const state={pid:child.pid,running:true,exitCode:null,error:''};
+  const state={pid:child.pid,running:true,exitCode:null,error:'',lines:0};
   child.stdout.on('data',push);child.stderr.on('data',push);
   child.on('error',e=>{state.running=false;state.error=e.message;onExit(state);});
   child.on('exit',code=>{state.running=false;state.exitCode=code;onExit(state);});

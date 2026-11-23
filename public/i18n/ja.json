@@ -545,5 +545,10 @@
   "dev.err.modelNotFound": "GGUF ファイルが見つかりません: {path}",
   "dev.err.modelNotGguf": "このファイルは GGUF モデルではありません: {path}",
   "dev.err.ollamaModelNotFound": "Ollama モデル {name} の GGUF ファイルが見つかりません。確認した場所:\n{paths}\n「参照…」でファイルを選んでください。Ollama はモデルを {dir} に保存します（最も大きい sha256-… ファイルがモデルです）。",
-  "dev.err.unsupportedArch": "llama.cpp {build} はこのモデルのアーキテクチャに対応していません。別のモデルを選んでください。"
+  "dev.err.unsupportedArch": "llama.cpp {build} はこのモデルのアーキテクチャに対応していません。別のモデルを選んでください。",
+  "devices.llamaArchMismatch": "インストールされている llama.cpp は {arch} 向けですが、この Mac は {native}（Apple Silicon）です。Rosetta では Metal が使えず、Mac の GPU は使われません。「ダウンロード」を押して Apple Silicon 版を入れてください（kvalah も起動時に自動で行います）。",
+  "devices.rosetta": "kvalah は Rosetta 経由で Intel アプリとして動いています。llama.cpp はそれでも Apple Silicon 版が入り、次回の kvalah 更新でアプリ自体も Apple Silicon 版に切り替わります。リリースページから kvalah-…-mac-arm64.dmg を今すぐダウンロードすることもできます。",
+  "dev.warn.llamaArch": "llama.cpp は {arch} 向けですが、この Mac は {native} です。Rosetta では Metal が使えません。「デバイス → このデバイス」を開いて「ダウンロード」を押してください。",
+  "dev.warn.stalled": "モデルの読み込みが {min} 分進んでいません。llama-server は何も出力せず、デバイスへの送信もありません。ログの最後の行:\n{log}",
+  "dev.err.loadStalled": "モデルの読み込みを停止しました: {min} 分間進捗なし（llama-server の新しいログ行もデバイスへの通信もありません）。ログ:\n{log}"
 }

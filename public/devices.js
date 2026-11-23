@@ -62,7 +62,9 @@
     }
     h+='</section><section class="dev-card"><h3 data-i18n="devices.llama"></h3><p class="field-note">'+esc(t('devices.llamaNote',{build:l.build}))+'</p>';
     const inst=l.installed;
-    h+='<p>'+dot(!!inst)+(inst?(l.path?esc(t('devices.llamaCustom',{path:l.path})):esc(t('devices.llamaInstalled',{build:inst.build,backend:inst.backend}))):'<span data-i18n="devices.llamaMissing"></span>')+'</p>';
+    h+='<p>'+dot(!!inst)+(inst?(l.path?esc(t('devices.llamaCustom',{path:l.path})):esc(t('devices.llamaInstalled',{build:inst.build,backend:inst.backend})+(inst.arch?' · '+inst.arch:''))):'<span data-i18n="devices.llamaMissing"></span>')+'</p>';
+    if(inst?.archMismatch)h+='<p class="form-error">'+esc(t('devices.llamaArchMismatch',{arch:inst.arch,native:data.self.nativeArch}))+'</p>';
+    if(data.self.translated)h+='<p class="field-note note-box">'+esc(t('devices.rosetta'))+'</p>';
     if(l.supported){
       const opts=['auto','cpu','vulkan','cuda','metal'].filter(b=>data.self.platform==='darwin'?['auto','metal'].includes(b):b!=='metal');
       h+='<div class="settings-row align-end"><label><span data-i18n="devices.llamaBackend"></span><select id="llamaBackend">'+opts.map(b=>'<option value="'+b+'"'+(l.backend===b?' selected':'')+' data-i18n="'+BACKEND_KEYS[b]+'"></option>').join('')+'</select></label><button type="button" class="secondary" id="llamaInstall" data-i18n="devices.download"'+(l.install.state==='downloading'?' disabled':'')+'></button></div>';

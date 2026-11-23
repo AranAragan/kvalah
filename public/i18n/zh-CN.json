@@ -545,5 +545,10 @@
   "dev.err.modelNotFound": "未找到 GGUF 文件：{path}",
   "dev.err.modelNotGguf": "此文件不是 GGUF 模型：{path}",
   "dev.err.ollamaModelNotFound": "找不到 Ollama 模型 {name} 的 GGUF 文件。已检查：\n{paths}\n请通过“浏览…”选择文件：Ollama 将模型保存在 {dir}（最大的 sha256-… 文件就是模型）。",
-  "dev.err.unsupportedArch": "llama.cpp {build} 不支持此模型的架构。请选择其他模型。"
+  "dev.err.unsupportedArch": "llama.cpp {build} 不支持此模型的架构。请选择其他模型。",
+  "devices.llamaArchMismatch": "已安装的 llama.cpp 是为 {arch} 构建的，而这台 Mac 是 {native}（Apple Silicon）。在 Rosetta 下它无法使用 Metal，Mac 的 GPU 不会被使用。点击“下载”安装 Apple Silicon 版本（kvalah 启动时也会自动执行）。",
+  "devices.rosetta": "kvalah 正以 Intel 应用的身份通过 Rosetta 运行。llama.cpp 仍会安装 Apple Silicon 版本，下一次 kvalah 更新也会把应用本身切换到 Apple Silicon 版本。也可以立即从发布页面下载 kvalah-…-mac-arm64.dmg。",
+  "dev.warn.llamaArch": "llama.cpp 是为 {arch} 构建的，而这台 Mac 是 {native}：在 Rosetta 下 Metal 不可用。打开“设备 → 本设备”并点击“下载”。",
+  "dev.warn.stalled": "模型加载已有 {min} 分钟没有进展：llama-server 没有任何输出，也没有向设备发送数据。日志最后几行：\n{log}",
+  "dev.err.loadStalled": "模型加载已停止：{min} 分钟没有进展（llama-server 日志没有新行，也没有发往设备的流量）。日志：\n{log}"
 }
