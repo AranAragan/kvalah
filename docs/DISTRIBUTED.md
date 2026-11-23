@@ -1,6 +1,6 @@
 # Multiple devices: Pool memory and Distribute tasks
 
-kvalah 0.8 can use other computers on your local network. Both modes work with **any number of devices**, not just two. Open **Settings → Devices** (or **kvalah → Devices…** in the desktop app menu).
+kvalah 0.8 can use other computers on your local network. Both modes work with **any number of devices**, not just two. Open **Settings → Devices** (or **kvalah → Devices…** in the desktop app menu). For a step-by-step walkthrough with troubleshooting see [Several computers: setup guide](../README.md#several-computers-setup-guide) ([на русском](../README.ru.md#несколько-компьютеров-пошаговая-настройка)).
 
 | | Pool memory | Distribute tasks |
 |---|---|---|
