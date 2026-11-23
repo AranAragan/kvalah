@@ -53,8 +53,18 @@ scoop install kvalah
 
 **Unsigned builds.** Until code signing is in place (see [Code signing policy](#code-signing-policy)):
 - Windows SmartScreen may show “Windows protected your PC” → *More info* → *Run anyway*.
-- macOS: the app is not notarized. Right-click the app → *Open*, or run `xattr -dr com.apple.quarantine /Applications/kvalah.app`.
+- macOS: the app is not notarized, see [macOS step by step](#macos-step-by-step).
 - Linux AppImage: `chmod +x kvalah-*.AppImage`.
+
+### macOS step by step
+
+1. Check your chip:  → *About This Mac*. **Apple M1/M2/M3/M4** → download `kvalah-<version>-mac-arm64.dmg`; **Intel** → `kvalah-<version>-mac-x64.dmg` from [Releases](https://github.com/AranAragan/kvalah/releases/latest).
+2. Open the `.dmg` and drag **kvalah** into **Applications**.
+3. First launch: the app is not notarized yet, so macOS says it can't verify the developer. Either:
+   - try to open kvalah once, then go to **System Settings → Privacy & Security**, scroll down and click **Open Anyway** (on macOS 14 and earlier, right-click the app → *Open* also works), or
+   - run in Terminal: `xattr -cr /Applications/kvalah.app`, then open it again.
+4. Install a model runtime, e.g. [Ollama](https://ollama.com/download), and pull a model: `ollama pull qwen2.5-coder:14b` (16 GB RAM) or `ollama pull qwen2.5-coder:7b` (8 GB RAM). kvalah finds Ollama automatically.
+5. Updates: the unsigned macOS build shows a notice with a download link; install the new `.dmg` over the old app. Chats and settings are kept.
 
 ### Updates
 
