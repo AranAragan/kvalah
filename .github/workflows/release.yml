@@ -76,8 +76,8 @@ jobs:
     needs: verify
     runs-on: macos-latest
     env:
-      # Optional (docs/SIGNING.md). Without them the app is ad-hoc signed and auto-update falls back
-      # to a "new version available" notice with a download link.
+      # Optional (docs/SIGNING.md). Without them the app is ad-hoc signed and updates itself with
+      # mac-updater.cjs (zip + latest-mac.yml below are its feed; keep publishing them).
       CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
       CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
       APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -99,6 +99,9 @@ jobs:
           done
           if [ -z "${CSC_LINK:-}" ]; then export CSC_IDENTITY_AUTO_DISCOVERY=false; fi
           npx electron-builder --mac --publish never
+      - name: Self-update smoke test (unsigned builds)
+        if: env.CSC_LINK == ''
+        run: node scripts/mac-update-smoke.mjs release
       - uses: actions/upload-artifact@v7
         with:
           name: dist-macos

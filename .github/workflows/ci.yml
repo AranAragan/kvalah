@@ -52,3 +52,22 @@ jobs:
           xvfb-run -a release/linux-unpacked/kvalah --no-sandbox
           test -f "$KVALAH_TEST_ROOT/smoke-result.json"
           head -c 600 "$KVALAH_TEST_ROOT/smoke-result.json"
+
+  mac-update:
+    name: macOS self-update smoke (unsigned build)
+    runs-on: macos-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test -- test/mac-updater.test.mjs
+      - name: Build zip (ad-hoc signed)
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npx electron-builder --mac zip --arm64 --publish never
+      - name: Update an installed copy with the real helper, open and codesign
+        run: node scripts/mac-update-smoke.mjs release

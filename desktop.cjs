@@ -130,6 +130,8 @@ async function manualUpdateCheck(){
 // The NSIS installer and Scoop create their own shortcuts; only a hand-unpacked portable copy creates them on first run.
 const managedInstall=()=>process.platform==='win32'&&(fs.existsSync(path.join(path.dirname(process.execPath),'Uninstall kvalah.exe'))||/[\\/]scoop[\\/]apps[\\/]/i.test(process.execPath));
 async function start(){
+  // macOS self-update: tells a waiting update helper that this version started (see mac-updater.cjs).
+  if(process.platform==='darwin'&&app.isPackaged&&!TEST_ROOT)require('./mac-updater.cjs').markLaunched(path.join(app.getPath('userData'),'updates'),app.getVersion());
   // app.getLocale() reflects our own --lang switch, so it only counts as a system hint when no manual choice is active.
   const locale=languagePref?.source==='user'?null:app.getLocale();
   try{systemLanguages=[...app.getPreferredSystemLanguages(),locale];}catch{systemLanguages=[locale];}
@@ -156,7 +158,7 @@ async function start(){
     try{fs.writeFileSync(languageFile(),JSON.stringify(languagePref));}catch(e){console.error('Language:',e.message);}
     installMenu();return {ok:true};
   });
-  updates=createUpdater({send:state=>win?.webContents.send('kvalah:update',state),log:updateLog,isTest:!!TEST_ROOT});
+  updates=createUpdater({send:state=>win?.webContents.send('kvalah:update',state),log:updateLog,isTest:!!TEST_ROOT,t:L});
   ipcMain.handle('kvalah:update-state',event=>{checkSender(event);return updates.getState();});
   ipcMain.handle('kvalah:update-install',event=>{checkSender(event);return updates.install();});
   ipcMain.handle('kvalah:update-open',event=>{checkSender(event);const url=updates.getState().url;if(/^https:\/\/github\.com\//.test(url))shell.openExternal(url);return true;});

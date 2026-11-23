@@ -420,9 +420,11 @@ if(window.kvalahDesktop){
     bar.append(text,action,later);$('header').after(bar);
     let update=null;
     const renderUpdate=()=>{
-      const show=update&&update.version&&localStorage.getItem('kvalah-update-dismissed')!==update.version&&(update.state==='ready'||(update.state==='available'&&update.mode==='notify'));
+      const downloading=update?.state==='downloading'&&typeof update.progress==='number'; // macOS self-update reports progress
+      const show=update&&update.version&&localStorage.getItem('kvalah-update-dismissed')!==update.version&&(update.state==='ready'||downloading||(update.state==='available'&&(update.mode==='notify'||update.manual)));
       bar.classList.toggle('hidden',!show);if(!show)return;
-      text.textContent=t('update.available',{version:update.version});
+      text.textContent=downloading?t('update.downloading',{version:update.version,percent:Math.round(update.progress*100)}):update.state==='available'&&update.reason==='location'?t('update.moveToApplications',{version:update.version}):update.state==='available'&&update.reason==='failed'?t('update.failed',{version:update.version}):t('update.available',{version:update.version});
+      action.classList.toggle('hidden',downloading);
       action.textContent=t(update.state==='ready'?'update.restart':'update.download');
       later.title=t('update.later');later.setAttribute('aria-label',t('update.later'));
     };

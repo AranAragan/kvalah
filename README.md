@@ -64,11 +64,11 @@ scoop install kvalah
    - try to open kvalah once, then go to **System Settings → Privacy & Security**, scroll down and click **Open Anyway** (on macOS 14 and earlier, right-click the app → *Open* also works), or
    - run in Terminal: `xattr -cr /Applications/kvalah.app`, then open it again.
 4. Install a model runtime, e.g. [Ollama](https://ollama.com/download), and pull a model: `ollama pull qwen2.5-coder:14b` (16 GB RAM) or `ollama pull qwen2.5-coder:7b` (8 GB RAM). kvalah finds Ollama automatically.
-5. Updates: the unsigned macOS build shows a notice with a download link; install the new `.dmg` over the old app. Chats and settings are kept.
+5. Updates: from 0.8.2 on, kvalah updates itself on macOS too. It downloads the new version in the background and shows *“Restart and install”*; the app must be in **Applications** (not opened from the disk image or Downloads), and if that folder isn't writable macOS asks for an administrator password. **Coming from 0.8.1 or older, install 0.8.2 manually once** (the `.dmg` over the old app); after that updates are automatic. Chats and settings are kept.
 
 ### Updates
 
-The installed Windows app and the Linux AppImage check GitHub Releases at startup and every 6 hours, download the update in the background and show *“Update X is available — Restart and install”*. The update is applied only when you click the button or quit the app. The portable zip, `.deb` and unsigned macOS builds only show a notice with a download link. Turn checks off in **Settings → Check for updates automatically**, or check manually in **Help → Check for updates…**.
+The installed Windows app and the Linux AppImage check GitHub Releases at startup and every 6 hours, download the update in the background and show *“Update X is available — Restart and install”*. The update is applied only when you click the button or quit the app. The unsigned macOS build (0.8.2+) does the same with its own updater: it downloads the zip for your Mac, checks its SHA-512/SHA-256, replaces `kvalah.app` in place after you click the button, relaunches it and rolls back if the new version doesn't start. The portable zip and `.deb` only show a notice with a download link. Turn checks off in **Settings → Check for updates automatically**, or check manually in **Help → Check for updates…**.
 
 ## Connect a model
 

@@ -42,6 +42,7 @@ test('all keys used in code exist, and every dictionary key is used',()=>{
   for(const f of ['server.mjs','providers.mjs','storage.mjs','devices.mjs'])add(/\btr\('([\w.]+)'/g,read(f));
   const server=read('server.mjs');add(/tr\([^()]*?\?'([\w.]+)':'([\w.]+)'/g,server);
   for(const m of server.matchAll(/tr\(\w+\?'([\w.]+)':'([\w.]+)'\)/g)){used.add(m[1]);used.add(m[2]);}
+  add(/\bt\('([\w.]+)'/g,read('updater.cjs')); // macOS administrator prompt
   const desktop=read('desktop.cjs');add(/\bL\('([\w.]+)'/g,desktop);add(/L\([^()]*?\?'([\w.]+)':'([\w.]+)'/g,desktop);
   for(const m of (app+server+desktop).matchAll(/\?'([a-z]\w*\.[\w.]+)':'([a-z]\w*\.[\w.]+)'/g)){used.add(m[1]);used.add(m[2]);}
   // Keys built from a prefix at runtime.

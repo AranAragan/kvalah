@@ -5,6 +5,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-11-23
+
+### Added
+- **Auto-update on macOS without a Developer ID.** The unsigned (ad-hoc signed) Mac build no longer just links to the release page: it downloads the zip for your CPU (arm64/x64) in the background with progress, verifies SHA-512 from `latest-mac.yml` and SHA-256 from `SHA256SUMS.txt`, unpacks it with `ditto`, removes the quarantine flag and checks the signature (ad-hoc signing it if needed), then offers *Restart and install*. A helper waits for kvalah to quit, swaps `kvalah.app` in place (asking for an administrator password only if the folder isn't writable), relaunches it, and rolls back if the new version doesn't start. Log: `~/Library/Application Support/kvalah/updates/install.log`.
+- If kvalah runs from the disk image, Downloads or App Translocation, the notice asks to move it to Applications first, with a download link.
+- CI: a macOS job builds an unsigned zip and runs the real update helper (`ditto`, `codesign`, `open`) against an installed copy.
+
+### Note
+- **macOS users on 0.8.1 or older need to install 0.8.2 manually once** (download the `.dmg` and replace the app). From 0.8.2 on, updates are automatic. Windows and Linux are unchanged.
+
 ## [0.8.1] - 2026-11-23
 
 ### Fixed

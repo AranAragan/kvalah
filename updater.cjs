@@ -1,7 +1,9 @@
 // Auto-update from GitHub Releases.
 // - "install": electron-updater downloads in the background and the app offers "Restart and install"
 //   (Windows NSIS install, Linux AppImage, macOS only when signed with a Developer ID).
-// - "notify": portable zip, .deb, unsigned macOS: no self-replacement; the app only shows a notice
+// - "mac": unsigned (ad-hoc signed) macOS builds update themselves with mac-updater.cjs: zip download,
+//   checksum, bundle swap by a helper script after quitting, relaunch (Squirrel.Mac needs a Developer ID).
+// - "notify": portable zip, .deb: no self-replacement; the app only shows a notice
 //   with a link to the release page (GitHub API, no electron-updater involved).
 // - "off": development runs, tests, KVALAH_DISABLE_UPDATES=1.
 // Loaded lazily so the pure helpers below can be unit-tested in plain Node.
@@ -36,11 +38,11 @@ function detectMode({isTest}){
   if(!appRef().isPackaged||isTest||process.env.KVALAH_DISABLE_UPDATES==='1')return 'off';
   if(process.platform==='win32')return fs.existsSync(path.join(path.dirname(process.execPath),'Uninstall kvalah.exe'))?'install':'notify';
   if(process.platform==='linux')return process.env.APPIMAGE?'install':'notify';
-  if(process.platform==='darwin')return macSignedWithDeveloperId()?'install':'notify';
+  if(process.platform==='darwin')return macSignedWithDeveloperId()?'install':process.env.KVALAH_MAC_SELF_UPDATE==='0'?'notify':'mac';
   return 'notify';
 }
 
-function createUpdater({send,log=()=>{},isTest=false}){
+function createUpdater({send,log=()=>{},isTest=false,t=(key,p)=>key}){
   const prefsFile=()=>path.join(appRef().getPath('userData'),'update.json');
   let prefs={autoCheck:true};
   try{prefs={...prefs,...JSON.parse(fs.readFileSync(prefsFile(),'utf8'))};}catch{}
@@ -48,6 +50,12 @@ function createUpdater({send,log=()=>{},isTest=false}){
   let state={state:'idle',mode,version:null,url:RELEASES_URL};
   let updater=null,timer=null,checking=null;
   const publish=next=>{state={...state,...next,mode};send(state);};
+  let mac=null;
+  if(mode==='mac'){
+    const {createMacUpdater}=require('./mac-updater.cjs');
+    mac=createMacUpdater({owner:OWNER,repo:REPO,currentVersion:appRef().getVersion(),userData:appRef().getPath('userData'),publish,log,
+      adminPrompt:version=>t('update.adminPrompt',{version}),quit:()=>appRef().quit()});
+  }
 
   function electronUpdater(){
     if(updater)return updater;
@@ -81,6 +89,7 @@ function createUpdater({send,log=()=>{},isTest=false}){
     checking=(async()=>{
       try{
         if(mode==='notify')return await checkRelease();
+        if(mode==='mac')return await mac.check();
         if(state.state==='ready')return {available:true,version:state.version};
         const result=await electronUpdater().checkForUpdates();
         const version=result?.updateInfo?.version;
@@ -104,6 +113,7 @@ function createUpdater({send,log=()=>{},isTest=false}){
   }
   const getPrefs=()=>({autoCheck:prefs.autoCheck,mode});
   function install(){
+    if(mode==='mac')return state.state==='ready'&&mac.install();
     if(mode!=='install'||state.state!=='ready')return false;
     // Silent NSIS run, then relaunch; AppImage/macOS replace the bundle and relaunch.
     setImmediate(()=>electronUpdater().quitAndInstall(true,true));
