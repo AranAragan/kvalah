@@ -500,8 +500,8 @@ async function chatTurn(req,res,input){
       const stream=backend.chat({model:conf.model,messages:outgoing,tools:nativeTools,think:caps.includes('thinking')?conf.thinking:undefined,options:{context:conf.context,maxTokens:predictTokens(conf.context),temperature:Number(conf.temperature??0.25)},format:forceFormat?toolCallSchema(toolNames):undefined,signal:run.controller.signal});
       forceFormat=false;
       for await(const event of stream){
-        if(event.type==='content'){assistant.content+=event.text;send('delta',{id:assistant.id,text:event.text});}
-        else if(event.type==='thinking'){assistant.thinking+=event.text;send('thinking',{id:assistant.id,text:event.text});}
+        if(event.type==='content'){devices.addTokens(1);assistant.content+=event.text;send('delta',{id:assistant.id,text:event.text});}
+        else if(event.type==='thinking'){devices.addTokens(1);assistant.thinking+=event.text;send('thinking',{id:assistant.id,text:event.text});}
         else if(event.type==='tool_calls')calls.push(...event.calls);
         else if(event.type==='done')last=event;
       }

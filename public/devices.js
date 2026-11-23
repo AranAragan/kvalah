@@ -40,8 +40,13 @@
   }
   function readPoolForm(){
     const q=s=>bodyEl.querySelector(s);if(!q('#poolGguf'))return poolDraft;
-    return {gguf:q('#poolGguf').value,file:q('#poolModel').value.trim(),ctx:Number(q('#poolCtx').value),localGpu:q('#poolLocal').checked,workers:[...bodyEl.querySelectorAll('[data-worker]:checked')].map(x=>x.dataset.worker)};
+    return {gguf:q('#poolGguf').value,file:q('#poolModel').value.trim(),ctx:Number(q('#poolCtx').value),localGpu:q('#poolLocal').checked,skipIgpu:q('#poolSkipIgpu')?.checked!==false,workers:[...bodyEl.querySelectorAll('[data-worker]:checked')].map(x=>x.dataset.worker)};
   }
+  const LINK_KEYS={thunderbolt:'devices.link.thunderbolt',ethernet:'devices.link.ethernet',wifi:'devices.link.wifi',vpn:'devices.link.vpn',other:'devices.link.other'};
+  const linkTag=type=>type?'<span class="link-tag link-'+esc(type)+'">'+esc(t(LINK_KEYS[type]||LINK_KEYS.other))+'</span>':'';
+  const linkStats=l=>!l?'':l.error?'<span class="error-text">'+esc(l.error)+'</span>':esc(t('devices.linkStats',{ms:l.rttMs,mbps:l.mbps}));
+  // Live use of a paired device (from its /peer/activity).
+  const peerLine=a=>{if(!a)return '';const g=(a.gpus||[])[0];return '<small class="peer-activity'+(a.net&&(a.net.up+a.net.down>2048)||a.tps>0?' busy':'')+'"><i></i>'+esc([t('activity.cpu',{n:a.cpu}),g?(g.shared?t('activity.gpuShared',{name:g.name}):t('activity.gpu',{name:g.name,used:gb(g.usedMiB),total:gb(g.totalMiB)})):'',t('activity.net',{up:kvRate(a.net?.up||0),down:kvRate(a.net?.down||0)}),a.tps?t('activity.tps',{n:a.tps}):''].filter(Boolean).join(' · '))+'</small>';};
   const dot=s=>'<span class="status-dot '+(s===true?'ok':s===false?'bad':'wait')+'"></span>';
   const sw=(id,key,note,checked)=>'<label class="switch-row"><span><strong data-i18n="'+key+'"></strong><small>'+note+'</small></span><input type="checkbox" id="'+id+'"'+(checked?' checked':'')+'></label>';
 
@@ -51,11 +56,17 @@
     h+='<div class="settings-row"><label><span data-i18n="devices.name"></span><input id="devName" value="'+esc(data.self.name)+'" maxlength="64"></label><label class="narrow"><span data-i18n="devices.port"></span><input id="sharePort" type="number" min="1024" max="65535" value="'+s.port+'"></label></div>';
     if(s.enabled){
       h+='<div class="pair-code"><div><span data-i18n="devices.code"></span><code id="pairCode">'+esc(s.code)+'</code></div><button type="button" class="secondary" id="newCode" data-i18n="devices.newCode"></button></div>';
-      h+='<p class="field-note">'+dot(s.listening)+'<span data-i18n="'+(s.listening?'devices.listening':'devices.notListening')+'"></span> · <span data-i18n="devices.addresses"></span>: '+(s.addresses.map(a=>'<code>'+esc(a.address)+':'+a.port+'</code>').join(' ')||'—')+'</p>';
+      h+='<p class="field-note">'+dot(s.listening)+'<span data-i18n="'+(s.listening?'devices.listening':'devices.notListening')+'"></span> · <span data-i18n="devices.addresses"></span>: '+(s.addresses.map(a=>'<span class="addr"><code>'+esc(a.address)+':'+a.port+'</code>'+linkTag(a.type)+'</span>').join(' ')||'—')+'</p>';
+      if(!s.addresses.some(a=>a.type==='thunderbolt'))h+='<p class="field-note" data-i18n="devices.tbHint"></p>';
       if(s.error)h+='<p class="form-error">'+esc(s.error)+'</p>';
       h+='<label class="check-row"><input type="checkbox" id="shareTasks"'+(s.tasks?' checked':'')+'><span><strong data-i18n="devices.shareTasks"></strong><small>'+esc(t('devices.shareTasksNote',{backend:backendName}))+'</small></span></label>';
       h+='<label class="check-row"><input type="checkbox" id="shareRpc"'+(s.rpc?' checked':'')+'><span><strong data-i18n="devices.shareRpc"></strong><small data-i18n="devices.shareRpcNote"></small></span></label>';
-      if(s.rpc)h+='<p class="field-note">'+dot(data.rpc.running)+'<span data-i18n="'+(data.rpc.running?'devices.rpcRunning':'devices.rpcStopped')+'"></span>'+(data.rpc.error?' — <span class="error-text">'+esc(data.rpc.error)+'</span>':'')+'</p>';
+      if(s.rpc){
+        h+='<p class="field-note">'+dot(data.rpc.running)+'<span data-i18n="'+(data.rpc.running?'devices.rpcRunning':'devices.rpcStopped')+'"></span>'+(data.rpc.error?' — <span class="error-text">'+esc(data.rpc.error)+'</span>':'')+'</p>';
+        const gpus=data.rpc.devices||[];
+        if(gpus.length)h+='<p class="field-note">'+esc(t('devices.rpcLent'))+': '+gpus.map(g=>'<span class="addr">'+esc(g.description||g.name)+' <span class="badge'+(g.lent?' ok':'')+'">'+esc(t(g.lent?'devices.inUse':'devices.notUsed'))+'</span></span>').join(' ')+'</p>';
+        if(data.self.platform!=='darwin')h+='<label class="check-row"><input type="checkbox" id="shareRpcIgpu"'+(s.rpcIgpu?' checked':'')+'><span><strong data-i18n="devices.rpcIgpu"></strong><small data-i18n="devices.rpcIgpuNote"></small></span></label>';
+      }
       h+='<h4 data-i18n="devices.hosts"></h4>';
       h+=s.hosts.length?'<ul class="dev-list">'+s.hosts.map(x=>'<li><span><strong>'+esc(x.name)+'</strong><small>'+esc(x.address||'')+' · '+esc(t('devices.lastSeen',{time:when(x.lastSeen)}))+'</small></span><button type="button" class="secondary small" data-revoke="'+esc(x.id)+'" data-i18n="devices.revoke"></button></li>').join('')+'</ul>':'<p class="field-note" data-i18n="devices.noHosts"></p>';
       h+='<p class="field-note note-box">'+esc(t('devices.firewall',{port:s.port}))+'</p>';
@@ -77,7 +88,8 @@
   function nodeRow(n){
     const s=n.status||{},models=s.models||[];
     const kindKey={kvalah:'devices.kind.kvalah',ollama:'devices.kind.ollama',openai:'devices.kind.openai'}[n.kind];
-    let h='<li class="node-row" data-node="'+esc(n.id)+'"><div class="node-main">'+dot(s.online)+'<span><strong>'+esc(n.name)+'</strong><small>'+esc(t(kindKey))+' · '+esc(n.url.replace(/^https?:\/\//,''))+'</small></span>';
+    const other=(n.links||[]).filter(l=>l.url!==n.url);
+    let h='<li class="node-row" data-node="'+esc(n.id)+'"><div class="node-main">'+dot(s.online)+'<span><strong>'+esc(n.name)+'</strong><small>'+esc(t(kindKey))+' · '+esc(n.url.replace(/^https?:\/\//,''))+' '+linkTag(n.kind==='kvalah'?n.link||'other':'')+(other.length?' <span class="muted">'+esc(t('devices.alsoVia'))+'</span> '+other.map(l=>linkTag(l.type)).join(''):'')+(s.link?' · '+linkStats(s.link):'')+'</small>'+peerLine(data.activity?.[n.id])+'</span>';
     h+='<span class="node-stats">'+(s.online===true?esc(t('devices.online'))+(s.latencyMs!=null?' · '+esc(t('devices.latency',{ms:s.ewmaMs??s.latencyMs})):'')+' · '+esc(t('devices.modelsCount',{n:models.length}))+' · '+esc(t('devices.load',{n:s.inflight||0,max:n.maxParallel})):s.online===false?'<span class="error-text">'+esc(t('devices.offline'))+(s.error?': '+esc(s.error):'')+'</span>':esc(t('devices.checking')))+'</span></div>';
     h+='<div class="node-controls"><label class="chip"><input type="checkbox" data-field="tasks"'+(n.tasks?' checked':'')+'><span data-i18n="devices.useTasks"></span></label>';
     if(n.kind==='kvalah')h+='<label class="chip"><input type="checkbox" data-field="memory"'+(n.memory?' checked':'')+'><span data-i18n="devices.useMemory"></span></label>';
@@ -91,23 +103,25 @@
     let h='<section class="dev-card">'+sw('tasksEnabled','devices.tasks',esc(t('devices.tasksNote')),tk.enabled);
     h+='<label><span data-i18n="devices.localParallel"></span><select id="localParallel">'+[0,1,2].map(v=>'<option value="'+v+'"'+(Number(tk.localParallel)===v?' selected':'')+' data-i18n="'+LOCAL_KEYS[v]+'"></option>').join('')+'</select></label></section>';
     h+='<section class="dev-card"><div class="card-head"><h3 data-i18n="devices.found"></h3><button type="button" class="secondary small" id="discoverBtn" data-i18n="devices.search"></button></div>';
-    h+=data.discovered.length?'<ul class="dev-list">'+data.discovered.map(d=>'<li><span>'+dot(true)+'<strong>'+esc(d.name)+'</strong><small>'+esc(d.address)+':'+d.port+' · v'+esc(d.version)+(d.modes.tasks?' · '+esc(t('devices.useTasks')):'')+(d.modes.rpc?' · '+esc(t('devices.useMemory')):'')+'</small></span>'+(d.paired?'<span class="badge" data-i18n="devices.paired"></span>':pairTarget===d.id?'<span class="pair-inline"><input id="pairCodeInput" placeholder="'+esc(t('devices.codePlaceholder'))+'" autocomplete="off"><button type="button" class="primary small" data-pair-go="'+esc(d.address)+':'+d.port+'" data-i18n="devices.pair"></button></span>':'<button type="button" class="secondary small" data-pair="'+esc(d.id)+'" data-i18n="devices.pair"></button>')+'</li>').join('')+'</ul>':'<p class="field-note" data-i18n="devices.noneFound"></p>';
+    h+=data.discovered.length?'<ul class="dev-list">'+data.discovered.map(d=>'<li><span>'+dot(true)+'<strong>'+esc(d.name)+'</strong><small>'+esc(d.address)+':'+d.port+' '+linkTag(d.link)+((d.heard||[]).length>1?' '+(d.heard.filter(x=>x.address!==d.address).map(x=>linkTag(x.type)).join('')):'')+' · v'+esc(d.version)+(d.modes.tasks?' · '+esc(t('devices.useTasks')):'')+(d.modes.rpc?' · '+esc(t('devices.useMemory')):'')+'</small></span>'+(d.paired?'<span class="badge" data-i18n="devices.paired"></span>':pairTarget===d.id?'<span class="pair-inline"><input id="pairCodeInput" placeholder="'+esc(t('devices.codePlaceholder'))+'" autocomplete="off"><button type="button" class="primary small" data-pair-go="'+esc(d.address)+':'+d.port+'" data-i18n="devices.pair"></button></span>':'<button type="button" class="secondary small" data-pair="'+esc(d.id)+'" data-i18n="devices.pair"></button>')+'</li>').join('')+'</ul>':'<p class="field-note" data-i18n="devices.noneFound"></p>';
     if(data.discoveryError)h+='<p class="form-error">'+esc(data.discoveryError)+'</p>';
     h+='</section><section class="dev-card"><h3 data-i18n="devices.addManual"></h3><div class="settings-row align-end"><label class="narrow"><span data-i18n="devices.kind"></span><select id="addKind"><option value="kvalah" data-i18n="devices.kind.kvalah"></option><option value="ollama" data-i18n="devices.kind.ollama"></option><option value="openai" data-i18n="devices.kind.openai"></option></select></label><label><span data-i18n="devices.address"></span><input id="addAddress" placeholder="192.168.1.20:47317"></label><label><span id="addSecretLabel" data-i18n="devices.secretCode"></span><input id="addSecret" autocomplete="off"></label><button type="button" class="primary" id="addBtn" data-i18n="devices.add"></button></div><p class="field-note hidden" id="ollamaNote" data-i18n="devices.ollamaNote"></p></section>';
-    h+='<section class="dev-card"><div class="card-head"><h3 data-i18n="devices.list"></h3><button type="button" class="secondary small" id="checkBtn" data-i18n="devices.checkNow"></button></div>';
+    h+='<section class="dev-card"><div class="card-head"><h3 data-i18n="devices.list"></h3><span><button type="button" class="secondary small" id="measureBtn" data-i18n="devices.measure"></button> <button type="button" class="secondary small" id="checkBtn" data-i18n="devices.checkNow"></button></span></div>';
     h+=data.nodes.length?'<ul class="dev-list nodes">'+data.nodes.map(nodeRow).join('')+'</ul>':'<p class="field-note" data-i18n="devices.empty"></p>';
     return h+'</section>';
   }
   function renderPool(){
     const p=data.pool,workers=data.nodes.filter(n=>n.kind==='kvalah'&&n.memory),runningish=['starting','loading','running'].includes(p.state);
     const list=gguf||[],byPath=list.find(m=>m.path===p.model);
-    const d={...(poolDraft||{gguf:p.ollamaModel||byPath?.name||'',file:p.model||'',ctx:Number(p.ctx),localGpu:p.localGpu,workers:p.workers})};
+    const d={...(poolDraft||{gguf:p.ollamaModel||byPath?.name||'',file:p.model||'',ctx:Number(p.ctx),localGpu:p.localGpu,workers:p.workers,skipIgpu:p.skipIgpu!==false})};
     const picked=list.find(m=>m.name===d.gguf);
     if(picked&&!d.file)d.file=picked.path;
     let h='<div class="warn-box"><strong data-i18n="devices.poolWarnTitle"></strong><p data-i18n="devices.poolWarn"></p></div>';
     h+='<section class="dev-card"><h3 data-i18n="devices.poolDevices"></h3><label class="check-row"><input type="checkbox" id="poolLocal"'+(d.localGpu?' checked':'')+(runningish?' disabled':'')+'><span><strong data-i18n="devices.poolLocal"></strong><small>'+esc(data.self.name)+'</small></span></label>';
-    h+=workers.length?workers.map(n=>{const ready=n.status?.info?.rpc?.running===true,busyGpu=n.status?.info?.pool?.running===true;return '<label class="check-row"><input type="checkbox" data-worker="'+esc(n.id)+'"'+(d.workers.includes(n.id)?' checked':'')+(runningish?' disabled':'')+'><span><strong>'+esc(n.name)+'</strong><small>'+dot(ready)+esc(t(ready?'devices.workerReady':'devices.workerNotReady'))+' · '+esc(n.url.replace(/^https?:\/\//,''))+'</small>'+(busyGpu?'<small class="warn-text">'+esc(t('devices.workerPoolBusy'))+'</small>':'')+'</span></label>';}).join(''):'<p class="field-note" data-i18n="devices.poolNoWorkers"></p>';
+    h+=workers.length?workers.map(n=>{const ready=n.status?.info?.rpc?.running===true,busyGpu=n.status?.info?.pool?.running===true;return '<label class="check-row"><input type="checkbox" data-worker="'+esc(n.id)+'"'+(d.workers.includes(n.id)?' checked':'')+(runningish?' disabled':'')+'><span><strong>'+esc(n.name)+'</strong><small>'+dot(ready)+esc(t(ready?'devices.workerReady':'devices.workerNotReady'))+' · '+esc(n.url.replace(/^https?:\/\//,''))+' '+linkTag(n.link||'other')+(n.status?.link?' · '+linkStats(n.status.link):'')+'</small>'+(n.link==='wifi'?'<small class="warn-text">'+esc(t('devices.wifiSlow'))+'</small>':'')+peerLine(data.activity?.[n.id])+(busyGpu?'<small class="warn-text">'+esc(t('devices.workerPoolBusy'))+'</small>':'')+'</span></label>';}).join(''):'<p class="field-note" data-i18n="devices.poolNoWorkers"></p>';
     // This computer already lends its GPU to another host's pool (rpc-server tunnels are open).
+    h+='<label class="check-row"><input type="checkbox" id="poolSkipIgpu"'+(d.skipIgpu?' checked':'')+(runningish?' disabled':'')+'><span><strong data-i18n="devices.poolSkipIgpu"></strong><small data-i18n="devices.poolSkipIgpuNote"></small></span></label>';
+    if(workers.length)h+='<div class="dialog-actions left"><button type="button" class="secondary small" id="poolMeasure" data-i18n="devices.measure"></button></div>';
     if(data.share?.tunnels?.length&&d.localGpu)h+='<p class="field-note warn-text">'+esc(t('devices.gpuLent',{hosts:[...new Set(data.share.tunnels.map(x=>x.host))].join(', ')}))+'</p>';
     h+='</section><section class="dev-card"><h3 data-i18n="devices.poolModel"></h3>';
     if(!data.llama.installed?.llamaServer)h+='<p class="form-error" data-i18n="devices.poolNeedsLlama"></p>';
@@ -132,8 +146,9 @@
     if(p.error)h+='<pre class="form-error pre">'+esc(p.error)+'</pre>';
     for(const w of p.warnings||[])h+='<p class="field-note warn-text">'+esc(w)+'</p>';
     const memText=d=>d.totalMiB>0?t(d.estimated?'devices.memoryEstimated':'devices.memory',{free:gb(d.freeMiB),total:gb(d.totalMiB)}):t('devices.memoryUnknown');
-    if(p.devices?.length)h+='<ul class="dev-list">'+p.devices.map(d=>'<li><span><strong>'+esc(d.name)+'</strong><small>'+esc(d.device)+(d.description&&d.kind!=='rpc'?' ('+esc(d.description)+')':'')+' · '+esc(memText(d))+'</small></span><span class="badge'+(d.used?' ok':'')+'">'+esc(t(d.used?'devices.inUse':'devices.notUsed'))+'</span></li>').join('')+'</ul>';
-    if(p.tunnels?.length){const up=p.tunnels.reduce((s,x)=>s+x.bytesUp,0),down=p.tunnels.reduce((s,x)=>s+x.bytesDown,0);h+='<p class="field-note">'+esc(t('devices.traffic',{up:mb(up),down:mb(down)}))+'</p>';}
+    if(p.devices?.length)h+='<ul class="dev-list">'+p.devices.map(d=>'<li><span><strong>'+esc(d.name)+'</strong><small>'+esc(d.device)+(d.description&&!/^127\.0\.0\.1:\d+$/.test(d.description)?' ('+esc(d.description)+')':'')+' · '+esc(memText(d))+(d.link?' '+linkTag(d.link):'')+'</small></span><span class="badge'+(d.used?' ok':'')+'">'+esc(t(d.used?'devices.inUse':'devices.notUsed'))+'</span></li>').join('')+'</ul>';
+    if(p.tunnels?.length){const up=p.tunnels.reduce((s,x)=>s+x.bytesUp,0),down=p.tunnels.reduce((s,x)=>s+x.bytesDown,0);h+='<p class="field-note">'+esc(t('devices.traffic',{up:mb(up),down:mb(down)}))+'</p>';
+      h+='<ul class="dev-list">'+p.tunnels.map(x=>'<li><span><strong>'+esc(x.name)+'</strong> '+linkTag(x.link)+'<small>'+esc(t('devices.traffic',{up:mb(x.bytesUp),down:mb(x.bytesDown)}))+'</small>'+peerLine(data.activity?.[x.id])+'</span></li>').join('')+'</ul>';}
     if(p.probe)h+='<details><summary data-i18n="devices.probe"></summary><pre class="pre">'+esc(p.probe)+'</pre></details>';
     if(p.log?.length)h+='<details><summary data-i18n="devices.log"></summary><pre class="pre">'+esc(p.log.join('\n'))+'</pre></details>';
     return h+'</section>';
@@ -151,6 +166,9 @@
     on('#shareEnabled','onchange',e=>share({enabled:e.target.checked}));
     on('#shareTasks','onchange',e=>share({tasks:e.target.checked}));
     on('#shareRpc','onchange',e=>share({rpc:e.target.checked}));
+    on('#shareRpcIgpu','onchange',e=>share({rpcIgpu:e.target.checked}));
+    const measure=async b=>{b.disabled=true;b.textContent=t('devices.measuring');await call('/measure',{}).catch(()=>{});};
+    on('#measureBtn','onclick',e=>measure(e.target));on('#poolMeasure','onclick',e=>{poolDraft=readPoolForm();measure(e.target);});
     on('#devName','onchange',e=>share({name:e.target.value}));
     on('#sharePort','onchange',e=>share({port:Number(e.target.value)}));
     on('#newCode','onclick',()=>call('/code',{}).catch(()=>{}));
@@ -172,12 +190,12 @@
     }
     for(const b of bodyEl.querySelectorAll('[data-remove]'))b.onclick=()=>{const n=data.nodes.find(x=>x.id===b.dataset.remove);if(confirm(t('devices.removeConfirm',{name:n?.name||''})))call('/remove',{id:b.dataset.remove}).catch(()=>{});};
     const keepPool=()=>{poolDraft=readPoolForm();};
-    for(const el of bodyEl.querySelectorAll('#poolLocal,[data-worker],#poolCtx'))el.addEventListener('change',keepPool);
+    for(const el of bodyEl.querySelectorAll('#poolLocal,[data-worker],#poolCtx,#poolSkipIgpu'))el.addEventListener('change',keepPool);
     on('#poolModel','oninput',e=>{e.target.dataset.auto='';if(e.target.value.trim())bodyEl.querySelector('#poolGguf').value='';keepPool();});
     on('#poolGguf','onchange',async e=>{await fillPath(e.target.value);keepPool();});
     on('#poolGgufReload','onclick',()=>{gguf=null;render();});
     on('#poolBrowse','onclick',async()=>{try{const f=await window.kvalahDesktop.chooseFile('gguf');if(f){const i=bodyEl.querySelector('#poolModel');i.value=f;i.dataset.auto='';bodyEl.querySelector('#poolGguf').value='';keepPool();}}catch(e){toast(e.message);}});
-    on('#poolStart','onclick',()=>{const f=readPoolForm();poolDraft=f;call('/pool/start',{workers:f.workers,localGpu:f.localGpu,model:f.file,ollamaModel:f.gguf,ctx:f.ctx}).then(()=>{poolDraft=null;render();}).catch(()=>{});});
+    on('#poolStart','onclick',()=>{const f=readPoolForm();poolDraft=f;call('/pool/start',{workers:f.workers,localGpu:f.localGpu,model:f.file,ollamaModel:f.gguf,ctx:f.ctx,skipIgpu:f.skipIgpu}).then(()=>{poolDraft=null;render();}).catch(()=>{});});
     on('#poolStop','onclick',async()=>{await call('/pool/stop',{}).catch(()=>{});try{settings=(await api('/api/state')).settings;if(window.refreshModels)refreshModels();}catch{}render();});
     on('#poolUse','onclick',async()=>{try{settings=await api('/api/devices/pool/use',{});if(window.refreshModels)refreshModels();render();toast(t('devices.poolInUse'));}catch(e){errorEl.textContent=e.message;}});
   }

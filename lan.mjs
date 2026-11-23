@@ -26,8 +26,23 @@ export const isLoopback=address=>{const a=ipv4Parts(address);return a?a[0]===127
 
 const toInt=parts=>((parts[0]<<24)>>>0)+(parts[1]<<16)+(parts[2]<<8)+parts[3];
 const toIp=n=>[n>>>24,(n>>>16)&255,(n>>>8)&255,n&255].join('.');
+// Link types, fastest first. Thunderbolt Bridge / USB4 networking (tens of Gbit/s, ~0.1 ms), wired
+// Ethernet, Wi-Fi (jittery, several ms per round trip), VPN overlays.
+export const LINK_TYPES=['thunderbolt','ethernet','wifi','vpn','other'];
+export const linkRank=type=>{const i=LINK_TYPES.indexOf(type);return i<0?LINK_TYPES.length:i;};
+// Interface type from its name, with optional OS facts ({[name]:'thunderbolt'|'wifi'|'ethernet'}) from
+// netif.mjs (networksetup on macOS, Get-NetAdapter on Windows, sysfs on Linux).
+export function interfaceType(name,address='',known={}){
+  if(known&&known[name])return known[name];
+  const n=String(name||'');
+  if(/thunderbolt|usb4|^bridge\d|^tb\d/i.test(n))return 'thunderbolt';
+  if(/wi-?fi|wlan|^wl|wireless|airport|802\.11/i.test(n))return 'wifi';
+  if(/tailscale|zerotier|^zt|^utun|wireguard|^wg\d|^tun|^tap|vpn/i.test(n)||String(address).startsWith('100.'))return 'vpn';
+  if(/^(en|eth|em|eno|ens|enp|ethernet|lan|local area)/i.test(n))return 'ethernet';
+  return 'other';
+}
 // Private, non-internal IPv4 addresses of this machine (os.networkInterfaces() shape), with their broadcast address.
-export function lanAddresses(ifaces){
+export function lanAddresses(ifaces,known={}){
   const out=[];
   for(const [name,list] of Object.entries(ifaces||{})){
     for(const i of list||[]){
@@ -35,22 +50,34 @@ export function lanAddresses(ifaces){
       if(family!=='IPv4'||i.internal||!isPrivateAddress(i.address))continue;
       const addr=ipv4Parts(i.address),mask=ipv4Parts(i.netmask)||[255,255,255,0];
       const broadcast=toIp((toInt(addr)|(~toInt(mask)>>>0))>>>0);
-      out.push({name,address:i.address,netmask:i.netmask||'255.255.255.0',broadcast});
+      out.push({name,address:i.address,netmask:i.netmask||'255.255.255.0',broadcast,type:interfaceType(name,i.address,known)});
     }
   }
   // Prefer typical home LANs (192.168/10/172) over link-local and CGNAT ranges.
-  const rank=a=>a.startsWith('169.254.')?2:a.startsWith('100.')?1:0;
-  return out.sort((x,y)=>rank(x.address)-rank(y.address));
+  // A link-local address on a Thunderbolt link is a real, fast network (two Macs on a cable get 169.254.x.x).
+  const rank=a=>a.address.startsWith('169.254.')&&a.type!=='thunderbolt'?2:a.address.startsWith('100.')?1:0;
+  return out.sort((x,y)=>rank(x)-rank(y));
 }
-export function broadcastAddresses(ifaces){
-  const set=new Set(lanAddresses(ifaces).filter(a=>!a.address.startsWith('169.254.')).map(a=>a.broadcast));
+// Every interface gets a discovery broadcast, link-local (Thunderbolt Bridge) included.
+export function broadcastAddresses(ifaces,known={}){
+  const set=new Set(lanAddresses(ifaces,known).map(a=>a.broadcast));
   if(!set.size)set.add('255.255.255.255');
   return [...set];
 }
 
 const clean=(s,max)=>String(s??'').replace(/[\u0000-\u001f\u007f<>]/g,'').trim().slice(0,max);
 export function buildAnnouncement(self){
-  return Buffer.from(JSON.stringify({kvalah:PROTOCOL,type:'announce',id:self.id,name:clean(self.name,64),port:self.port,version:clean(self.version,32),platform:clean(self.platform,16),modes:{tasks:!!self.modes?.tasks,rpc:!!self.modes?.rpc}}));
+  return Buffer.from(JSON.stringify({kvalah:PROTOCOL,type:'announce',id:self.id,name:clean(self.name,64),port:self.port,version:clean(self.version,32),platform:clean(self.platform,16),modes:{tasks:!!self.modes?.tasks,rpc:!!self.modes?.rpc},
+    links:(self.links||[]).slice(0,8).map(l=>({a:l.address,t:l.type}))}));
+}
+// The addresses a device announces for itself: [{address,type}] (private IPv4 only).
+export function parseLinks(list){
+  const out=[];
+  for(const l of Array.isArray(list)?list.slice(0,8):[]){
+    const address=String(l?.a??l?.address??''),type=String(l?.t??l?.type??'');
+    if(net.isIPv4(address)&&isPrivateAddress(address)&&!isLoopback(address))out.push({address,type:LINK_TYPES.includes(type)?type:'other'});
+  }
+  return out;
 }
 export const buildProbe=id=>Buffer.from(JSON.stringify({kvalah:PROTOCOL,type:'probe',id}));
 // Validates a UDP datagram from another kvalah instance. Returns null for anything unexpected.
@@ -65,7 +92,7 @@ export function parseAnnouncement(buffer,rinfo,selfId){
   if(data.type==='probe')return {type:'probe',id:data.id,address,replyPort:rinfo.port};
   const port=Number(data.port);
   if(!Number.isInteger(port)||port<1||port>65535)return null;
-  return {type:'announce',id:data.id,name:clean(data.name,64)||address,address,port,version:clean(data.version,32),platform:clean(data.platform,16),modes:{tasks:data.modes?.tasks===true,rpc:data.modes?.rpc===true}};
+  return {type:'announce',id:data.id,name:clean(data.name,64)||address,address,port,version:clean(data.version,32),platform:clean(data.platform,16),modes:{tasks:data.modes?.tasks===true,rpc:data.modes?.rpc===true},links:parseLinks(data.links)};
 }
 
 // "host:port", "[v6]:port", "http://host:port", or a bare host (default port).

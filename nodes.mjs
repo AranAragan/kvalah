@@ -4,6 +4,17 @@
 import {randomUUID} from 'node:crypto';
 
 export const NODE_KINDS=['kvalah','ollama','openai'];
+const LINK_TYPES=['thunderbolt','ethernet','wifi','vpn','other'];
+export function normalizeLinks(list){
+  const out=[],seen=new Set();
+  for(const l of Array.isArray(list)?list:[]){
+    const url=String(l?.url||'').replace(/\/+$/,'');
+    if(!/^http:\/\/[0-9.]+:\d+$/.test(url)||seen.has(url))continue;
+    seen.add(url);out.push({url,type:LINK_TYPES.includes(l.type)?l.type:'other'});
+    if(out.length>=8)break;
+  }
+  return out;
+}
 const clamp=(v,min,max,def)=>{const n=Number(v);return Number.isFinite(n)?Math.min(max,Math.max(min,Math.round(n))):def;};
 
 export function normalizeNode(input,previous={}){
@@ -24,6 +35,9 @@ export function normalizeNode(input,previous={}){
     memory:n.kind==='kvalah'&&n.memory===true,
     model:typeof n.model==='string'?n.model.slice(0,200):'',
     maxParallel:clamp(n.maxParallel,1,8,1),
+    // Paired kvalah devices can be reachable over several links (Thunderbolt, Ethernet, Wi-Fi).
+    links:n.kind==='kvalah'?normalizeLinks(n.links):[],
+    link:LINK_TYPES.includes(n.link)?n.link:'',
     added:Number(n.added)||Date.now()
   };
 }

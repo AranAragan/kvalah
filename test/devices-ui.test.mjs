@@ -153,3 +153,26 @@ test('Pool memory UI: empty list says why (Ollama not running, nothing in the fo
     });
   }finally{await close();}
 });
+
+test('Sidebar activity indicator: live CPU/RAM/network, idle state, click opens Devices',{skip:!chrome&&'Chrome not found',timeout:150000},async()=>{
+  const root=await tempDir(),store=path.join(root,'ollama');
+  const {app,close}=await app0({store,ollamaUrl:DEAD,root});
+  try{
+    await withBrowser(async page=>{
+      const {ev,waitFor}=await page(app);
+      await waitFor("/CPU \\d+% · RAM [\\d.]+\\/[\\d.]+ GB/.test(document.querySelector('#activityRes')?.textContent||'')");
+      assert.equal(await ev("document.querySelector('#activityRole').textContent"),'Idle');
+      assert.match(await ev("document.querySelector('#activityNet').textContent"),/↑ \d+ KB\/s ↓ \d+ KB\/s/);
+      assert.ok(await ev("document.querySelector('#activity').classList.contains('idle')"));
+      // Directly above "On your computer".
+      assert.ok(await ev("document.querySelector('#activity').nextElementSibling.classList.contains('device')"));
+      for(const theme of ['light','dark']){
+        await ev(`document.documentElement.dataset.theme='${theme}'`);
+        const color=await ev("getComputedStyle(document.querySelector('#activityRole')).color");
+        assert.notEqual(color,await ev("getComputedStyle(document.querySelector('#activity')).backgroundColor"),theme+': text is visible');
+      }
+      await ev("document.querySelector('#activity').click()");
+      await waitFor("document.querySelector('#devicesDialog').open");
+    });
+  }finally{await close();}
+});

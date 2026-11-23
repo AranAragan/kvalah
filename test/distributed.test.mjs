@@ -167,3 +167,61 @@ test('pool: a llama-server that stops making progress ends in an error, not an e
     assert.ok(pool.warnings.some(w=>/made no progress/.test(w)),'warned before stopping');
   }finally{await app?.stop();await model.close();}
 });
+
+test('links and live activity: failover to a working link, link measurement, peer activity',{timeout:60000},async()=>{
+  const root=await tempDir();
+  const model=await mockModel(async()=>({content:'ok'}));
+  const peerPort=await freePort();
+  const common={KVALAH_PEER_BIND:'127.0.0.1',KVALAH_DISCOVERY_PORT:String(await freePort()),KVALAH_DISCOVERY_TARGET:'127.0.0.1',KVALAH_LANG:'en'};
+  let a,b;
+  try{
+    b=await startApp({modelUrl:model.url,data:path.join(root,'b'),workspace:path.join(root,'wsb'),env:common});
+    a=await startApp({modelUrl:model.url,data:path.join(root,'a'),workspace:path.join(root,'wsa'),env:common});
+    const sb=(await b.api('/api/devices/share',{enabled:true,port:peerPort,name:'Worker'})).body;
+    let sa=(await a.api('/api/devices/pair',{address:'127.0.0.1:'+peerPort,code:sb.share.code})).body;
+    const id=sa.nodes[0].id,good='http://127.0.0.1:'+peerPort;
+    // Link measurement over the authenticated peer API.
+    sa=(await a.api('/api/devices/measure',{})).body;
+    const link=sa.nodes[0].status.link;
+    assert.ok(link.rttMs>=0&&link.mbps>0,JSON.stringify(link));
+    assert.equal((await fetch(good+'/peer/speedtest?bytes=10')).status,401,'speed test needs the token');
+    assert.equal((await fetch(good+'/peer/activity')).status,401,'activity needs the token');
+    // Own activity, and the worker's activity polled through the token-authenticated API.
+    await a.api('/api/devices/tasks',{enabled:true});
+    let act=(await a.api('/api/devices/activity')).body;
+    assert.ok(act.cpu>=0&&act.ram.total>0&&act.net&&Array.isArray(act.roles));
+    for(let i=0;i<20&&!act.peers?.[id];i++){await new Promise(r=>setTimeout(r,300));act=(await a.api('/api/devices/activity')).body;}
+    assert.ok(act.peers[id],'worker activity reaches the host');assert.ok(act.peers[id].ram.total>0);
+    // A faster link that does not answer (a Thunderbolt cable unplugged): the health check falls back.
+    await a.stop();a=null;
+    const file=path.join(root,'a','devices.json'),st=JSON.parse(fs.readFileSync(file,'utf8'));
+    st.nodes[0].url='http://127.0.0.2:9';st.nodes[0].link='thunderbolt';st.nodes[0].links=[{url:'http://127.0.0.2:9',type:'thunderbolt'},{url:good,type:'ethernet'}];
+    fs.writeFileSync(file,JSON.stringify(st));
+    a=await startApp({modelUrl:model.url,data:path.join(root,'a'),workspace:path.join(root,'wsa'),env:common});
+    sa=(await a.api('/api/devices/check',{})).body;
+    assert.equal(sa.nodes[0].status.online,true,sa.nodes[0].status.error);
+    assert.equal(sa.nodes[0].url,good,'switched to the link that answers');
+  }finally{await a?.stop();await b?.stop();await model.close();}
+});
+
+test('pool: a slow integrated GPU next to a discrete one gets no layers (explicit --device list)',{timeout:60000,skip:process.platform==='win32'},async()=>{
+  const root=await tempDir(),ws=path.join(root,'ws'),bin=path.join(root,'bin');fs.mkdirSync(ws,{recursive:true});fs.mkdirSync(bin);
+  const argsFile=path.join(root,'args.json');
+  fs.writeFileSync(path.join(bin,'llama-server'),'#!'+process.execPath+'\nconst fs=require("fs");if(process.argv.includes("--list-devices")){console.log("Available devices:\\n  Vulkan0: NVIDIA GeForce RTX 4060 Laptop GPU (8188 MiB, 7900 MiB free)\\n  Vulkan1: AMD Radeon 610M (RADV RAPHAEL_MENDOCINO) (7800 MiB, 7400 MiB free)");process.exit(0);}\nfs.writeFileSync('+JSON.stringify(argsFile)+',JSON.stringify(process.argv.slice(2)));setInterval(()=>{},1e6);\n',{mode:0o755});
+  const gguf=path.join(root,'m.gguf');fs.writeFileSync(gguf,'GGUF');
+  const model=await mockModel(async()=>({content:'ok'}));
+  let app;
+  try{
+    app=await startApp({modelUrl:model.url,data:path.join(root,'d'),workspace:ws,env:{KVALAH_PEER_BIND:'127.0.0.1',KVALAH_DISCOVERY_PORT:String(await freePort()),KVALAH_LANG:'en'}});
+    await app.api('/api/devices/llama/path',{path:bin});
+    const s=(await app.api('/api/devices/pool/start',{workers:[],localGpu:true,model:gguf,ctx:8192})).body;
+    assert.equal(s.error,undefined);
+    for(let i=0;i<40&&!fs.existsSync(argsFile);i++)await new Promise(r=>setTimeout(r,100));
+    const args=JSON.parse(fs.readFileSync(argsFile,'utf8'));
+    assert.equal(args[args.indexOf('--device')+1],'Vulkan0');
+    assert.deepEqual(s.pool.devices.map(d=>[d.device,d.used]),[['Vulkan0',true],['Vulkan1',false]]);
+    assert.ok(s.pool.warnings.some(w=>/Radeon 610M/.test(w)),JSON.stringify(s.pool.warnings));
+    assert.equal(s.pool.skipIgpu,true);
+    await app.api('/api/devices/pool/stop',{});
+  }finally{await app?.stop();await model.close();}
+});

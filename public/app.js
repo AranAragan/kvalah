@@ -538,4 +538,38 @@ async function init(){
     if(data.active.length)statusT('status.otherTab');
   }catch(e){status(e.message);toast(e.message);}
 }
+// Live resource indicator above "On your computer": what this device does for other devices right now.
+function kvRate(bytesPerSec){return bytesPerSec>=1048576?t('activity.mbs',{n:(bytesPerSec/1048576).toFixed(1)}):t('activity.kbs',{n:Math.round(bytesPerSec/1024)});}
+(function(){
+  const el=$('#activity');if(!el)return;
+  const spark=[];let timer=null,failures=0;
+  const gbs=b=>(b/1073741824).toFixed(1);
+  const shortGpu=n=>String(n).replace(/\((R|TM)\)/g,'').replace(/^NVIDIA\s+|GeForce\s+|\s+Laptop GPU|\s+Graphics$/g,'').replace(/\s+/g,' ').trim();
+  function roleText(a){
+    const r=a.roles||[];if(!r.length)return t('activity.idle');
+    return r.map(x=>x.kind==='host'?t(x.state==='running'?'activity.host':'activity.hostLoading',{n:x.devices+1}):x.kind==='memory'?t('activity.memoryFor',{hosts:x.hosts.join(', ')}):x.kind==='tasks'?t('activity.tasksFor',{hosts:x.hosts.join(', ')}):t('activity.distributing',{n:x.n})).join(' · ');
+  }
+  function render(a){
+    const flow=(a.net.up+a.net.down)>2048||a.tps>0;
+    spark.push(a.net.up+a.net.down+a.tps*4096);if(spark.length>30)spark.shift();
+    const max=Math.max(1,...spark),bars=$('#activitySpark');
+    if(bars.children.length!==20)bars.innerHTML='<i></i>'.repeat(20);
+    const last=spark.slice(-20);
+    [...bars.children].forEach((b,i)=>{const v=last[i-(20-last.length)]||0;b.style.height=Math.max(1,Math.round(v/max*13))+'px';});
+    el.classList.toggle('idle',!a.roles.length&&!flow);el.classList.toggle('flow',flow);
+    $('#activityRole').textContent=roleText(a);el.title=roleText(a)+' — '+t('activity.open');
+    $('#activityRes').textContent=t('activity.cpu',{n:a.cpu})+' · '+t('activity.ram',{used:gbs(a.ram.used),total:gbs(a.ram.total)});
+    const g=a.gpus||[];
+    $('#activityGpu').textContent=g.map(x=>x.shared?t('activity.gpuShared',{name:x.name}):t('activity.gpu',{name:shortGpu(x.name),used:(x.usedMiB/1024).toFixed(1),total:(x.totalMiB/1024).toFixed(1)})+(x.util!=null?' · '+x.util+'%':'')).join(' · ');
+    $('#activityGpu').hidden=!g.length;
+    $('#activityNet').textContent=t('activity.net',{up:kvRate(a.net.up),down:kvRate(a.net.down)})+(a.tps?' · '+t('activity.tps',{n:a.tps}):'');
+  }
+  async function tick(){
+    if(document.hidden||!token)return;
+    try{render(await api('/api/devices/activity'));failures=0;el.hidden=false;}catch{if(++failures>3)el.hidden=true;}
+  }
+  el.onclick=()=>{if(!busy)window.openDevices?.();else toast(t('busy.stopFirst'));};
+  timer=setInterval(tick,1000);document.addEventListener('visibilitychange',tick);
+})();
+
 init();

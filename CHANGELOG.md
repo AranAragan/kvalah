@@ -5,6 +5,23 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-23
+
+### Added
+- **Live activity indicator** in the left sidebar, above *On your computer*, on every kvalah: what this computer does right now (*Idle*, *Pool host · devices: N*, *Memory node for …*, *Running tasks for …*, *Distributing tasks*), CPU and RAM use, GPU and its memory (NVIDIA via `nvidia-smi`, AMD on Linux via sysfs, shared memory on a Mac), network ↑/↓ of the peer traffic with a pulsing dot and a small graph, and tok/s while generating. Updated every second; a click opens *Devices*. Light and dark themes, all 10 languages.
+- Workers report the same live stats over the token-authenticated API (`/peer/activity`); the host shows per-device activity in *Network devices* and in the *Pool memory* tab (per-worker traffic and load), so it is visible that work really runs on every device.
+- **Thunderbolt / USB4 networking:** Thunderbolt Bridge on macOS (`networksetup`), *USB4(TM) P2P Network Adapter* / *Thunderbolt(TM) Networking* on Windows (`Get-NetAdapter`) and `thunderbolt-net` on Linux are recognised. Every address is labelled **Thunderbolt**, **Ethernet** or **Wi-Fi**.
+- Discovery runs on all private interfaces, including link-local `169.254.x.x` (Thunderbolt cables without DHCP). The shared port starts listening on addresses that appear later (a cable plugged in) without dropping tunnels.
+- Paired devices keep all their addresses; kvalah uses the fastest link (Thunderbolt > Ethernet > Wi-Fi) and fails over to the next one when a link goes away. The link in use is shown in *Network devices* and *Pool memory*; mixed setups (some laptops on cables, others on Wi-Fi) work.
+- **Measure links**: round-trip time and throughput to every paired device (`/peer/ping`, `/peer/speedtest`), also measured when a pool starts.
+- *This device*: the list of GPUs lent to the pool and **Also lend integrated GPUs**. *Pool memory*: **Skip integrated GPUs (recommended)**.
+
+### Changed
+- **Pool speed:** integrated GPUs (e.g. AMD Radeon 610M, Intel UHD) next to a discrete GPU no longer get layers by default: workers lend only their discrete GPUs (`rpc-server -d`) and the host passes an explicit `--device` list. A computer with only an integrated GPU still uses it. Layers stay split by free memory (`-ngl 999`).
+- The pool warns when a worker is on Wi-Fi or on a slow link (> 4 ms or < 40 MB/s) and when the context is above 16K with workers.
+- Pool device rows map each `RPCn` device to its worker and GPU name (a worker with two GPUs shows two rows).
+- README (EN/RU): the *Several computers* guide got Thunderbolt setup for Mac/Windows/Linux, the indicator, link measurement, iGPU options, a speed section with expected figures and new troubleshooting rows; docs/DISTRIBUTED.md describes links, failover and live activity.
+
 ## [0.8.5] - 2026-11-23
 
 ### Fixed

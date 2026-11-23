@@ -52,6 +52,8 @@ export function createPeerListener({addresses,port,httpServer,authorizeTunnel,tu
   });
   return {
     async start(){const errors=[];for(const a of addresses){try{await listen(a);}catch(e){errors.push(a+': '+(e.code||e.message));}}if(!servers.length)throw Error(errors.join('; ')||'no LAN address to listen on');return {listening:servers.map(s=>s.address()),errors};},
+    // New interfaces (a Thunderbolt cable plugged in later) are added without dropping open tunnels.
+    async add(list){const have=new Set(servers.map(x=>x.address()?.address));const errors=[];for(const a of list)if(!have.has(a)){try{await listen(a);}catch(e){errors.push(a+': '+(e.code||e.message));}}return errors;},
     close(){for(const s of servers)s.close();for(const so of sockets)so.destroy();servers.length=0;},
     get listening(){return servers.map(s=>s.address());}
   };

@@ -64,3 +64,30 @@ button.small{padding:5px 10px;font-size:11px}
 pre.pre{white-space:pre-wrap;font-size:10px;background:var(--code);border-radius:8px;padding:9px;max-height:180px;overflow:auto}
 .error-text{color:#cf5656}.warn-text{color:#b8860b}
 details summary{font-size:11px;color:var(--muted);cursor:pointer;margin-bottom:6px}
+.activity{width:100%;text-align:left;border:1px solid var(--border);border-radius:10px;background:transparent;color:var(--text);padding:8px 10px;margin-bottom:8px;display:flex;flex-direction:column;gap:3px;cursor:pointer;font:inherit}
+.activity:hover{background:var(--hover)}
+.activity[hidden]{display:none}
+.activity-head{display:flex;align-items:center;gap:7px;min-width:0}
+.activity-head strong{font-size:10px;font-weight:550;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.activity small{font-size:10px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block}
+.activity small[hidden]{display:none}
+.activity-dot{width:6px;height:6px;border-radius:50%;background:#49aa81;flex-shrink:0;font-style:normal}
+.activity.idle .activity-dot{background:var(--muted);opacity:.6}
+.activity.flow .activity-dot{background:var(--accent);animation:kvpulse 1s ease-in-out infinite}
+.activity-spark{display:flex;align-items:flex-end;gap:1px;width:40px;height:14px;flex-shrink:0}
+.activity-spark i{flex:1;min-height:1px;border-radius:1px;background:var(--accent);opacity:.85;transition:height .3s}
+.activity.idle .activity-spark i{background:var(--muted);opacity:.45}
+@keyframes kvpulse{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 60%,transparent)}50%{box-shadow:0 0 0 4px transparent;opacity:.55}}
+@media(prefers-reduced-motion:reduce){.activity.flow .activity-dot{animation:none}}
+.link-tag{display:inline-block;font-size:9.5px;line-height:1;padding:2px 5px;border-radius:6px;margin-left:4px;border:1px solid var(--border);color:var(--muted);vertical-align:1px;font-weight:550}
+.link-thunderbolt{color:#7a5af5;border-color:#7a5af555;background:#7a5af512}
+.link-ethernet{color:#2f8f6a;border-color:#2f8f6a55;background:#2f8f6a12}
+.link-wifi{color:#c4781b;border-color:#c4781b55;background:#c4781b12}
+[data-theme=dark] .link-thunderbolt{color:#b3a2ff}
+[data-theme=dark] .link-ethernet{color:#7ddba5}
+[data-theme=dark] .link-wifi{color:#f2b766}
+.addr{display:inline-flex;align-items:center;gap:2px;margin-right:8px}
+.peer-activity{display:flex;align-items:center;gap:6px;color:var(--muted)}
+.peer-activity i{width:6px;height:6px;border-radius:50%;background:var(--muted);opacity:.6;flex-shrink:0}
+.peer-activity.busy i{background:var(--accent);opacity:1;animation:kvpulse 1s ease-in-out infinite}
+.muted{color:var(--muted)}

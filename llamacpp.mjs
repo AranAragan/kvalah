@@ -90,7 +90,7 @@ export function rpcServerArgs({port:p,host='127.0.0.1',cache=true,threads,device
   return args;
 }
 // llama-server command line. Without the local GPU, only RPC devices (RPC0..N-1 in --rpc order) get layers.
-export function llamaServerArgs({model,rpc=[],port:p,ctx=8192,localGpu=true,alias='pool',apiKey,gpuLayers=999,host='127.0.0.1'}){
+export function llamaServerArgs({model,rpc=[],port:p,ctx=8192,localGpu=true,alias='pool',apiKey,gpuLayers=999,host='127.0.0.1',devices}){
   if(typeof model!=='string'||!model.trim())throw Error('Choose a GGUF model file');
   for(const r of rpc)if(!HOST_PORT.test(r))throw Error('Invalid RPC address: '+r);
   if(!rpc.length&&!localGpu)throw Error('Select at least one device');
@@ -98,7 +98,10 @@ export function llamaServerArgs({model,rpc=[],port:p,ctx=8192,localGpu=true,alia
   // One slot (-np 1): the whole context window goes to the single agent conversation.
   const args=['-m',model,'--host',host,'--port',port(p),'-c',String(c),'-ngl',String(gpuLayers),'-np','1','--alias',alias,'--jinja'];
   if(rpc.length)args.push('--rpc',rpc.join(','));
-  if(!localGpu)args.push('--device',rpc.map((_,i)=>'RPC'+i).join(','));
+  // An explicit device list (e.g. without a slow integrated GPU) wins; layers are split over these
+  // devices in proportion to their free memory (llama.cpp's default --tensor-split).
+  if(devices?.length){for(const d of devices)if(!/^[A-Za-z][\w-]*$/.test(d))throw Error('Invalid device: '+d);args.push('--device',devices.join(','));}
+  else if(!localGpu)args.push('--device',rpc.map((_,i)=>'RPC'+i).join(','));
   if(apiKey)args.push('--api-key',apiKey);
   return args;
 }
@@ -131,13 +134,38 @@ export function unifiedMemoryEstimate(totalBytes=os.totalmem(),freeBytes=os.free
   const totalMiB=Math.floor(totalBytes*share/2**20);
   return {totalMiB,freeMiB:Math.min(totalMiB,Math.floor(freeBytes/2**20)),estimated:true};
 }
-// Local + remote devices for the pool screen. used = gets layers.
-export function poolDeviceRows(devices,{names=[],selfName='',localGpu=true,platform=process.platform,mem}={}){
+// Integrated GPUs (AMD Radeon 610M/680M/780M "Radeon Graphics", Vega, Intel UHD/Iris/Arc iGPU) share
+// slow system RAM; next to a discrete GPU they hold layers but drag the whole pool down.
+export function isIntegratedGpu(description=''){
+  const d=String(description);
+  if(/apple|nvidia|geforce|rtx|quadro|tesla/i.test(d))return false;
+  if(/radeon(\(tm\))?\s*(\d{3}m\b|graphics|vega)|vega\s*\d+|amd\s+radeon\(tm\)\s+graphics/i.test(d))return true;
+  if(/intel/i.test(d)&&/(uhd|iris|hd graphics|graphics\b)/i.test(d)&&!/arc\(tm\)?\s*a\d/i.test(d))return true;
+  return false;
+}
+// Which local GPUs to use: all of them, unless integrated ones sit next to a discrete GPU.
+export function strongGpus(devices,{skipIntegrated=true}={}){
+  const gpus=devices.filter(d=>deviceKind(d.name)==='gpu');
+  const weak=gpus.filter(d=>isIntegratedGpu(d.description));
+  const keep=skipIntegrated&&weak.length<gpus.length?gpus.filter(d=>!weak.includes(d)):gpus;
+  return {keep,skipped:gpus.filter(d=>!keep.includes(d))};
+}
+// Local + remote devices for the pool screen. used = gets layers. A worker's rpc-server exposes every
+// GPU it lends as its own RPCn device with the endpoint as description, so rows are matched by endpoint.
+export function poolDeviceRows(devices,{names=[],endpoints=[],remote=[],selfName='',localGpu=true,platform=process.platform,mem,skipped=[]}={}){
+  const seen=new Map();
   return devices.map(d=>{
     const kind=deviceKind(d.name),m=/^RPC(\d+)$/.exec(d.name);
-    let totalMiB=d.totalMiB,freeMiB=d.freeMiB,estimated=false;
+    let totalMiB=d.totalMiB,freeMiB=d.freeMiB,estimated=false,name=selfName,description=d.description||'',worker=-1;
+    if(m){
+      worker=endpoints.indexOf(description);if(worker<0)worker=Number(m[1]);
+      name=names[worker];
+      const k=seen.get(worker)||0;seen.set(worker,k+1);
+      const lent=remote[worker]?.[k];if(lent?.description)description=lent.description;
+    }
     if(kind==='gpu'&&platform==='darwin'&&!(totalMiB>0)){({totalMiB,freeMiB,estimated}=mem||unifiedMemoryEstimate());}
-    return {device:d.name,description:d.description||'',kind,name:m?names[Number(m[1])]:selfName,local:!m,used:kind==='rpc'||(localGpu&&kind==='gpu'),
+    const isSkipped=skipped.includes(d.name);
+    return {device:d.name,description,kind,name,local:!m,worker,used:kind==='rpc'||(localGpu&&kind==='gpu'&&!isSkipped),skipped:isSkipped,
       totalMiB:totalMiB>0?totalMiB:null,freeMiB:totalMiB>0?freeMiB:null,estimated};
   });
 }

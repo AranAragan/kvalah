@@ -36,7 +36,7 @@ test('LAN interfaces and broadcast addresses',()=>{
 test('discovery announcements: build/parse round trip and hostile input',()=>{
   const self={id:'aaaaaaaa-1111',name:'Desk <PC>',port:47317,version:'0.8.0',platform:'win32',modes:{tasks:true,rpc:false}};
   const r=parseAnnouncement(buildAnnouncement(self),{address:'192.168.1.30',port:47318},'other-id-1234');
-  assert.deepEqual(r,{type:'announce',id:'aaaaaaaa-1111',name:'Desk PC',address:'192.168.1.30',port:47317,version:'0.8.0',platform:'win32',modes:{tasks:true,rpc:false}});
+  assert.deepEqual(r,{type:'announce',id:'aaaaaaaa-1111',name:'Desk PC',address:'192.168.1.30',port:47317,version:'0.8.0',platform:'win32',modes:{tasks:true,rpc:false},links:[]});
   assert.equal(parseAnnouncement(buildAnnouncement(self),{address:'192.168.1.30'},'aaaaaaaa-1111'),null,'own announcement ignored');
   assert.equal(parseAnnouncement(buildAnnouncement(self),{address:'8.8.8.8'},'x'),null,'internet source ignored');
   assert.equal(parseAnnouncement(Buffer.from('{not json'),{address:'192.168.1.30'},'x'),null);
