@@ -7,7 +7,7 @@
     "architecture": {
         "64bit": {
             "url": "https://github.com/AranAragan/kvalah/releases/download/v0.8.0/kvalah-0.8.0-win-x64-portable.zip",
-            "hash": "0000000000000000000000000000000000000000000000000000000000000000"
+            "hash": "354f3b50235c59fc18dc73010cb2dcf94a7651111bc1ce925b3f859a8ea2b4bb"
         }
     },
     "shortcuts": [
