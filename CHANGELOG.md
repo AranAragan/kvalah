@@ -5,6 +5,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-23
+
+### Added
+- **Settings → Devices** (also *kvalah → Devices…* in the desktop menu): use any number of computers on your local network.
+- **Pool memory:** split one GGUF model across several devices with llama.cpp RPC, so models that don't fit on one machine can run. Choose the workers and, optionally, this computer's GPU; pick a model from the Ollama store or a `.gguf` file; kvalah starts `llama-server --rpc …`, shows per-device memory, traffic and log, and can switch the agent to the pool (OpenAI-compatible, real context size from llama-server). One click downloads the pinned prebuilt llama.cpp build (b12651, SHA-256 verified) or uses your own; mismatched builds are refused. Bigger models, not faster: Ethernet recommended.
+- **Distribute tasks:** two new agent tools, offered only while the mode is on. `parallel_tasks` runs up to 8 read-only helper agents in parallel. `batch_files` applies one instruction to up to 300 files; edits are proposed remotely and applied locally in order with a hash check, checkpoint and undo, and `verify_project` is still required. The scheduler picks the least-loaded healthy device with the model, retries failures on another device (up to 4 attempts) and falls back to this computer.
+- Node registry: paired kvalah devices, bare Ollama and OpenAI-compatible servers, with health checks, per-device model, parallelism limit, latency and failure tracking.
+- **Share this device:** pairing code (12 characters, rate-limited), 256-bit tokens stored hashed on the worker, revocable; LAN auto-discovery (UDP 47318) and manual add by `IP:port`. A single LAN port (default 47317) serves the authenticated peer API and the token-checked RPC tunnel; `ggml-rpc-server` and `llama-server` listen on `127.0.0.1` only. Cloud API keys are never lent.
+- [docs/DISTRIBUTED.md](docs/DISTRIBUTED.md): setup, security model, firewall ports and limitations.
+
+### Changed
+- Release workflow: no new `microsoft/winget-pkgs` pull request is opened while an earlier one for `AranAragan.Kvalah` is still open (repository variable `WINGET_SUBMIT=false` turns submission off). Scoop and winget manifests are still committed automatically.
+
 ## [0.7.0] - 2026-11-23
 
 First public release.
@@ -60,5 +73,6 @@ First public release.
 
 - Initial private version: Windows desktop agent for Ollama with inspect → plan → edit → verify workflow.
 
-[Unreleased]: https://github.com/AranAragan/kvalah/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/AranAragan/kvalah/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/AranAragan/kvalah/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/AranAragan/kvalah/releases/tag/v0.7.0

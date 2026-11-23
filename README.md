@@ -28,6 +28,7 @@ Big cloud agents assume a frontier model and 64K+ of context. kvalah is built fo
 - **Checkpoints and rewind:** a shadow-Git snapshot before every agent turn (your `.git` is untouched), per-edit undo with conflict detection, real diffs in the project panel.
 - **Approval modes:** *Ask*, *Auto* (read-only commands run freely) and *Full access*, plus “always allow” rules per project.
 - **Git tools:** `git_status`, `git_diff`, `git_commit` (with confirmation).
+- **Multiple devices** (any number, on your LAN): **Pool memory** splits one big GGUF model across several computers with llama.cpp RPC, so models too large for one machine still run; **Distribute tasks** runs independent sub-tasks (code search, review, per-file jobs) in parallel on other computers' models, with failover. Pairing by code, token-authenticated, LAN-only. See [docs/DISTRIBUTED.md](docs/DISTRIBUTED.md).
 - **10 UI languages** (English, Русский, Українська, Deutsch, Français, Español, Português (Brasil), 简体中文, Türkçe, 日本語), auto-detected on first launch.
 - **Auto-update** from GitHub Releases, with a quiet in-app notice — never a forced restart.
 
@@ -74,6 +75,8 @@ kvalah needs a model server running locally (or on your LAN). Open **Settings �
 - **Tool calls:** *Auto* uses native tool calls when the model supports them and the text protocol otherwise. Choose *Text protocol* for models that keep mangling the native format.
 - **Context:** agent mode needs at least 8192 tokens; 16–32K is the sweet spot for 7–32B models. For Ollama, kvalah sets `num_ctx` itself.
 - Good starting models: Qwen2.5-Coder 14B/32B, Qwen3 14B/32B, Devstral Small, GPT-OSS 20B, Mistral Small 24B.
+
+**Several computers?** Settings → **Devices** pools memory across them for a model that doesn't fit on one machine (bigger, not faster; use Ethernet), or runs agent sub-tasks in parallel on them. See [docs/DISTRIBUTED.md](docs/DISTRIBUTED.md).
 
 Optional: Git in `PATH` enables checkpoints and Git tools; `rg` (ripgrep) in `PATH` speeds up code search on large repositories.
 
@@ -128,6 +131,7 @@ This program will not transfer any information to other networked systems unless
 
 - prompts, files and tool results are sent only to the model server **you** configure (by default a server on your own computer);
 - the update check contacts GitHub (`api.github.com`, `github.com`, `objects.githubusercontent.com`) to read the latest release and download it; it sends no personal data beyond what any HTTPS request contains (IP address, app version in the User-Agent). It can be turned off in Settings;
+- **Devices** (off by default): only after you turn on *Share this device*, kvalah listens on your local network and answers discovery broadcasts. Paired devices receive the prompts and file contents of the sub-tasks you send them, and pooled model weights are transferred to the pool's workers. *Download llama.cpp* fetches the build from `github.com/ggml-org/llama.cpp`;
 - there is no telemetry, analytics or crash reporting.
 
 ## Contributing

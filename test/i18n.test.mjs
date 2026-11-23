@@ -34,12 +34,12 @@ test('every locale has exactly the keys of en, no empty values, matching placeho
 test('all keys used in code exist, and every dictionary key is used',()=>{
   const used=new Set();
   const add=(re,text)=>{for(const m of text.matchAll(re))used.add(m[1]);};
-  const app=read('public/app.js'),html=read('public/index.html');
+  const app=read('public/app.js')+'\n'+read('public/devices.js'),html=read('public/index.html');
   add(/\b(?:t|statusT)\('([\w.]+)'/g,app);
   add(/t\([^()]*?\?'([\w.]+)':'([\w.]+)'/g,app);
   for(const m of app.matchAll(/'([a-z]+[A-Z]?\w*\.[\w.]+)'/g))if(en[m[1]]!==undefined||/^(project|chat|settings|approval|status|done|tool|toolState|check|file|files|error|message|composer|mode|agent|caption|connection|device|history|trash|change|checkpoint|voice|units|stats|copy|lang|common|sidebar|header|model|models|busy|welcome|delete)\./.test(m[1]))used.add(m[1]);
   add(/data-i18n(?:-[a-z]+)?="([\w.]+)"/g,html);add(/data-i18n(?:-[a-z]+)?=\\?"([\w.]+)\\?"/g,app);add(/dataset\.i18n='([\w.]+)'/g,app);
-  for(const f of ['server.mjs','providers.mjs','storage.mjs'])add(/\btr\('([\w.]+)'/g,read(f));
+  for(const f of ['server.mjs','providers.mjs','storage.mjs','devices.mjs'])add(/\btr\('([\w.]+)'/g,read(f));
   const server=read('server.mjs');add(/tr\([^()]*?\?'([\w.]+)':'([\w.]+)'/g,server);
   for(const m of server.matchAll(/tr\(\w+\?'([\w.]+)':'([\w.]+)'\)/g)){used.add(m[1]);used.add(m[2]);}
   const desktop=read('desktop.cjs');add(/\bL\('([\w.]+)'/g,desktop);add(/L\([^()]*?\?'([\w.]+)':'([\w.]+)'/g,desktop);
@@ -56,7 +56,7 @@ test('all keys used in code exist, and every dictionary key is used',()=>{
   const unused=Object.keys(en).filter(k=>!used.has(k));
   assert.deepEqual(unused,[],'dictionary keys never used');
   // No hard-coded Cyrillic left in UI code.
-  for(const f of ['public/app.js','public/index.html','providers.mjs','storage.mjs','desktop.cjs','updater.cjs','preload.cjs'])assert.ok(!/[А-Яа-яЁё]/.test(read(f)),f+' has no hard-coded Russian');
+  for(const f of ['public/app.js','public/devices.js','public/index.html','providers.mjs','storage.mjs','desktop.cjs','updater.cjs','preload.cjs','devices.mjs','lan.mjs','nodes.mjs','scheduler.mjs','llamacpp.mjs','tunnel.mjs','subagent.mjs'])assert.ok(!/[А-Яа-яЁё]/.test(read(f)),f+' has no hard-coded Russian');
 });
 
 test('OS language matching is identical in the page, the server and the desktop shell',()=>{

@@ -20,7 +20,7 @@ export function validateCall(call){
   if(typeof args==='string'){try{args=args.trim()?looseJSON(args):{};}catch{throw Error('arguments должен быть JSON-объектом');}}
   if(args===undefined||args===null)args={};
   if(!args||typeof args!=='object'||Array.isArray(args))throw Error('arguments должен быть объектом');
-  const fields={list_files:['path'],read_file:['path'],write_file:['path','content'],run_shell:['command'],get_environment:[],request_access:['path','mode','reason'],create_project:['name'],inspect_project:[],edit_file:['path','old_text','new_text'],update_plan:['note'],verify_project:['command'],finish_task:['summary'],append_file:['path','content'],apply_patch:['patch'],search_code:['pattern'],find_files:['pattern'],outline_file:['path'],git_status:[],git_diff:[],git_commit:['message']};
+  const fields={list_files:['path'],read_file:['path'],write_file:['path','content'],run_shell:['command'],get_environment:[],request_access:['path','mode','reason'],create_project:['name'],inspect_project:[],edit_file:['path','old_text','new_text'],update_plan:['note'],verify_project:['command'],finish_task:['summary'],append_file:['path','content'],apply_patch:['patch'],search_code:['pattern'],find_files:['pattern'],outline_file:['path'],git_status:[],git_diff:[],git_commit:['message'],parallel_tasks:[],batch_files:['instruction']};
   if(!fields[fn.name])throw Error('Неизвестный инструмент: '+fn.name);
   for(const key of fields[fn.name])if(typeof args[key]!=='string')throw Error('Обязательное строковое поле: '+key);
   for(const key of ['path','cwd','glob','file'])if(args[key]!==undefined&&typeof args[key]!=='string')throw Error(key+' must be a string');
@@ -39,6 +39,8 @@ export function validateCall(call){
   if(fn.name==='update_plan'){
     if(!Array.isArray(args.steps)||!args.steps.length||args.steps.length>20||args.steps.some(s=>!s||typeof s.title!=='string'||!s.title.trim()||s.status!==undefined&&!['pending','in_progress','done'].includes(s.status)))throw Error('steps must contain 1-20 titles with pending/in_progress/done status');
   }
+  if(fn.name==='parallel_tasks'&&(!Array.isArray(args.tasks)||!args.tasks.length||args.tasks.length>8||args.tasks.some(t=>!t||typeof t.instruction!=='string'||!t.instruction.trim()||t.files!==undefined&&(!Array.isArray(t.files)||t.files.some(f=>typeof f!=='string')))))throw Error('tasks must be an array of 1-8 {title, instruction, files?}');
+  if(fn.name==='batch_files'&&(args.files!==undefined&&(!Array.isArray(args.files)||args.files.length>300||args.files.some(f=>typeof f!=='string'))||args.pattern!==undefined&&typeof args.pattern!=='string'||args.mode!==undefined&&!['report','edit'].includes(args.mode)))throw Error('files: array of up to 300 paths; pattern: glob; mode: report|edit');
   if(fn.name==='verify_project'){
     if(args.command.length>20000)throw Error('Verification command too long');
     if(!Array.isArray(args.artifacts)||args.artifacts.length>8||args.artifacts.some(a=>!a||typeof a.path!=='string'||!['file','exe'].includes(a.kind)))throw Error('artifacts must be an array of {path,kind:file|exe}');

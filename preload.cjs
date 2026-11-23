@@ -3,6 +3,7 @@ contextBridge.exposeInMainWorld('kvalahDesktop',{
   createShortcuts:()=>ipcRenderer.invoke('kvalah:shortcuts'),
   quit:()=>ipcRenderer.invoke('kvalah:quit'),
   chooseFolder:purpose=>ipcRenderer.invoke('kvalah:folder',purpose==='project'?'project':'workspace'),
+  chooseFile:purpose=>ipcRenderer.invoke('kvalah:file',purpose==='gguf'?'gguf':'any'),
   getToken:()=>ipcRenderer.invoke('kvalah:token'),
   getLanguage:()=>ipcRenderer.invoke('kvalah:language'),
   setLanguage:(language,source)=>ipcRenderer.invoke('kvalah:set-language',String(language),source==='user'?'user':'auto'),
@@ -17,7 +18,7 @@ contextBridge.exposeInMainWorld('kvalahDesktop',{
     return ()=>ipcRenderer.removeListener('kvalah:update',listener);
   },
   onAction:callback=>{
-    const listener=(_event,action)=>{if(['new-chat','settings','trash','sidebar'].includes(action)||/^language:(auto|[a-zA-Z-]{2,5})$/.test(action))callback(action);};
+    const listener=(_event,action)=>{if(['new-chat','settings','devices','trash','sidebar'].includes(action)||/^language:(auto|[a-zA-Z-]{2,5})$/.test(action))callback(action);};
     ipcRenderer.on('kvalah:action',listener);
     return ()=>ipcRenderer.removeListener('kvalah:action',listener);
   }

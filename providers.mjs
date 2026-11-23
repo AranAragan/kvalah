@@ -15,9 +15,9 @@ async function* lines(body){
 function imageMime(b64){return b64.startsWith('iVBOR')?'image/png':b64.startsWith('UklGR')?'image/webp':b64.startsWith('R0lGOD')?'image/gif':'image/jpeg';}
 const argsObject=a=>{if(a&&typeof a==='object')return a;try{return JSON.parse(a||'{}');}catch{return {};}};
 
-export function ollamaProvider(baseUrl='http://127.0.0.1:11434'){
+export function ollamaProvider(baseUrl='http://127.0.0.1:11434',{headers:extra={},label='Ollama'}={}){
   const base=baseUrl.replace(/\/+$/,'');
-  const call=(route,options={})=>request(base+route,{...options,signal:options.signal||AbortSignal.timeout(10000)},'Ollama').catch(e=>{if(e.name==='TimeoutError')throw Error(tr('prov.ollamaTimeout',{url:base}));throw e;});
+  const call=(route,options={})=>request(base+route,{...options,headers:{...extra,...options.headers},signal:options.signal||AbortSignal.timeout(10000)},label).catch(e=>{if(e.name==='TimeoutError')throw Error(tr('prov.ollamaTimeout',{url:base}));throw e;});
   return {
     kind:'ollama',label:'Ollama',base,
     async models(){const r=await call('/api/tags');if(!r.ok)throw Error(tr('prov.ollamaModels'));const data=await r.json();return (data.models||[]).map(m=>({name:m.name,size:m.size}));},
@@ -28,7 +28,7 @@ export function ollamaProvider(baseUrl='http://127.0.0.1:11434'){
       if(think!==undefined)payload.think=think;
       if(tools?.length)payload.tools=tools;
       if(format)payload.format=format;
-      const r=await request(base+'/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal:timeoutSignal(signal,10*60*1000)},'Ollama');
+      const r=await request(base+'/api/chat',{method:'POST',headers:{'Content-Type':'application/json',...extra},body:JSON.stringify(payload),signal:timeoutSignal(signal,10*60*1000)},label);
       if(!r.ok)throw Error((await r.text()).slice(0,500));
       let finished=false;
       for await(const line of lines(r.body)){
@@ -44,9 +44,9 @@ export function ollamaProvider(baseUrl='http://127.0.0.1:11434'){
   };
 }
 
-export function openaiProvider(baseUrl='http://127.0.0.1:8080/v1',apiKey=''){
+export function openaiProvider(baseUrl='http://127.0.0.1:8080/v1',apiKey='',{headers:extra={}}={}){
   const base=baseUrl.replace(/\/+$/,'').replace(/\/chat\/completions$/,'');
-  const headers=()=>({'Content-Type':'application/json',...(apiKey?{Authorization:'Bearer '+apiKey}:{})});
+  const headers=()=>({'Content-Type':'application/json',...(apiKey?{Authorization:'Bearer '+apiKey}:{}),...extra});
   async function models(){
     let r;try{r=await request(base+'/models',{headers:headers(),signal:AbortSignal.timeout(10000)},tr('prov.openaiName'));}
     catch(e){if(e.name==='TimeoutError')throw Error(tr('prov.serverTimeout',{url:base}));throw e;}

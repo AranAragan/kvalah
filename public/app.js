@@ -20,7 +20,7 @@ const icon=n=>'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="'+paths[n]+'
 for(const [selector,name] of Object.entries({'#toggleSide':'panel','#closeSide':'panel','#newIcon':'new','#searchIcon':'search','#settingsIcon':'settings','#refreshModels':'refresh','#themeToggle':'moon','#exportChat':'download','#attach':'clip','#agentIcon':'agent','#mic':'mic','#send':'arrow','#langIcon':'globe'}))$(selector).innerHTML=icon(name);
 // Provisional language until the saved choice arrives from /api/state (avoids a flash of the wrong language).
 kvI18n.setLang(localStorage.getItem('kvalah-lang')||kvI18n.match(navigator.languages?.length?navigator.languages:[navigator.language]));
-const TOOL_NAMES=['list_files','read_file','write_file','edit_file','inspect_project','update_plan','verify_project','finish_task','get_environment','request_access','search_code','find_files','outline_file','append_file','apply_patch','git_status','git_diff','git_commit'];
+const TOOL_NAMES=['list_files','read_file','write_file','edit_file','inspect_project','update_plan','verify_project','finish_task','get_environment','request_access','search_code','find_files','outline_file','append_file','apply_patch','git_status','git_diff','git_commit','parallel_tasks','batch_files'];
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let token='',chats=[],settings={},current=null,pending=[],busy=false,runId=null,agent=localStorage.getItem('kvalah-agent-mode')!=='chat',recognition=null,recording=false;
 let connectionState=null,autoScroll=true,lastPaint=0,toastTimer=null,requestController=null;
@@ -445,6 +445,7 @@ if(window.kvalahDesktop){
   window.kvalahDesktop.onAction(action=>{
     if(action==='new-chat')newChat();
     if(action==='settings')$('#openSettings').click();
+    if(action==='devices'){if(!busy)window.openDevices?.();else toast(t('busy.stopFirst'));}
     if(action==='trash'){if(!busy)showTrash();else toast(t('busy.stopFirst'));}
     if(action==='sidebar')side();
     if(action.startsWith('language:')){const lang=action.slice(9);if(lang==='auto')systemLanguage().then(l=>changeLanguage(l,'auto'));else if(kvI18n.LANGS.includes(lang))changeLanguage(lang,'user');}
@@ -500,7 +501,7 @@ async function systemLanguage(){
 // Re-renders every piece of UI text in place: no reload, current chat and running task are kept.
 function applyLanguage(lang){
   kvI18n.setLang(lang);localStorage.setItem('kvalah-lang',kvI18n.lang);
-  kvI18n.apply(document);renderContextOptions();renderLangMenu();
+  kvI18n.apply(document);renderContextOptions();renderLangMenu();window.renderDevices?.();
   projectBar.title=t('project.copyPath');projectReview.textContent=t('project.review');projectOpen.textContent=t('project.open');projectOpen.title=t('project.openHint');
   renderProject();history();renderMode();renderConnection();renderAttachments();setBusy(busy);
   window.renderUpdateNotice?.();

@@ -68,6 +68,8 @@ git commit -am "Release 0.7.1" && git tag v0.7.1 && git push && git push origin 
 
 `wingetcreate` делает форк `microsoft/winget-pkgs` в вашем аккаунте и открывает PR от вашего имени.
 
+Если в `microsoft/winget-pkgs` ещё открыт PR для `AranAragan.Kvalah` (например, первый «New package» ждёт модерации), новый PR не создаётся: шаг пишет notice и пропускает отправку, манифесты всё равно коммитятся в репозиторий. Следующий релиз после слияния отправит обычное обновление. Отключить отправку полностью — переменная репозитория `WINGET_SUBMIT=false`.
+
 ### Что сделать руками в первом PR
 
 1. В PR в `microsoft/winget-pkgs` бот попросит принять Microsoft CLA — ответьте комментарием `@microsoft-github-policy-service agree`.

@@ -101,6 +101,7 @@ function installMenu(){
     {label:'kvalah',submenu:[
       {label:L('chat.new'),accelerator:'CmdOrCtrl+N',click:()=>sendAction('new-chat')},
       {label:L('sidebar.settings'),accelerator:'CmdOrCtrl+,',click:()=>sendAction('settings')},
+      {label:L('desktop.devices'),click:()=>sendAction('devices')},
       {label:L('settings.trash'),click:()=>sendAction('trash')},
       {type:'separator'},
       {label:L('desktop.createShortcuts'),click:()=>{try{shortcuts();dialog.showMessageBox(win,{type:'info',message:L('settings.shortcutsDone'),detail:L('desktop.shortcutsDetail')});}catch(e){dialog.showErrorBox(L('desktop.shortcuts'),e.message);}}},
@@ -145,6 +146,7 @@ async function start(){
   ipcMain.handle('kvalah:shortcuts',event=>{checkSender(event);return shortcuts();});
   ipcMain.handle('kvalah:quit',event=>{checkSender(event);setTimeout(()=>app.quit(),50);return {ok:true};});
   ipcMain.handle('kvalah:folder',async(event,purpose)=>{checkSender(event);const result=await dialog.showOpenDialog(win,{title:L(purpose==='project'?'desktop.projectFolder':'desktop.workspaceFolder'),properties:['openDirectory','createDirectory']});return result.canceled?null:result.filePaths[0];});
+  ipcMain.handle('kvalah:file',async(event,purpose)=>{checkSender(event);const result=await dialog.showOpenDialog(win,{title:L('desktop.ggufFile'),properties:['openFile'],filters:purpose==='gguf'?[{name:L('desktop.ggufFilter'),extensions:['gguf']},{name:L('desktop.allFiles'),extensions:['*']}]:undefined});return result.canceled?null:result.filePaths[0];});
   // The API token is handed to the window over IPC instead of an unauthenticated HTTP endpoint.
   ipcMain.handle('kvalah:token',event=>{checkSender(event);return token;});
   ipcMain.handle('kvalah:language',event=>{checkSender(event);return {language:uiLanguage,source:languagePref?.source||'auto',system:systemLanguages};});

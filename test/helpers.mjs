@@ -20,7 +20,7 @@ export async function mockModel(handler){
     if(req.url==='/api/ps'){res.end(JSON.stringify({models:[]}));return;}
     if(req.url==='/v1/models'){res.end(JSON.stringify({data:[{id:'mock-openai'}]}));return;}
     const index=requests.filter(r=>r.url===req.url).length-1;
-    const reply=await handler(req.url,body,index);
+    let reply;try{reply=await handler(req.url,body,index);}catch(error){res.statusCode=500;res.end(JSON.stringify({error:String(error.message||error)}));return;}
     if(req.url==='/api/chat'){
       res.setHeader('Content-Type','application/x-ndjson');
       if(reply.content)for(const part of reply.content.match(/[\s\S]{1,40}/g))res.write(JSON.stringify({message:{role:'assistant',content:part},done:false})+'\n');
