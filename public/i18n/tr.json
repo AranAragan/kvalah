@@ -484,6 +484,7 @@
   "devices.chooseModel": "— seçin —",
   "devices.ggufPath": "Veya bir GGUF dosyası",
   "devices.browse": "Gözat…",
+  "devices.blobsHint": "Ollama model dosyalarını {dir} içinde tutar; en büyük sha256-… dosyası modeldir.",
   "devices.poolCtx": "Bağlam",
   "devices.poolStart": "Havuzu başlat",
   "devices.poolStop": "Havuzu durdur",
@@ -518,7 +519,7 @@
   "dev.err.tooManyAttempts": "Çok fazla yanlış kod. 10 dakika sonra tekrar deneyin.",
   "dev.err.poolRunning": "Havuz zaten çalışıyor.",
   "dev.err.selectDevice": "En az bir cihaz seçin.",
-  "dev.err.modelMissing": "Var olan bir GGUF model dosyası seçin.",
+  "dev.err.modelMissing": "Ollama'dan bir model veya bir GGUF dosyası seçin.",
   "dev.err.unreachable": "{name} cihazına ulaşılamıyor.",
   "dev.err.rpcNotRunning": "{name}: RPC sunucusu çalışmıyor. O cihazda “Bellek havuzu düğümü”nü açın.",
   "dev.err.buildMismatch": "{name} llama.cpp {build} kullanıyor; tüm cihazlarda aynı sürüm gerekir.",
@@ -528,5 +529,10 @@
   "dist.progress": "Paralel görevler: {total} görevden {done} tamamlandı",
   "dist.retry": "{device} cihazı başarısız oldu; başka bir cihazda yeniden deneniyor",
   "tool.parallel_tasks": "Paralel alt görevler",
-  "tool.batch_files": "Dosyalar paralel işleniyor"
+  "tool.batch_files": "Dosyalar paralel işleniyor",
+  "dev.err.modelNotAbsolute": "GGUF dosyasının tam yolunu girin: {path}",
+  "dev.err.modelNotFound": "GGUF dosyası bulunamadı: {path}",
+  "dev.err.modelNotGguf": "Bu dosya bir GGUF modeli değil: {path}",
+  "dev.err.ollamaModelNotFound": "Ollama modeli {name} için GGUF dosyası bulunamadı. Denetlenen:\n{paths}\nDosyayı “Gözat…” ile seçin: Ollama modelleri {dir} içinde tutar (model, en büyük sha256-… dosyasıdır).",
+  "dev.err.unsupportedArch": "llama.cpp {build} bu modelin mimarisini desteklemiyor. Başka bir model seçin."
 }

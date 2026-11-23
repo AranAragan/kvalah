@@ -10,7 +10,7 @@ import http from 'node:http';
 import {isPrivateAddress,lanAddresses,broadcastAddresses,buildAnnouncement,buildProbe,parseAnnouncement,parseHostPort,newPairingCode,normalizeCode,codesEqual,newToken,tokenHash,hashesEqual,createLimiter} from '../lan.mjs';
 import {createRegistry,normalizeNode,sameModel} from '../nodes.mjs';
 import {createScheduler,NoNodeError} from '../scheduler.mjs';
-import {pickAssets,rpcServerArgs,llamaServerArgs,parseListDevices,ollamaGgufModels,findBinary,LLAMA_BUILD} from '../llamacpp.mjs';
+import {pickAssets,rpcServerArgs,llamaServerArgs,parseListDevices,ollamaGgufModels,findBinary,LLAMA_BUILD,ollamaModelsDir,parseOllamaName,ollamaManifestPath,manifestModelBlob,resolveOllamaModel,explainServerLog} from '../llamacpp.mjs';
 import {createPeerListener,createTunnelClient} from '../tunnel.mjs';
 import {parseEdit,batchPrompt,runSubagent} from '../subagent.mjs';
 import {tempDir} from './helpers.mjs';
@@ -201,6 +201,74 @@ test('Ollama model store: GGUF blobs are found from manifests',async()=>{
   await fs.mkdir(path.join(dir,'build','bin'),{recursive:true});const exe=process.platform==='win32'?'.exe':'';
   await fs.writeFile(path.join(dir,'build','bin','ggml-rpc-server'+exe),'');
   assert.equal(await findBinary(dir,['ggml-rpc-server'+exe,'rpc-server'+exe]),path.join(dir,'build','bin','ggml-rpc-server'+exe));
+});
+
+test('Ollama store location: Windows, macOS, Linux and OLLAMA_MODELS',()=>{
+  assert.equal(ollamaModelsDir({env:{},home:'C:\\Users\\Enver',platform:'win32'}),'C:\\Users\\Enver\\.ollama\\models');
+  assert.equal(ollamaModelsDir({env:{},home:'/Users/enver',platform:'darwin'}),'/Users/enver/.ollama/models');
+  assert.equal(ollamaModelsDir({env:{},home:'/home/enver',platform:'linux'}),'/home/enver/.ollama/models');
+  assert.equal(ollamaModelsDir({env:{OLLAMA_MODELS:'D:\\AI\\ollama'},home:'C:\\Users\\Enver',platform:'win32'}),'D:\\AI\\ollama');
+  assert.equal(ollamaModelsDir({env:{OLLAMA_MODELS:'"D:\\AI\\models"'},home:'C:\\Users\\Enver',platform:'win32'}),'D:\\AI\\models');
+  assert.equal(ollamaModelsDir({env:{OLLAMA_MODELS:'%USERPROFILE%\\models'},home:'C:\\Users\\Enver',platform:'win32'}),'C:\\Users\\Enver\\models');
+  assert.equal(ollamaModelsDir({env:{OLLAMA_MODELS:'/Volumes/SSD/ollama/'},home:'/Users/enver',platform:'darwin'}),'/Volumes/SSD/ollama');
+  assert.equal(ollamaModelsDir({env:{OLLAMA_MODELS:'~/models'},home:'/Users/enver',platform:'darwin'}),'/Users/enver/models');
+  assert.equal(ollamaModelsDir({env:{OLLAMA_MODELS:'  '},home:'/Users/enver',platform:'darwin'}),'/Users/enver/.ollama/models');
+});
+
+test('Ollama model names map to manifest paths',()=>{
+  assert.deepEqual(parseOllamaName('qwen2.5-coder:14b'),{registry:'registry.ollama.ai',namespace:'library',model:'qwen2.5-coder',tag:'14b'});
+  assert.deepEqual(parseOllamaName('llama3.1'),{registry:'registry.ollama.ai',namespace:'library',model:'llama3.1',tag:'latest'});
+  assert.deepEqual(parseOllamaName('someone/tiny:q4'),{registry:'registry.ollama.ai',namespace:'someone',model:'tiny',tag:'q4'});
+  assert.deepEqual(parseOllamaName('someone/tiny'),{registry:'registry.ollama.ai',namespace:'someone',model:'tiny',tag:'latest'});
+  assert.deepEqual(parseOllamaName('hf.co/org/Model-GGUF:Q8_0'),{registry:'hf.co',namespace:'org',model:'Model-GGUF',tag:'Q8_0'});
+  assert.deepEqual(parseOllamaName('localhost:5000/ns/m'),{registry:'localhost:5000',namespace:'ns',model:'m',tag:'latest'});
+  for(const bad of ['','  ','../x','a/../../b:1',':tag'])assert.equal(parseOllamaName(bad),null,bad);
+  assert.equal(ollamaManifestPath('qwen3.5:9b-q4_K_M','C:\\Users\\Enver\\.ollama\\models','win32'),'C:\\Users\\Enver\\.ollama\\models\\manifests\\registry.ollama.ai\\library\\qwen3.5\\9b-q4_K_M');
+  assert.equal(ollamaManifestPath('qwen2.5-coder:14b','/Users/enver/.ollama/models','darwin'),'/Users/enver/.ollama/models/manifests/registry.ollama.ai/library/qwen2.5-coder/14b');
+  assert.equal(ollamaManifestPath('someone/tiny','/m','linux'),'/m/manifests/registry.ollama.ai/someone/tiny/latest');
+});
+
+test('Ollama manifests: the model layer gives the blob file',()=>{
+  const hex='e'.repeat(64);
+  assert.deepEqual(manifestModelBlob({layers:[{mediaType:'application/vnd.ollama.image.template',digest:'sha256:'+'f'.repeat(64)},{mediaType:'application/vnd.ollama.image.model',digest:'sha256:'+hex,size:5600000000}]}),{file:'sha256-'+hex,size:5600000000});
+  assert.deepEqual(manifestModelBlob(JSON.stringify({layers:[{mediaType:'application/vnd.ollama.image.model',digest:'sha256-'+hex}]})),{file:'sha256-'+hex,size:0});
+  assert.equal(manifestModelBlob({layers:[{mediaType:'application/vnd.ollama.image.projector',digest:'sha256:'+hex}]}),null);
+  assert.equal(manifestModelBlob({layers:[{mediaType:'application/vnd.ollama.image.model',digest:'sha256:../../etc'}]}),null);
+  assert.equal(manifestModelBlob({}),null);
+});
+
+test('Ollama model name resolves to its GGUF blob (manifest, missing tag, API fallback, clear error)',async()=>{
+  const dir=await tempDir(),hex='1'.repeat(64),hex2='2'.repeat(64);
+  await fs.mkdir(path.join(dir,'blobs'),{recursive:true});
+  await fs.writeFile(path.join(dir,'blobs','sha256-'+hex),Buffer.concat([Buffer.from('GGUF'),Buffer.alloc(16)]));
+  const mf=async(parts,digest)=>{const f=path.join(dir,'manifests',...parts);await fs.mkdir(path.dirname(f),{recursive:true});await fs.writeFile(f,JSON.stringify({layers:[{mediaType:'application/vnd.ollama.image.model',digest:'sha256:'+digest,size:20}]}));};
+  await mf(['registry.ollama.ai','library','qwen3.5','9b-q4_K_M'],hex);
+  await mf(['registry.ollama.ai','library','llama3.1','latest'],hex);
+  await mf(['registry.ollama.ai','enver','coder','latest'],hex);
+  await mf(['registry.ollama.ai','library','gone','1b'],hex2);
+  const blob=path.join(dir,'blobs','sha256-'+hex);
+  const noFetch=()=>{throw Error('no network');};
+  assert.equal((await resolveOllamaModel('qwen3.5:9b-q4_K_M',{dir,fetchImpl:noFetch})).path,blob);
+  assert.equal((await resolveOllamaModel('llama3.1',{dir})).path,blob);
+  assert.equal((await resolveOllamaModel('enver/coder',{dir})).path,blob);
+  // Manifest points at a missing blob: Ollama's /api/show tells where the weights are.
+  const elsewhere=path.join(dir,'other.gguf');await fs.writeFile(elsewhere,Buffer.concat([Buffer.from('GGUF'),Buffer.alloc(8)]));
+  let asked;
+  const fetchImpl=async(url,opts)=>{asked={url,body:JSON.parse(opts.body)};return {ok:true,json:async()=>({modelfile:'# Modelfile generated by "ollama show"\n# FROM gone:1b\nFROM '+elsewhere+'\nTEMPLATE x'})};};
+  const viaApi=await resolveOllamaModel('gone:1b',{dir,ollamaUrl:'http://127.0.0.1:11434/',fetchImpl});
+  assert.equal(viaApi.path,elsewhere);assert.equal(viaApi.source,'api');
+  assert.deepEqual(asked,{url:'http://127.0.0.1:11434/api/show',body:{model:'gone:1b'}});
+  await assert.rejects(resolveOllamaModel('missing:7b',{dir}),e=>{assert.deepEqual(e.tried,[path.join(dir,'manifests','registry.ollama.ai','library','missing','7b')]);return true;});
+  await assert.rejects(resolveOllamaModel('gone:1b',{dir}),e=>{assert.ok(e.tried.includes(path.join(dir,'blobs','sha256-'+hex2)));return true;});
+  await assert.rejects(resolveOllamaModel('../../x',{dir}),/Invalid Ollama model name/);
+});
+
+test('llama-server log: load errors are shown, not only the last lines',()=>{
+  const lines=['main: build = 12651','llama_model_loader: - kv 0: general.architecture str = qwen35','llama_model_load: error loading model: error loading model architecture: unknown model architecture: \'qwen35\'','llama_model_load_from_file_impl: failed to load model',...Array.from({length:10},(_,i)=>'srv  noise '+i),'main: exiting due to model loading error'];
+  const out=explainServerLog(lines);
+  assert.match(out,/unknown model architecture: 'qwen35'/);assert.match(out,/failed to load model/);assert.match(out,/exiting due to model loading error/);
+  assert.doesNotMatch(out,/general\.architecture/);
+  assert.equal(explainServerLog([]),'');
 });
 
 test('RPC tunnel: one LAN port for HTTP and token-authenticated rpc-server tunnels',async()=>{

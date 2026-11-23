@@ -479,6 +479,7 @@
   "devices.chooseModel": "— 请选择 —",
   "devices.ggufPath": "或 GGUF 文件",
   "devices.browse": "浏览…",
+  "devices.blobsHint": "Ollama 将模型文件保存在 {dir}；最大的 sha256-… 文件就是模型。",
   "devices.poolCtx": "上下文",
   "devices.poolStart": "启动内存池",
   "devices.poolStop": "停止内存池",
@@ -513,7 +514,7 @@
   "dev.err.tooManyAttempts": "错误次数过多，请 10 分钟后再试。",
   "dev.err.poolRunning": "内存池已在运行。",
   "dev.err.selectDevice": "请至少选择一台设备。",
-  "dev.err.modelMissing": "请选择一个存在的 GGUF 模型文件。",
+  "dev.err.modelMissing": "请选择 Ollama 中的模型或一个 GGUF 文件。",
   "dev.err.unreachable": "无法访问设备 {name}。",
   "dev.err.rpcNotRunning": "{name}：RPC 服务器未运行。请在该设备上开启“内存池节点”。",
   "dev.err.buildMismatch": "{name} 使用的是 llama.cpp {build}；所有设备需要相同的版本。",
@@ -523,5 +524,10 @@
   "dist.progress": "并行任务：已完成 {done} / {total}",
   "dist.retry": "设备 {device} 失败，正在换一台重试",
   "tool.parallel_tasks": "并行子任务",
-  "tool.batch_files": "并行处理文件"
+  "tool.batch_files": "并行处理文件",
+  "dev.err.modelNotAbsolute": "请输入 GGUF 文件的完整路径：{path}",
+  "dev.err.modelNotFound": "未找到 GGUF 文件：{path}",
+  "dev.err.modelNotGguf": "此文件不是 GGUF 模型：{path}",
+  "dev.err.ollamaModelNotFound": "找不到 Ollama 模型 {name} 的 GGUF 文件。已检查：\n{paths}\n请通过“浏览…”选择文件：Ollama 将模型保存在 {dir}（最大的 sha256-… 文件就是模型）。",
+  "dev.err.unsupportedArch": "llama.cpp {build} 不支持此模型的架构。请选择其他模型。"
 }

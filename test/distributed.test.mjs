@@ -110,7 +110,7 @@ test('devices API validation and pool preconditions',{timeout:60000},async()=>{
   const model=await mockModel(async()=>({content:'ok'}));
   let app;
   try{
-    app=await startApp({modelUrl:model.url,data:path.join(root,'d'),workspace:ws,env:{KVALAH_PEER_BIND:'127.0.0.1',KVALAH_DISCOVERY_PORT:String(await freePort()),KVALAH_LANG:'en'}});
+    app=await startApp({modelUrl:model.url,data:path.join(root,'d'),workspace:ws,env:{KVALAH_PEER_BIND:'127.0.0.1',KVALAH_DISCOVERY_PORT:String(await freePort()),KVALAH_LANG:'en',OLLAMA_MODELS:path.join(root,'ollama')}});
     const s=(await app.api('/api/devices')).body;
     assert.match(s.self.id,/^[a-f0-9-]{36}$/);assert.equal(s.llama.build.startsWith('b'),true);assert.equal(s.pool.state,'stopped');
     assert.equal((await app.api('/api/devices/share',{port:80})).body.error,'The port must be between 1024 and 65535.');
@@ -118,6 +118,21 @@ test('devices API validation and pool preconditions',{timeout:60000},async()=>{
     assert.match((await app.api('/api/devices/pool/start',{workers:[],localGpu:true,model:'/no/such.gguf'})).body.error,/GGUF/);
     const gguf=path.join(root,'m.gguf');fs.writeFileSync(gguf,'GGUF');
     assert.match((await app.api('/api/devices/pool/start',{workers:[],localGpu:true,model:gguf})).body.error,/llama\.cpp is not installed/);
+    // Picking a model in "From Ollama" sends its name; the server finds the blob (0.8.0 lost the choice and failed).
+    assert.match((await app.api('/api/devices/pool/start',{workers:[],localGpu:true})).body.error,/Choose a model from Ollama or a GGUF file/);
+    assert.match((await app.api('/api/devices/pool/start',{workers:[],localGpu:true,model:'/no/such.gguf'})).body.error,/GGUF file not found: \/no\/such\.gguf/);
+    const notGguf=path.join(root,'x.bin');fs.writeFileSync(notGguf,'nope');
+    assert.match((await app.api('/api/devices/pool/start',{workers:[],localGpu:true,model:notGguf})).body.error,/not a GGUF model/);
+    const store=path.join(root,'ollama'),hex='d'.repeat(64);
+    fs.mkdirSync(path.join(store,'blobs'),{recursive:true});fs.writeFileSync(path.join(store,'blobs','sha256-'+hex),Buffer.concat([Buffer.from('GGUF'),Buffer.alloc(32)]));
+    fs.mkdirSync(path.join(store,'manifests','registry.ollama.ai','library','qwen3.5'),{recursive:true});
+    fs.writeFileSync(path.join(store,'manifests','registry.ollama.ai','library','qwen3.5','9b-q4_K_M'),JSON.stringify({layers:[{mediaType:'application/vnd.ollama.image.model',digest:'sha256:'+hex,size:36}]}));
+    const listed=(await app.api('/api/devices/gguf')).body;
+    assert.deepEqual(listed.models.map(m=>m.name),['qwen3.5:9b-q4_K_M']);assert.equal(listed.blobs,path.join(store,'blobs'));
+    assert.match((await app.api('/api/devices/pool/start',{workers:[],localGpu:true,ollamaModel:'qwen3.5:9b-q4_K_M'})).body.error,/llama\.cpp is not installed/);
+    assert.equal((await app.api('/api/devices')).body.pool.ollamaModel,'qwen3.5:9b-q4_K_M');
+    const missing=(await app.api('/api/devices/pool/start',{workers:[],localGpu:true,ollamaModel:'nope:1b'})).body.error;
+    assert.match(missing,/Ollama model nope:1b/);assert.ok(missing.includes(path.join(store,'manifests','registry.ollama.ai','library','nope','1b')));assert.ok(missing.includes(path.join(store,'blobs')));
     assert.match((await app.api('/api/devices/pool/use',{})).body.error,/not running/);
     assert.match((await app.api('/api/devices/llama/path',{path:root})).body.error,/llama-server/);
     const added=(await app.api('/api/devices/add',{kind:'ollama',url:model.url.replace('http://','')})).body;

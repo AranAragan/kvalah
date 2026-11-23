@@ -89,7 +89,78 @@ export function parseListDevices(text){
 }
 
 // GGUF models already downloaded by Ollama: manifests/<registry>/<namespace>/<model>/<tag> → blobs/sha256-<hex>.
-export const ollamaModelsDir=()=>process.env.OLLAMA_MODELS||path.join(os.homedir(),'.ollama','models');
+// The store is $OLLAMA_MODELS, else ~/.ollama/models (%USERPROFILE%\.ollama\models on Windows).
+export function ollamaModelsDir({env=process.env,home=os.homedir(),platform=process.platform}={}){
+  const p=platform==='win32'?path.win32:path.posix;
+  const custom=String(env.OLLAMA_MODELS||'').trim().replace(/^"(.*)"$/,'$1');
+  if(custom){
+    const expanded=custom.replace(/^~(?=$|[\\/])/,home).replace(/%USERPROFILE%/ig,home);
+    return p.resolve(expanded);
+  }
+  return p.join(home,'.ollama','models');
+}
+const OLLAMA_REGISTRY='registry.ollama.ai';
+// "qwen2.5-coder:14b" → registry.ollama.ai/library/qwen2.5-coder/14b; "user/m" → …/user/m/latest; "hf.co/org/m:Q8_0" keeps its host.
+export function parseOllamaName(name){
+  let s=String(name||'').trim();
+  if(!s)return null;
+  let tag='latest';
+  const slash=s.lastIndexOf('/'),colon=s.lastIndexOf(':');
+  if(colon>slash){tag=s.slice(colon+1);s=s.slice(0,colon);}
+  const at=tag.indexOf('@');if(at>=0)tag=tag.slice(0,at)||'latest';
+  const parts=s.split('/').filter(Boolean);
+  if(!parts.length||!tag)return null;
+  let registry=OLLAMA_REGISTRY,namespace='library',model;
+  if(parts.length===1)model=parts[0];
+  else if(parts.length===2)[namespace,model]=parts;
+  else{registry=parts[0];model=parts[parts.length-1];namespace=parts.slice(1,-1).join('/');}
+  const safe=x=>x&&x!=='.'&&x!=='..'&&!/[\\\0]/.test(x);
+  if(![registry,model,tag,...namespace.split('/')].every(safe))return null;
+  return {registry,namespace,model,tag};
+}
+export function ollamaManifestPath(name,dir=ollamaModelsDir(),platform=process.platform){
+  const n=parseOllamaName(name);if(!n)return null;
+  const p=platform==='win32'?path.win32:path.posix;
+  return p.join(dir,'manifests',n.registry,...n.namespace.split('/'),n.model,n.tag);
+}
+// The weights layer of a manifest → blob file name ("sha256:<hex>" → "sha256-<hex>").
+export function manifestModelBlob(manifest){
+  const m=typeof manifest==='string'?JSON.parse(manifest):manifest;
+  const layer=(m?.layers||[]).find(l=>l?.mediaType==='application/vnd.ollama.image.model');
+  if(!layer||!/^sha256[:-][a-f0-9]{64}$/.test(String(layer.digest||'')))return null;
+  return {file:String(layer.digest).replace(':','-'),size:Number(layer.size)||0};
+}
+export async function isGguf(file){
+  let fh;try{fh=await fs.open(file,'r');const buf=Buffer.alloc(4);await fh.read(buf,0,4,0);return buf.toString('latin1')==='GGUF';}
+  catch{return false;}finally{await fh?.close().catch(()=>{});}
+}
+// Ollama model name → GGUF file. Reads the manifest; falls back to Ollama's /api/show ("FROM <blob>" in the modelfile).
+// Returns {path,size} or throws an Error with .tried (the paths that were checked).
+export async function resolveOllamaModel(name,{dir=ollamaModelsDir(),ollamaUrl,fetchImpl=fetch,platform=process.platform}={}){
+  const tried=[];
+  const p=platform==='win32'?path.win32:path.posix;
+  const manifestFile=ollamaManifestPath(name,dir,platform);
+  if(!manifestFile){const e=Error('Invalid Ollama model name: '+name);e.tried=tried;throw e;}
+  tried.push(manifestFile);
+  try{
+    const blob=manifestModelBlob(await fs.readFile(manifestFile,'utf8'));
+    if(blob){
+      const file=p.join(dir,'blobs',blob.file);tried.push(file);
+      if(await isGguf(file))return {path:file,size:blob.size||(await fs.stat(file)).size,source:'manifest'};
+    }
+  }catch{}
+  if(ollamaUrl){
+    try{
+      const r=await fetchImpl(String(ollamaUrl).replace(/\/+$/,'')+'/api/show',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:name}),signal:AbortSignal.timeout(5000)});
+      if(r.ok){
+        const data=await r.json();
+        const from=/^FROM\s+(.+?)\s*$/m.exec(String(data?.modelfile||''))?.[1]?.replace(/^"(.*)"$/,'$1');
+        if(from&&p.isAbsolute(from)){tried.push(from);if(await isGguf(from))return {path:from,size:(await fs.stat(from)).size,source:'api'};}
+      }
+    }catch{}
+  }
+  const e=Error('Ollama model not found: '+name);e.tried=tried;throw e;
+}
 export async function ollamaGgufModels(dir=ollamaModelsDir()){
   const root=path.join(dir,'manifests'),out=[];
   async function walk(d,depth,parts){
@@ -103,19 +174,23 @@ export async function ollamaGgufModels(dir=ollamaModelsDir()){
   async function add(file,[registry,namespace,model,tag]){
     try{
       const st=await fs.stat(file);if(st.size>1e6)return;
-      const manifest=JSON.parse(await fs.readFile(file,'utf8'));
-      const layer=(manifest.layers||[]).find(l=>l.mediaType==='application/vnd.ollama.image.model');
-      if(!layer||!/^sha256:[a-f0-9]{64}$/.test(layer.digest))return;
-      const blob=path.join(dir,'blobs',layer.digest.replace(':','-'));
-      const fh=await fs.open(blob,'r');let magic;
-      try{const buf=Buffer.alloc(4);await fh.read(buf,0,4,0);magic=buf.toString('latin1');}finally{await fh.close();}
-      if(magic!=='GGUF')return;
-      const name=(registry==='registry.ollama.ai'?(namespace==='library'?'':namespace+'/'):registry+'/'+namespace+'/')+model+':'+tag;
-      out.push({name,path:blob,size:layer.size||(await fs.stat(blob)).size});
+      const blobRef=manifestModelBlob(await fs.readFile(file,'utf8'));
+      if(!blobRef)return;
+      const blob=path.join(dir,'blobs',blobRef.file);
+      if(!(await isGguf(blob)))return;
+      const name=(registry===OLLAMA_REGISTRY?(namespace==='library'?'':namespace+'/'):registry+'/'+namespace+'/')+model+':'+tag;
+      out.push({name,path:blob,size:blobRef.size||(await fs.stat(blob)).size});
     }catch{}
   }
   await walk(root,0,[]);
   return out.sort((a,b)=>a.name.localeCompare(b.name));
+}
+// The lines of a llama-server log that explain why it stopped (model load errors), plus the tail.
+export function explainServerLog(lines,tail=6){
+  const all=(lines||[]).map(String);
+  const important=all.filter(l=>/error|failed|unknown model architecture|unsupported|invalid|not enough|out of memory|cannot|unable|exception|abort/i.test(l)&&!/^\s*(load_tensors|llama_model_loader):\s*-\s/i.test(l));
+  const out=[...new Set([...important.slice(-8),...all.slice(-tail)])];
+  return out.join('\n');
 }
 
 const EXE=process.platform==='win32'?'.exe':'';

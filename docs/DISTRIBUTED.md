@@ -36,7 +36,7 @@ Requirements:
 On the host, open **Pool memory**:
 
 1. Tick the devices to include: any number of workers, plus optionally **This computer's GPU**. Free and total memory per device is shown once the pool is running.
-2. Choose a GGUF model. kvalah lists models already downloaded by Ollama (it reads the Ollama blob store directly, so nothing is copied), or you can pick a `.gguf` file.
+2. Choose a GGUF model. kvalah lists models already downloaded by Ollama (it reads the Ollama blob store directly, so nothing is copied), or you can pick a `.gguf` file. The store is `$OLLAMA_MODELS` if set, otherwise `~/.ollama/models` (`%USERPROFILE%\.ollama\models` on Windows); the weights are the largest `sha256-…` file in its `blobs` folder. If llama.cpp can't load a model (for example an architecture the pinned build doesn't support), the pool shows llama-server's own error.
 3. Set the context and click **Start pool**. kvalah opens an authenticated tunnel to each worker, checks them with `--list-devices`, and starts `llama-server --rpc …` on `127.0.0.1`. The model's layers are spread across the devices in proportion to their free memory.
 4. Click **Use for the agent**. The agent switches to the pool (an OpenAI-compatible backend, model `pool`) with the real context size reported by llama-server. **Stop pool** switches back to your previous model server.
 

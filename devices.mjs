@@ -34,7 +34,7 @@ export async function createDevices({dataDir,version,getLocalBackend,localModels
   state.name=String(state.name||os.hostname()||'kvalah').slice(0,64);
   state.share={enabled:false,port:DEFAULT_PEER_PORT,tasks:true,rpc:false,code:newPairingCode(),hosts:[],...state.share};
   state.tasks={enabled:false,localParallel:1,...state.tasks};
-  state.pool={workers:[],localGpu:true,model:'',ctx:8192,...state.pool};
+  state.pool={workers:[],localGpu:true,model:'',ollamaModel:'',ctx:8192,...state.pool};
   state.llama={path:'',backend:'auto',...state.llama};
   let saving=Promise.resolve();
   const save=()=>{const text=JSON.stringify({...state,nodes:registry.serialize()},null,1);saving=saving.catch(()=>{}).then(async()=>{const tmp=file+'.tmp';await fs.writeFile(tmp,text,{mode:0o600});await fs.rename(tmp,file);});return saving;};
@@ -235,14 +235,29 @@ export async function createDevices({dataDir,version,getLocalBackend,localModels
   // ---------- memory pool (host side) ----------
   let pool={state:'stopped',error:'',warnings:[],devices:[],port:null,apiKey:null,proc:null,tunnels:[],startedAt:null};
   const poolBase=()=>pool.port?'http://127.0.0.1:'+pool.port+'/v1':null;
+  // The GGUF file for the pool: a file the user picked, or the blob behind an Ollama model name.
+  async function resolvePoolModel(file,ollamaModel){
+    if(file){
+      if(!path.isAbsolute(file))throw Error(tr('dev.err.modelNotAbsolute',{path:file}));
+      let st;try{st=await fs.stat(file);}catch{}
+      if(!st?.isFile())throw Error(tr('dev.err.modelNotFound',{path:file}));
+      if(!(await llama.isGguf(file)))throw Error(tr('dev.err.modelNotGguf',{path:file}));
+      return file;
+    }
+    if(!ollamaModel)throw Error(tr('dev.err.modelMissing'));
+    const backend=getLocalBackend?.()||{};
+    const dir=llama.ollamaModelsDir();
+    try{return (await llama.resolveOllamaModel(ollamaModel,{dir,ollamaUrl:backend.ollamaUrl||process.env.OLLAMA_URL||'http://127.0.0.1:11434'})).path;}
+    catch(e){throw Error(tr('dev.err.ollamaModelNotFound',{name:ollamaModel,paths:(e.tried||[]).join('\n')||dir,dir:path.join(dir,'blobs')}));}
+  }
   async function startPool(input){
     if(['starting','loading','running'].includes(pool.state))throw Error(tr('dev.err.poolRunning'));
     const workers=[...new Set((Array.isArray(input.workers)?input.workers:[]).map(String))];
-    const localGpu=input.localGpu!==false,ctx=Number(input.ctx)||8192,model=String(input.model||'').trim();
-    state.pool={workers,localGpu,model,ctx};await save();
+    const localGpu=input.localGpu!==false,ctx=Number(input.ctx)||8192;
+    const file=String(input.model||'').trim().replace(/^"(.*)"$/,'$1'),ollamaModel=String(input.ollamaModel||'').trim();
+    state.pool={workers,localGpu,model:file,ollamaModel:file?'':ollamaModel,ctx};await save();
     if(!workers.length&&!localGpu)throw Error(tr('dev.err.selectDevice'));
-    if(!model||!path.isAbsolute(model))throw Error(tr('dev.err.modelMissing'));
-    try{if(!(await fs.stat(model)).isFile())throw 0;}catch{throw Error(tr('dev.err.modelMissing'));}
+    const model=await resolvePoolModel(file,ollamaModel);
     const l=await resolveLlama();
     if(!l?.llamaServer)throw Error(tr('dev.err.llamaMissing'));
     pool={state:'starting',error:'',warnings:[],devices:[],port:null,apiKey:null,proc:null,tunnels:[],startedAt:Date.now()};
@@ -269,7 +284,7 @@ export async function createDevices({dataDir,version,getLocalBackend,localModels
       pool.port=await freeLocalPort();pool.apiKey=randomBytes(24).toString('hex');
       const args=llama.llamaServerArgs({model,rpc,port:pool.port,ctx,localGpu,alias:'pool',apiKey:pool.apiKey});
       pool.state='loading';
-      const proc=llama.managedProcess(l.llamaServer,args,{onExit:s=>{if(pool.proc===proc&&pool.state!=='stopped'){pool.state='error';pool.error=tr('dev.err.poolExited',{log:proc.log(6).join('\n')});closeTunnels();onPoolStopped(poolBaseSaved);}}});
+      const proc=llama.managedProcess(l.llamaServer,args,{onExit:s=>{if(pool.proc===proc&&pool.state!=='stopped'){pool.state='error';{const lines=proc.log(200);const log=llama.explainServerLog(lines)||s.error||('exit code '+s.exitCode);pool.error=tr('dev.err.poolExited',{log})+(lines.some(l=>/unknown model architecture/i.test(l))?'\n\n'+tr('dev.err.unsupportedArch',{build:l.build||'(custom)'}):'');}closeTunnels();onPoolStopped(poolBaseSaved);}}});
       pool.proc=proc;const poolBaseSaved=poolBase();
       waitReady(proc).catch(()=>{});
     }catch(e){closeTunnels();pool.state='error';pool.error=e.message;throw e;}
@@ -347,7 +362,7 @@ export async function createDevices({dataDir,version,getLocalBackend,localModels
       if(p){if(!path.isAbsolute(p))throw Error(tr('dev.err.llamaPath'));const found=await llama.locate(p);if(!found)throw Error(tr('dev.err.llamaPath'));}
       state.llama.path=p;await save();await resolveLlama();if(state.share.enabled&&state.share.rpc)await startRpc();return snapshot();
     }
-    if(route==='/gguf'&&method==='GET')return {models:await llama.ollamaGgufModels(),dir:llama.ollamaModelsDir()};
+    if(route==='/gguf'&&method==='GET'){const dir=llama.ollamaModelsDir();return {models:await llama.ollamaGgufModels(dir),dir,blobs:path.join(dir,'blobs')};}
     if(route==='/pool/start'&&method==='POST'){await startPool(b);return snapshot();}
     if(route==='/pool/stop'&&method==='POST'){stopPool();return snapshot();}
     throw Error('Not found');

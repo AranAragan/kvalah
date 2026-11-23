@@ -484,6 +484,7 @@
   "devices.chooseModel": "— choose —",
   "devices.ggufPath": "Or a GGUF file",
   "devices.browse": "Browse…",
+  "devices.blobsHint": "Ollama keeps model files in {dir}; the largest sha256-… file is the model.",
   "devices.poolCtx": "Context",
   "devices.poolStart": "Start pool",
   "devices.poolStop": "Stop pool",
@@ -518,7 +519,7 @@
   "dev.err.tooManyAttempts": "Too many wrong codes. Try again in 10 minutes.",
   "dev.err.poolRunning": "The pool is already running.",
   "dev.err.selectDevice": "Select at least one device.",
-  "dev.err.modelMissing": "Choose an existing GGUF model file.",
+  "dev.err.modelMissing": "Choose a model from Ollama or a GGUF file.",
   "dev.err.unreachable": "Device {name} is not reachable.",
   "dev.err.rpcNotRunning": "{name}: the RPC server is not running. Turn on “Pool memory worker” on that device.",
   "dev.err.buildMismatch": "{name} uses llama.cpp {build}; all devices need the same build.",
@@ -528,5 +529,10 @@
   "dist.progress": "Parallel tasks: {done} of {total} done",
   "dist.retry": "Device {device} failed; retrying on another one",
   "tool.parallel_tasks": "Parallel sub-tasks",
-  "tool.batch_files": "Processing files in parallel"
+  "tool.batch_files": "Processing files in parallel",
+  "dev.err.modelNotAbsolute": "Enter the full path to the GGUF file: {path}",
+  "dev.err.modelNotFound": "GGUF file not found: {path}",
+  "dev.err.modelNotGguf": "This file is not a GGUF model: {path}",
+  "dev.err.ollamaModelNotFound": "Could not find the GGUF file of the Ollama model {name}. Checked:\n{paths}\nChoose the file with “Browse…”: Ollama keeps models in {dir} (the model is the largest sha256-… file).",
+  "dev.err.unsupportedArch": "llama.cpp {build} does not support this model's architecture. Choose another model."
 }

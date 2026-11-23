@@ -489,6 +489,7 @@
   "devices.chooseModel": "— choisir —",
   "devices.ggufPath": "Ou un fichier GGUF",
   "devices.browse": "Parcourir…",
+  "devices.blobsHint": "Ollama stocke les fichiers de modèles dans {dir} ; le plus gros fichier sha256-… est le modèle.",
   "devices.poolCtx": "Contexte",
   "devices.poolStart": "Démarrer le pool",
   "devices.poolStop": "Arrêter le pool",
@@ -523,7 +524,7 @@
   "dev.err.tooManyAttempts": "Trop de codes incorrects. Réessayez dans 10 minutes.",
   "dev.err.poolRunning": "Le pool est déjà actif.",
   "dev.err.selectDevice": "Sélectionnez au moins un appareil.",
-  "dev.err.modelMissing": "Choisissez un fichier de modèle GGUF existant.",
+  "dev.err.modelMissing": "Choisissez un modèle d'Ollama ou un fichier GGUF.",
   "dev.err.unreachable": "L'appareil {name} est injoignable.",
   "dev.err.rpcNotRunning": "{name} : le serveur RPC n'est pas actif. Activez « Nœud de mémoire partagée » sur cet appareil.",
   "dev.err.buildMismatch": "{name} utilise llama.cpp {build} ; tous les appareils doivent avoir la même version.",
@@ -533,5 +534,10 @@
   "dist.progress": "Tâches parallèles : {done} sur {total} terminées",
   "dist.retry": "L'appareil {device} a échoué ; nouvel essai sur un autre",
   "tool.parallel_tasks": "Sous-tâches parallèles",
-  "tool.batch_files": "Traitement parallèle de fichiers"
+  "tool.batch_files": "Traitement parallèle de fichiers",
+  "dev.err.modelNotAbsolute": "Indiquez le chemin complet du fichier GGUF : {path}",
+  "dev.err.modelNotFound": "Fichier GGUF introuvable : {path}",
+  "dev.err.modelNotGguf": "Ce fichier n'est pas un modèle GGUF : {path}",
+  "dev.err.ollamaModelNotFound": "Impossible de trouver le fichier GGUF du modèle Ollama {name}. Vérifié :\n{paths}\nChoisissez le fichier avec « Parcourir… » : Ollama stocke les modèles dans {dir} (le modèle est le plus gros fichier sha256-…).",
+  "dev.err.unsupportedArch": "llama.cpp {build} ne prend pas en charge l'architecture de ce modèle. Choisissez un autre modèle."
 }

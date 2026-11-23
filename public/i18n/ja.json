@@ -479,6 +479,7 @@
   "devices.chooseModel": "— 選択 —",
   "devices.ggufPath": "または GGUF ファイル",
   "devices.browse": "参照…",
+  "devices.blobsHint": "Ollama はモデルファイルを {dir} に保存します。最も大きい sha256-… ファイルがモデルです。",
   "devices.poolCtx": "コンテキスト",
   "devices.poolStart": "プールを開始",
   "devices.poolStop": "プールを停止",
@@ -513,7 +514,7 @@
   "dev.err.tooManyAttempts": "間違ったコードが多すぎます。10 分後にもう一度お試しください。",
   "dev.err.poolRunning": "プールはすでに実行中です。",
   "dev.err.selectDevice": "デバイスを 1 台以上選んでください。",
-  "dev.err.modelMissing": "存在する GGUF モデルファイルを選んでください。",
+  "dev.err.modelMissing": "Ollama のモデルか GGUF ファイルを選んでください。",
   "dev.err.unreachable": "デバイス {name} に接続できません。",
   "dev.err.rpcNotRunning": "{name}：RPC サーバーが動いていません。そのデバイスで「メモリプールのワーカー」をオンにしてください。",
   "dev.err.buildMismatch": "{name} は llama.cpp {build} を使っています。すべてのデバイスで同じビルドが必要です。",
@@ -523,5 +524,10 @@
   "dist.progress": "並列タスク：{total} 件中 {done} 件完了",
   "dist.retry": "デバイス {device} で失敗したため、別のデバイスで再試行します",
   "tool.parallel_tasks": "並列サブタスク",
-  "tool.batch_files": "ファイルの並列処理"
+  "tool.batch_files": "ファイルの並列処理",
+  "dev.err.modelNotAbsolute": "GGUF ファイルのフルパスを入力してください: {path}",
+  "dev.err.modelNotFound": "GGUF ファイルが見つかりません: {path}",
+  "dev.err.modelNotGguf": "このファイルは GGUF モデルではありません: {path}",
+  "dev.err.ollamaModelNotFound": "Ollama モデル {name} の GGUF ファイルが見つかりません。確認した場所:\n{paths}\n「参照…」でファイルを選んでください。Ollama はモデルを {dir} に保存します（最も大きい sha256-… ファイルがモデルです）。",
+  "dev.err.unsupportedArch": "llama.cpp {build} はこのモデルのアーキテクチャに対応していません。別のモデルを選んでください。"
 }

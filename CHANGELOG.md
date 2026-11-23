@@ -5,6 +5,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-11-23
+
+### Fixed
+- **Pool memory:** a model picked in *From Ollama* was lost when the Devices screen refreshed (every 2.5 s, as soon as focus left the list, e.g. after ticking a device), so *Start pool* sent no model and failed with “Choose an existing GGUF model file” on Windows and macOS. Choices on the Pool tab now survive refreshes, and the model is sent by its Ollama name and resolved on the host.
+- The Ollama model list now also loads when the Devices screen opens straight on the Pool tab.
+
+### Changed
+- Ollama model → GGUF resolution reads the manifest (`$OLLAMA_MODELS` or `~/.ollama/models`, `%USERPROFILE%\.ollama\models` on Windows; namespaced names and the default `latest` tag), with Ollama's `/api/show` as a fallback. When nothing is found, the error names every path that was checked.
+- Clearer model errors: missing file, relative path, or a file that isn't GGUF are reported separately, with the path. The Pool tab shows where Ollama keeps model files, for *Browse…*.
+- When llama-server stops while loading, the pool shows its error lines (for example `unknown model architecture`) instead of only the last lines of the log.
+
 ## [0.8.0] - 2026-11-23
 
 ### Added

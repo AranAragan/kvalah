@@ -489,6 +489,7 @@
   "devices.chooseModel": "— escolher —",
   "devices.ggufPath": "Ou um arquivo GGUF",
   "devices.browse": "Procurar…",
+  "devices.blobsHint": "O Ollama guarda os arquivos de modelos em {dir}; o maior arquivo sha256-… é o modelo.",
   "devices.poolCtx": "Contexto",
   "devices.poolStart": "Iniciar pool",
   "devices.poolStop": "Parar pool",
@@ -523,7 +524,7 @@
   "dev.err.tooManyAttempts": "Muitos códigos incorretos. Tente de novo em 10 minutos.",
   "dev.err.poolRunning": "O pool já está em execução.",
   "dev.err.selectDevice": "Selecione pelo menos um dispositivo.",
-  "dev.err.modelMissing": "Escolha um arquivo de modelo GGUF existente.",
+  "dev.err.modelMissing": "Escolha um modelo do Ollama ou um arquivo GGUF.",
   "dev.err.unreachable": "O dispositivo {name} não está acessível.",
   "dev.err.rpcNotRunning": "{name}: o servidor RPC não está em execução. Ative “Nó de memória compartilhada” nesse dispositivo.",
   "dev.err.buildMismatch": "{name} usa o llama.cpp {build}; todos os dispositivos precisam da mesma build.",
@@ -533,5 +534,10 @@
   "dist.progress": "Tarefas paralelas: {done} de {total} concluídas",
   "dist.retry": "O dispositivo {device} falhou; tentando em outro",
   "tool.parallel_tasks": "Subtarefas paralelas",
-  "tool.batch_files": "Processando arquivos em paralelo"
+  "tool.batch_files": "Processando arquivos em paralelo",
+  "dev.err.modelNotAbsolute": "Informe o caminho completo do arquivo GGUF: {path}",
+  "dev.err.modelNotFound": "Arquivo GGUF não encontrado: {path}",
+  "dev.err.modelNotGguf": "Este arquivo não é um modelo GGUF: {path}",
+  "dev.err.ollamaModelNotFound": "Não foi possível encontrar o arquivo GGUF do modelo do Ollama {name}. Verificado:\n{paths}\nEscolha o arquivo em “Procurar…”: o Ollama guarda os modelos em {dir} (o modelo é o maior arquivo sha256-…).",
+  "dev.err.unsupportedArch": "O llama.cpp {build} não suporta a arquitetura deste modelo. Escolha outro modelo."
 }

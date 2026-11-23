@@ -494,6 +494,7 @@
   "devices.chooseModel": "— виберіть —",
   "devices.ggufPath": "Або файл GGUF",
   "devices.browse": "Огляд…",
+  "devices.blobsHint": "Ollama зберігає файли моделей у {dir}; модель — найбільший файл sha256-….",
   "devices.poolCtx": "Контекст",
   "devices.poolStart": "Запустити пул",
   "devices.poolStop": "Зупинити пул",
@@ -528,7 +529,7 @@
   "dev.err.tooManyAttempts": "Забагато неправильних кодів. Спробуйте через 10 хвилин.",
   "dev.err.poolRunning": "Пул уже запущено.",
   "dev.err.selectDevice": "Виберіть принаймні один пристрій.",
-  "dev.err.modelMissing": "Виберіть наявний файл моделі GGUF.",
+  "dev.err.modelMissing": "Виберіть модель з Ollama або файл GGUF.",
   "dev.err.unreachable": "Пристрій {name} недоступний.",
   "dev.err.rpcNotRunning": "{name}: RPC-сервер не запущено. Увімкніть на цьому пристрої «Вузол спільної пам'яті».",
   "dev.err.buildMismatch": "На {name} llama.cpp {build}; на всіх пристроях потрібна однакова збірка.",
@@ -538,5 +539,10 @@
   "dist.progress": "Паралельні завдання: готово {done} з {total}",
   "dist.retry": "Пристрій {device} не впорався; повтор на іншому",
   "tool.parallel_tasks": "Паралельні підзадачі",
-  "tool.batch_files": "Паралельна обробка файлів"
+  "tool.batch_files": "Паралельна обробка файлів",
+  "dev.err.modelNotAbsolute": "Вкажіть повний шлях до файлу GGUF: {path}",
+  "dev.err.modelNotFound": "Файл GGUF не знайдено: {path}",
+  "dev.err.modelNotGguf": "Цей файл не є моделлю GGUF: {path}",
+  "dev.err.ollamaModelNotFound": "Не вдалося знайти файл GGUF моделі Ollama {name}. Перевірено:\n{paths}\nВиберіть файл через «Огляд…»: Ollama зберігає моделі в {dir} (модель — найбільший файл sha256-…).",
+  "dev.err.unsupportedArch": "llama.cpp {build} не підтримує архітектуру цієї моделі. Виберіть іншу модель."
 }
