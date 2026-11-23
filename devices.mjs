@@ -235,6 +235,39 @@ export async function createDevices({dataDir,version,getLocalBackend,localModels
   // ---------- memory pool (host side) ----------
   let pool={state:'stopped',error:'',warnings:[],devices:[],port:null,apiKey:null,proc:null,tunnels:[],startedAt:null};
   const poolBase=()=>pool.port?'http://127.0.0.1:'+pool.port+'/v1':null;
+  // Ollama's own address (Settings → Ollama URL), never the active provider's: the chat may use an
+  // OpenAI-compatible server (e.g. the pool itself on :8080) while the models live in Ollama.
+  const ollamaUrl=()=>String(getLocalBackend?.()?.ollamaUrl||process.env.OLLAMA_URL||'http://127.0.0.1:11434').replace(/\/+$/,'');
+  // Models for "From Ollama": the manifest store on disk (works without Ollama running), plus models the
+  // Ollama API knows that the scan missed (e.g. OLLAMA_MODELS set only for the Ollama service).
+  async function listGguf(){
+    const dir=llama.ollamaModelsDir(),url=ollamaUrl();
+    const models=await llama.ollamaGgufModels(dir);
+    const ollama={url,reachable:false,error:'',count:0};
+    let names=[];
+    try{
+      const r=await fetch(url+'/api/tags',{signal:AbortSignal.timeout(3000)});
+      if(!r.ok)throw Error('HTTP '+r.status);
+      names=((await r.json())?.models||[]).map(m=>String(m.name||m.model||'')).filter(Boolean);
+      ollama.reachable=true;ollama.count=names.length;
+    }catch(e){ollama.error=String(e?.cause?.code||e?.message||e).slice(0,200);}
+    const known=new Set(models.map(m=>m.name)),norm=n=>n.includes(':')?n:n+':latest';
+    const scanned=new Set([dir]);
+    for(const name of names.slice(0,100)){
+      if(known.has(norm(name)))continue;
+      try{
+        const r=await llama.resolveOllamaModel(name,{dir,ollamaUrl:url});
+        const other=path.dirname(path.dirname(r.path));
+        if(!scanned.has(other)){
+          scanned.add(other);
+          for(const m of await llama.ollamaGgufModels(other))if(!known.has(m.name)){known.add(m.name);models.push({...m,source:'api'});}
+        }
+        if(!known.has(norm(name))){known.add(norm(name));models.push({name:norm(name),path:r.path,size:r.size,source:'api'});}
+      }catch{}
+    }
+    models.sort((a,b)=>a.name.localeCompare(b.name));
+    return {models,dir,blobs:path.join(dir,'blobs'),ollama};
+  }
   // The GGUF file for the pool: a file the user picked, or the blob behind an Ollama model name.
   async function resolvePoolModel(file,ollamaModel){
     if(file){
@@ -245,9 +278,8 @@ export async function createDevices({dataDir,version,getLocalBackend,localModels
       return file;
     }
     if(!ollamaModel)throw Error(tr('dev.err.modelMissing'));
-    const backend=getLocalBackend?.()||{};
     const dir=llama.ollamaModelsDir();
-    try{return (await llama.resolveOllamaModel(ollamaModel,{dir,ollamaUrl:backend.ollamaUrl||process.env.OLLAMA_URL||'http://127.0.0.1:11434'})).path;}
+    try{return (await llama.resolveOllamaModel(ollamaModel,{dir,ollamaUrl:ollamaUrl()})).path;}
     catch(e){throw Error(tr('dev.err.ollamaModelNotFound',{name:ollamaModel,paths:(e.tried||[]).join('\n')||dir,dir:path.join(dir,'blobs')}));}
   }
   async function startPool(input){
@@ -255,7 +287,7 @@ export async function createDevices({dataDir,version,getLocalBackend,localModels
     const workers=[...new Set((Array.isArray(input.workers)?input.workers:[]).map(String))];
     const localGpu=input.localGpu!==false,ctx=Number(input.ctx)||8192;
     const file=String(input.model||'').trim().replace(/^"(.*)"$/,'$1'),ollamaModel=String(input.ollamaModel||'').trim();
-    state.pool={workers,localGpu,model:file,ollamaModel:file?'':ollamaModel,ctx};await save();
+    state.pool={workers,localGpu,model:file,ollamaModel,ctx};await save();
     if(!workers.length&&!localGpu)throw Error(tr('dev.err.selectDevice'));
     const model=await resolvePoolModel(file,ollamaModel);
     const l=await resolveLlama();
@@ -362,7 +394,13 @@ export async function createDevices({dataDir,version,getLocalBackend,localModels
       if(p){if(!path.isAbsolute(p))throw Error(tr('dev.err.llamaPath'));const found=await llama.locate(p);if(!found)throw Error(tr('dev.err.llamaPath'));}
       state.llama.path=p;await save();await resolveLlama();if(state.share.enabled&&state.share.rpc)await startRpc();return snapshot();
     }
-    if(route==='/gguf'&&method==='GET'){const dir=llama.ollamaModelsDir();return {models:await llama.ollamaGgufModels(dir),dir,blobs:path.join(dir,'blobs')};}
+    if(route==='/gguf'&&method==='GET')return listGguf();
+    if(route==='/gguf/resolve'&&method==='POST'){
+      const name=String(b.name||'').trim();if(!name)throw Error(tr('dev.err.modelMissing'));
+      const dir=llama.ollamaModelsDir();
+      try{const r=await llama.resolveOllamaModel(name,{dir,ollamaUrl:ollamaUrl()});return {name,path:r.path,size:r.size,source:r.source};}
+      catch(e){throw Error(tr('dev.err.ollamaModelNotFound',{name,paths:(e.tried||[]).join('\n')||dir,dir:path.join(dir,'blobs')}));}
+    }
     if(route==='/pool/start'&&method==='POST'){await startPool(b);return snapshot();}
     if(route==='/pool/stop'&&method==='POST'){stopPool();return snapshot();}
     throw Error('Not found');

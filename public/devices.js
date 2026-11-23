@@ -2,7 +2,7 @@
 // Uses globals from app.js: $, t, esc, api, toast, busy.
 (function(){
   const dialog=$('#devicesDialog'),bodyEl=$('#devicesBody'),errorEl=$('#devicesError');
-  let tab='this',data=null,timer=null,gguf=null,ggufBlobs='',ggufLoading=false,pairTarget=null;
+  let tab='this',data=null,timer=null,gguf=null,ggufBlobs='',ggufDir='',ggufOllama=null,ggufError='',ggufLoading=false,pairTarget=null;
   // Unsaved choices on the Pool tab. The tab is re-rendered every few seconds; without this a picked model was lost.
   let poolDraft=null;
   const BACKEND_KEYS={auto:'devices.backend.auto',cpu:'devices.backend.cpu',vulkan:'devices.backend.vulkan',cuda:'devices.backend.cuda',metal:'devices.backend.metal'};
@@ -22,13 +22,22 @@
   }
   function open(next){
     if(next)tab=next;
-    poolDraft=null;dialog.showModal();refresh(true);
+    poolDraft=null;gguf=null;dialog.showModal();refresh(true);
     clearInterval(timer);timer=setInterval(()=>{if(dialog.open)refresh(false);else clearInterval(timer);},2500);
   }
   window.openDevices=open;window.renderDevices=()=>{if(dialog.open)render();};
   dialog.addEventListener('close',()=>clearInterval(timer));
   for(const b of dialog.querySelectorAll('.tab'))b.onclick=()=>{tab=b.dataset.tab;render();};
-  async function loadGguf(){if(ggufLoading)return;ggufLoading=true;try{const r=await api('/api/devices/gguf');gguf=r.models||[];ggufBlobs=r.blobs||'';}catch{gguf=[];}finally{ggufLoading=false;}if(dialog.open&&tab==='pool')render();}
+  async function loadGguf(){if(ggufLoading)return;ggufLoading=true;ggufError='';try{const r=await api('/api/devices/gguf');gguf=r.models||[];ggufBlobs=r.blobs||'';ggufDir=r.dir||'';ggufOllama=r.ollama||null;}catch(e){gguf=[];ggufError=e.message;}finally{ggufLoading=false;}if(dialog.open&&tab==='pool')render();}
+  // Picking an Ollama model shows its GGUF file in the path field (from the list, or resolved by the host).
+  async function fillPath(name){
+    const input=bodyEl.querySelector('#poolModel');if(!input)return;
+    const hit=(gguf||[]).find(m=>m.name===name);
+    if(!name){if(input.dataset.auto==='1'){input.value='';input.dataset.auto='';}return;}
+    if(hit){input.value=hit.path;input.dataset.auto='1';return;}
+    try{const r=await api('/api/devices/gguf/resolve',{name});if(bodyEl.querySelector('#poolGguf')?.value===name){input.value=r.path;input.dataset.auto='1';poolDraft=readPoolForm();}}
+    catch(e){errorEl.textContent=e.message;}
+  }
   function readPoolForm(){
     const q=s=>bodyEl.querySelector(s);if(!q('#poolGguf'))return poolDraft;
     return {gguf:q('#poolGguf').value,file:q('#poolModel').value.trim(),ctx:Number(q('#poolCtx').value),localGpu:q('#poolLocal').checked,workers:[...bodyEl.querySelectorAll('[data-worker]:checked')].map(x=>x.dataset.worker)};
@@ -90,15 +99,28 @@
   function renderPool(){
     const p=data.pool,workers=data.nodes.filter(n=>n.kind==='kvalah'&&n.memory),runningish=['starting','loading','running'].includes(p.state);
     const list=gguf||[],byPath=list.find(m=>m.path===p.model);
-    const d=poolDraft||{gguf:p.ollamaModel||byPath?.name||'',file:byPath?'':p.model||'',ctx:Number(p.ctx),localGpu:p.localGpu,workers:p.workers};
+    const d={...(poolDraft||{gguf:p.ollamaModel||byPath?.name||'',file:p.model||'',ctx:Number(p.ctx),localGpu:p.localGpu,workers:p.workers})};
+    const picked=list.find(m=>m.name===d.gguf);
+    if(picked&&!d.file)d.file=picked.path;
     let h='<div class="warn-box"><strong data-i18n="devices.poolWarnTitle"></strong><p data-i18n="devices.poolWarn"></p></div>';
     h+='<section class="dev-card"><h3 data-i18n="devices.poolDevices"></h3><label class="check-row"><input type="checkbox" id="poolLocal"'+(d.localGpu?' checked':'')+(runningish?' disabled':'')+'><span><strong data-i18n="devices.poolLocal"></strong><small>'+esc(data.self.name)+'</small></span></label>';
     h+=workers.length?workers.map(n=>{const ready=n.status?.info?.rpc?.running===true;return '<label class="check-row"><input type="checkbox" data-worker="'+esc(n.id)+'"'+(d.workers.includes(n.id)?' checked':'')+(runningish?' disabled':'')+'><span><strong>'+esc(n.name)+'</strong><small>'+dot(ready)+esc(t(ready?'devices.workerReady':'devices.workerNotReady'))+' · '+esc(n.url.replace(/^https?:\/\//,''))+'</small></span></label>';}).join(''):'<p class="field-note" data-i18n="devices.poolNoWorkers"></p>';
     h+='</section><section class="dev-card"><h3 data-i18n="devices.poolModel"></h3>';
     if(!data.llama.installed?.llamaServer)h+='<p class="form-error" data-i18n="devices.poolNeedsLlama"></p>';
     const extra=d.gguf&&!list.some(m=>m.name===d.gguf)?'<option selected value="'+esc(d.gguf)+'">'+esc(d.gguf)+'</option>':'';
-    h+='<label><span data-i18n="devices.ollamaGguf"></span><select id="poolGguf"'+(runningish?' disabled':'')+'><option value="" data-i18n="devices.chooseModel"></option>'+list.map(m=>'<option value="'+esc(m.name)+'"'+(d.gguf===m.name?' selected':'')+'>'+esc(m.name)+' · '+(m.size>=1e9?(m.size/1e9).toFixed(1)+' GB':Math.max(1,Math.round(m.size/1e6))+' MB')+'</option>').join('')+extra+'</select></label>';
-    h+='<div class="settings-row align-end"><label><span data-i18n="devices.ggufPath"></span><input id="poolModel" value="'+esc(d.file||'')+'" placeholder="model.gguf"'+(runningish?' disabled':'')+'></label>'+(window.kvalahDesktop?.chooseFile?'<button type="button" class="secondary" id="poolBrowse" data-i18n="devices.browse"'+(runningish?' disabled':'')+'></button>':'')+'<label class="narrow"><span data-i18n="devices.poolCtx"></span><select id="poolCtx"'+(runningish?' disabled':'')+'>'+[4096,8192,16384,32768,65536].map(v=>'<option value="'+v+'"'+(Number(d.ctx)===v?' selected':'')+'>'+v/1024+'K</option>').join('')+'</select></label></div>';
+    // An empty list says why: still loading, nothing in the store, Ollama not running.
+    const why=[];
+    if(gguf===null||ggufLoading)why.push(t('devices.loadingModels'));
+    else if(!list.length){
+      if(ggufError)why.push(ggufError);
+      if(ggufOllama&&!ggufOllama.reachable)why.push(t('devices.ollamaNotRunning',{url:ggufOllama.url}));
+      why.push(t('devices.noGguf',{dir:ggufDir||ggufBlobs}));
+    }
+    const first=why.length&&!(gguf===null||ggufLoading)&&!list.length?esc(why[0]):'';
+    h+='<div class="settings-row align-end"><label><span data-i18n="devices.ollamaGguf"></span><select id="poolGguf"'+(runningish?' disabled':'')+'><option value=""'+(first?'>'+first:' data-i18n="'+(gguf===null||ggufLoading?'devices.loadingModels':'devices.chooseModel')+'">')+'</option>'+list.map(m=>'<option value="'+esc(m.name)+'"'+(d.gguf===m.name?' selected':'')+'>'+esc(m.name)+' · '+(m.size>=1e9?(m.size/1e9).toFixed(1)+' GB':Math.max(1,Math.round(m.size/1e6))+' MB')+'</option>').join('')+extra+'</select></label><button type="button" class="secondary" id="poolGgufReload" title="'+esc(t('devices.reloadModels'))+'" aria-label="'+esc(t('devices.reloadModels'))+'"'+(runningish||ggufLoading?' disabled':'')+'>↻</button></div>';
+    if(why.length&&!(gguf===null||ggufLoading))h+='<p class="field-note warn-text">'+why.map(esc).join('<br>')+'</p>';
+    else if(list.length&&ggufOllama&&!ggufOllama.reachable)h+='<p class="field-note">'+esc(t('devices.ollamaNotRunning',{url:ggufOllama.url}))+' · '+esc(t('devices.scannedStore',{n:list.length}))+'</p>';
+    h+='<div class="settings-row align-end"><label><span data-i18n="devices.ggufPath"></span><input id="poolModel" value="'+esc(d.file||'')+'"'+(picked&&d.file===picked.path?' data-auto="1"':'')+' placeholder="model.gguf"'+(runningish?' disabled':'')+'></label>'+(window.kvalahDesktop?.chooseFile?'<button type="button" class="secondary" id="poolBrowse" data-i18n="devices.browse"'+(runningish?' disabled':'')+'></button>':'')+'<label class="narrow"><span data-i18n="devices.poolCtx"></span><select id="poolCtx"'+(runningish?' disabled':'')+'>'+[4096,8192,16384,32768,65536].map(v=>'<option value="'+v+'"'+(Number(d.ctx)===v?' selected':'')+'>'+v/1024+'K</option>').join('')+'</select></label></div>';
     if(ggufBlobs)h+='<p class="field-note">'+esc(t('devices.blobsHint',{dir:ggufBlobs}))+'</p>';
     h+='<div class="dialog-actions left">'+(runningish?'<button type="button" class="secondary" id="poolStop" data-i18n="devices.poolStop"></button>':'<button type="button" class="primary" id="poolStart" data-i18n="devices.poolStart"></button>')+(p.state==='running'?(settings.poolInUse&&settings.baseUrl===p.baseUrl?'<span class="badge ok" data-i18n="devices.poolInUse"></span>':'<button type="button" class="primary" id="poolUse" data-i18n="devices.poolUse"></button>'):'')+'</div>';
     const stateText=p.state==='running'?t('devices.state.running',{url:p.baseUrl}):t(STATE_KEYS[p.state]||STATE_KEYS.stopped);
@@ -145,10 +167,11 @@
     for(const b of bodyEl.querySelectorAll('[data-remove]'))b.onclick=()=>{const n=data.nodes.find(x=>x.id===b.dataset.remove);if(confirm(t('devices.removeConfirm',{name:n?.name||''})))call('/remove',{id:b.dataset.remove}).catch(()=>{});};
     const keepPool=()=>{poolDraft=readPoolForm();};
     for(const el of bodyEl.querySelectorAll('#poolLocal,[data-worker],#poolCtx'))el.addEventListener('change',keepPool);
-    on('#poolModel','oninput',e=>{if(e.target.value.trim())bodyEl.querySelector('#poolGguf').value='';keepPool();});
-    on('#poolGguf','onchange',e=>{if(e.target.value)bodyEl.querySelector('#poolModel').value='';keepPool();});
-    on('#poolBrowse','onclick',async()=>{try{const f=await window.kvalahDesktop.chooseFile('gguf');if(f){bodyEl.querySelector('#poolModel').value=f;bodyEl.querySelector('#poolGguf').value='';keepPool();}}catch(e){toast(e.message);}});
-    on('#poolStart','onclick',()=>{const f=readPoolForm();poolDraft=f;call('/pool/start',{workers:f.workers,localGpu:f.localGpu,model:f.file,ollamaModel:f.file?'':f.gguf,ctx:f.ctx}).then(()=>{poolDraft=null;render();}).catch(()=>{});});
+    on('#poolModel','oninput',e=>{e.target.dataset.auto='';if(e.target.value.trim())bodyEl.querySelector('#poolGguf').value='';keepPool();});
+    on('#poolGguf','onchange',async e=>{await fillPath(e.target.value);keepPool();});
+    on('#poolGgufReload','onclick',()=>{gguf=null;render();});
+    on('#poolBrowse','onclick',async()=>{try{const f=await window.kvalahDesktop.chooseFile('gguf');if(f){const i=bodyEl.querySelector('#poolModel');i.value=f;i.dataset.auto='';bodyEl.querySelector('#poolGguf').value='';keepPool();}}catch(e){toast(e.message);}});
+    on('#poolStart','onclick',()=>{const f=readPoolForm();poolDraft=f;call('/pool/start',{workers:f.workers,localGpu:f.localGpu,model:f.file,ollamaModel:f.gguf,ctx:f.ctx}).then(()=>{poolDraft=null;render();}).catch(()=>{});});
     on('#poolStop','onclick',async()=>{await call('/pool/stop',{}).catch(()=>{});try{settings=(await api('/api/state')).settings;if(window.refreshModels)refreshModels();}catch{}render();});
     on('#poolUse','onclick',async()=>{try{settings=await api('/api/devices/pool/use',{});if(window.refreshModels)refreshModels();render();toast(t('devices.poolInUse'));}catch(e){errorEl.textContent=e.message;}});
   }

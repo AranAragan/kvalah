@@ -5,6 +5,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-11-23
+
+### Fixed
+- **Pool memory → From Ollama:** the list could stay empty when the models are not in the folder kvalah scans (`OLLAMA_MODELS` or `~/.ollama/models`), e.g. when Ollama's model location was changed in the Ollama app or set only for the Ollama service. kvalah now also asks Ollama's API (at the Ollama URL from Settings, not the chat provider's URL, so it works while the chat uses the pool or another OpenAI-compatible server) and finds those models' GGUF files through `/api/show`. Without Ollama running, the folder scan still works.
+- The list is reloaded every time Devices opens, and a ↻ button refreshes it (it used to be loaded once per window).
+
+### Changed
+- Picking a model in *From Ollama* fills the *GGUF file* field with the model's file path, so you see exactly what llama-server will load. The choice and path are kept after starting the pool.
+- An empty list says why: “Ollama is not running at …” and/or “No Ollama models found in …”.
+- New endpoint `POST /api/devices/gguf/resolve` (local UI only).
+
 ## [0.8.2] - 2026-11-23
 
 ### Added
