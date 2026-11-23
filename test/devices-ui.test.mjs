@@ -20,12 +20,17 @@ const chrome=process.platform==='linux'?findChrome():null;
 
 // One browser per test file; one page per scenario.
 async function withBrowser(fn){
-  const root=await tempDir(),port=await freePort();
-  const browser=spawn(chrome,['--headless=new','--no-sandbox','--disable-gpu','--disable-dev-shm-usage','--remote-debugging-port='+port,'--user-data-dir='+path.join(root,'chrome'),'about:blank'],{stdio:'ignore'});
-  let ws;
+  const root=await tempDir();
+  let browser,ws,version;
   try{
-    let version;
-    for(let i=0;i<100&&!version;i++){try{version=await (await fetch('http://127.0.0.1:'+port+'/json/version')).json();}catch{await sleep(200);}}
+    // A cold Chrome on a CI runner can take a while; one retry on a fresh port.
+    for(let attempt=0;attempt<2&&!version;attempt++){
+      browser?.kill();
+      const port=await freePort();
+      browser=spawn(chrome,['--headless=new','--no-sandbox','--disable-gpu','--disable-dev-shm-usage','--remote-debugging-port='+port,'--user-data-dir='+path.join(root,'chrome'+attempt),'about:blank'],{stdio:'ignore'});
+      for(let i=0;i<225&&!version;i++){try{version=await (await fetch('http://127.0.0.1:'+port+'/json/version')).json();}catch{await sleep(200);}}
+    }
+    if(!version)throw Error('Chrome did not start');
     ws=new WebSocket(version.webSocketDebuggerUrl);await new Promise((r,j)=>{ws.onopen=r;ws.onerror=j;});
     let id=0;const pending=new Map();
     ws.onmessage=e=>{const m=JSON.parse(e.data);if(pending.has(m.id)){pending.get(m.id)(m);pending.delete(m.id);}};
@@ -41,7 +46,7 @@ async function withBrowser(fn){
       return {ev,waitFor};
     }
     return await fn(page);
-  }finally{ws?.close();browser.kill();}
+  }finally{ws?.close();browser?.kill();}
 }
 async function ggufStore(dir,models){
   for(const [name,tag,hex] of models){
@@ -75,7 +80,7 @@ async function app0({store,ollamaUrl,root}){
 }
 const DEAD='http://127.0.0.1:9'; // nothing listens on the discard port
 
-test('Pool memory UI: list from disk without Ollama, path filled on pick, choice survives re-renders',{skip:!chrome&&'Chrome not found',timeout:90000},async()=>{
+test('Pool memory UI: list from disk without Ollama, path filled on pick, choice survives re-renders',{skip:!chrome&&'Chrome not found',timeout:150000},async()=>{
   const root=await tempDir(),store=path.join(root,'ollama');
   await ggufStore(store,[['qwen2.5-coder','14b','a'.repeat(64)],['qwen3.5','9b-q4_K_M','b'.repeat(64)]]);
   const {app,close}=await app0({store,ollamaUrl:DEAD,root});
@@ -108,7 +113,7 @@ test('Pool memory UI: list from disk without Ollama, path filled on pick, choice
   }finally{await close();}
 });
 
-test('Pool memory UI: models only the Ollama API knows (another store) are listed and resolved',{skip:!chrome&&'Chrome not found',timeout:90000},async()=>{
+test('Pool memory UI: models only the Ollama API knows (another store) are listed and resolved',{skip:!chrome&&'Chrome not found',timeout:150000},async()=>{
   const root=await tempDir(),store=path.join(root,'empty-store'),other=path.join(root,'D','ollama-models');
   await fs.mkdir(store,{recursive:true});
   await ggufStore(other,[['llama3.1','8b','c'.repeat(64)]]);
@@ -130,7 +135,7 @@ test('Pool memory UI: models only the Ollama API knows (another store) are liste
   }finally{await close();await ollama.close();}
 });
 
-test('Pool memory UI: empty list says why (Ollama not running, nothing in the folder) and can be refreshed',{skip:!chrome&&'Chrome not found',timeout:90000},async()=>{
+test('Pool memory UI: empty list says why (Ollama not running, nothing in the folder) and can be refreshed',{skip:!chrome&&'Chrome not found',timeout:150000},async()=>{
   const root=await tempDir(),store=path.join(root,'ollama');await fs.mkdir(store,{recursive:true});
   const {app,close}=await app0({store,ollamaUrl:DEAD,root});
   try{
