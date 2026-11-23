@@ -104,7 +104,9 @@
     if(picked&&!d.file)d.file=picked.path;
     let h='<div class="warn-box"><strong data-i18n="devices.poolWarnTitle"></strong><p data-i18n="devices.poolWarn"></p></div>';
     h+='<section class="dev-card"><h3 data-i18n="devices.poolDevices"></h3><label class="check-row"><input type="checkbox" id="poolLocal"'+(d.localGpu?' checked':'')+(runningish?' disabled':'')+'><span><strong data-i18n="devices.poolLocal"></strong><small>'+esc(data.self.name)+'</small></span></label>';
-    h+=workers.length?workers.map(n=>{const ready=n.status?.info?.rpc?.running===true;return '<label class="check-row"><input type="checkbox" data-worker="'+esc(n.id)+'"'+(d.workers.includes(n.id)?' checked':'')+(runningish?' disabled':'')+'><span><strong>'+esc(n.name)+'</strong><small>'+dot(ready)+esc(t(ready?'devices.workerReady':'devices.workerNotReady'))+' · '+esc(n.url.replace(/^https?:\/\//,''))+'</small></span></label>';}).join(''):'<p class="field-note" data-i18n="devices.poolNoWorkers"></p>';
+    h+=workers.length?workers.map(n=>{const ready=n.status?.info?.rpc?.running===true,busyGpu=n.status?.info?.pool?.running===true;return '<label class="check-row"><input type="checkbox" data-worker="'+esc(n.id)+'"'+(d.workers.includes(n.id)?' checked':'')+(runningish?' disabled':'')+'><span><strong>'+esc(n.name)+'</strong><small>'+dot(ready)+esc(t(ready?'devices.workerReady':'devices.workerNotReady'))+' · '+esc(n.url.replace(/^https?:\/\//,''))+'</small>'+(busyGpu?'<small class="warn-text">'+esc(t('devices.workerPoolBusy'))+'</small>':'')+'</span></label>';}).join(''):'<p class="field-note" data-i18n="devices.poolNoWorkers"></p>';
+    // This computer already lends its GPU to another host's pool (rpc-server tunnels are open).
+    if(data.share?.tunnels?.length&&d.localGpu)h+='<p class="field-note warn-text">'+esc(t('devices.gpuLent',{hosts:[...new Set(data.share.tunnels.map(x=>x.host))].join(', ')}))+'</p>';
     h+='</section><section class="dev-card"><h3 data-i18n="devices.poolModel"></h3>';
     if(!data.llama.installed?.llamaServer)h+='<p class="form-error" data-i18n="devices.poolNeedsLlama"></p>';
     const extra=d.gguf&&!list.some(m=>m.name===d.gguf)?'<option selected value="'+esc(d.gguf)+'">'+esc(d.gguf)+'</option>':'';
@@ -127,8 +129,10 @@
     h+='<p class="pool-state">'+dot(p.state==='running'?true:p.state==='error'?false:p.state==='stopped'?null:null)+esc(stateText)+'</p>';
     if(p.error)h+='<pre class="form-error pre">'+esc(p.error)+'</pre>';
     for(const w of p.warnings||[])h+='<p class="field-note warn-text">'+esc(w)+'</p>';
-    if(p.devices?.length)h+='<ul class="dev-list">'+p.devices.map(d=>'<li><span><strong>'+esc(d.name)+'</strong><small>'+esc(d.device)+' · '+esc(t('devices.memory',{free:gb(d.freeMiB),total:gb(d.totalMiB)}))+'</small></span><span class="badge'+(d.used?' ok':'')+'">'+esc(t(d.used?'devices.inUse':'devices.notUsed'))+'</span></li>').join('')+'</ul>';
+    const memText=d=>d.totalMiB>0?t(d.estimated?'devices.memoryEstimated':'devices.memory',{free:gb(d.freeMiB),total:gb(d.totalMiB)}):t('devices.memoryUnknown');
+    if(p.devices?.length)h+='<ul class="dev-list">'+p.devices.map(d=>'<li><span><strong>'+esc(d.name)+'</strong><small>'+esc(d.device)+(d.description&&d.kind!=='rpc'?' ('+esc(d.description)+')':'')+' · '+esc(memText(d))+'</small></span><span class="badge'+(d.used?' ok':'')+'">'+esc(t(d.used?'devices.inUse':'devices.notUsed'))+'</span></li>').join('')+'</ul>';
     if(p.tunnels?.length){const up=p.tunnels.reduce((s,x)=>s+x.bytesUp,0),down=p.tunnels.reduce((s,x)=>s+x.bytesDown,0);h+='<p class="field-note">'+esc(t('devices.traffic',{up:mb(up),down:mb(down)}))+'</p>';}
+    if(p.probe)h+='<details><summary data-i18n="devices.probe"></summary><pre class="pre">'+esc(p.probe)+'</pre></details>';
     if(p.log?.length)h+='<details><summary data-i18n="devices.log"></summary><pre class="pre">'+esc(p.log.join('\n'))+'</pre></details>';
     return h+'</section>';
   }

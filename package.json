@@ -2,7 +2,7 @@
   "name": "kvalah",
   "productName": "kvalah",
   "desktopName": "kvalah.desktop",
-  "version": "0.8.3",
+  "version": "0.8.4",
   "description": "Reliable local coding agent for open models (Ollama, LM Studio, llama.cpp, vLLM) on a single home GPU",
   "license": "MIT",
   "author": {

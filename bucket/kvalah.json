@@ -1,13 +1,13 @@
 {
-    "version": "0.8.3",
+    "version": "0.8.4",
     "description": "Reliable local coding agent for open models (Ollama, LM Studio, llama.cpp, vLLM) on a single home GPU",
     "homepage": "https://github.com/AranAragan/kvalah",
     "license": "MIT",
     "notes": "User data is kept in %APPDATA%\\kvalah. Update with: scoop update kvalah",
     "architecture": {
         "64bit": {
-            "url": "https://github.com/AranAragan/kvalah/releases/download/v0.8.3/kvalah-0.8.3-win-x64-portable.zip",
-            "hash": "afced2bb7146daa1a8baef180784b6a6dc52f1ada7c2dc8d87f45ef529329c85"
+            "url": "https://github.com/AranAragan/kvalah/releases/download/v0.8.4/kvalah-0.8.4-win-x64-portable.zip",
+            "hash": "0000000000000000000000000000000000000000000000000000000000000000"
         }
     },
     "shortcuts": [

@@ -21,6 +21,7 @@ import * as llama from './llamacpp.mjs';
 const PEER_HEADER='x-kvalah-token';
 const OLLAMA_PATHS=new Set(['api/tags','api/show','api/ps','api/chat','api/version']);
 const OPENAI_PATHS=new Set(['models','chat/completions']);
+const deviceKindLocal=name=>llama.deviceKind(name)!=='rpc';
 const freeLocalPort=()=>new Promise((resolve,reject)=>{const s=net.createServer();s.once('error',reject);s.listen(0,'127.0.0.1',()=>{const p=s.address().port;s.close(()=>resolve(p));});});
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 const bool=(v,def)=>v===undefined?def:v===true;
@@ -72,7 +73,9 @@ export async function createDevices({dataDir,version,getLocalBackend,localModels
     const backend=getLocalBackend();
     return {app:'kvalah',id:state.id,name:state.name,version,platform:process.platform,arch:process.arch,cpus:os.cpus().length,totalMem:os.totalmem(),freeMem:os.freemem(),
       share:{tasks:state.share.tasks,rpc:state.share.rpc},backend:backend.provider==='openai'?'openai':'ollama',models:state.share.tasks?await cachedModels():[],
-      rpc:{running:!!rpcProc?.state.running,build:installedLlama?.build||null}};
+      rpc:{running:!!rpcProc?.state.running,build:installedLlama?.build||null},
+      // Lets a host warn that this worker's GPUs are already used by its own pool.
+      pool:{running:['starting','loading','running'].includes(pool.state)}};
   }
 
   // ---------- peer HTTP API (served on the shared LAN port) ----------
@@ -312,7 +315,14 @@ export async function createDevices({dataDir,version,getLocalBackend,localModels
       const probeResult=await llama.listDevices(l.llamaServer,rpc);
       const rpcDevices=probeResult.devices.filter(d=>/^RPC\d+$/.test(d.name));
       if(rpcDevices.length<rpc.length){const failed=pool.tunnels.find(x=>x.t.stats.lastError);throw Error(tr('dev.err.unreachable',{name:failed?.name||names[rpcDevices.length]||'?'})+(failed?' ('+failed.t.stats.lastError+')':''));}
-      pool.devices=probeResult.devices.map(d=>{const m=/^RPC(\d+)$/.exec(d.name);return {device:d.name,name:m?names[Number(m[1])]:state.name,local:!m,used:m?true:localGpu&&!/^CPU/i.test(d.name),totalMiB:d.totalMiB,freeMiB:d.freeMiB};});
+      pool.devices=llama.poolDeviceRows(probeResult.devices,{names,selfName:state.name,localGpu});
+      // This computer's GPU was asked for but llama.cpp sees none (e.g. no Metal on a Mac, CPU-only build).
+      if(localGpu&&!pool.devices.some(d=>d.local&&d.kind==='gpu')){
+        const seen=probeResult.devices.filter(d=>deviceKindLocal(d.name)).map(d=>d.name+(d.description?' ('+d.description+')':'')).join(', ')||'—';
+        pool.warnings.push(process.platform==='darwin'?tr('dev.warn.noMetal',{devices:seen}):tr('dev.warn.noLocalGpu',{devices:seen}));
+        log('warn','pool: no local GPU in --list-devices: '+String(probeResult.output||'').slice(-800));
+      }
+      pool.probe=String(probeResult.output||'').slice(-2000);
       pool.port=await freeLocalPort();pool.apiKey=randomBytes(24).toString('hex');
       const args=llama.llamaServerArgs({model,rpc,port:pool.port,ctx,localGpu,alias:'pool',apiKey:pool.apiKey});
       pool.state='loading';
@@ -355,7 +365,7 @@ export async function createDevices({dataDir,version,getLocalBackend,localModels
       nodes:registry.publicList(),
       tasks:{...state.tasks},
       pool:{...state.pool,state:pool.state,error:pool.error,warnings:pool.warnings,devices:pool.devices,actualCtx:pool.ctx||null,baseUrl:pool.state==='running'?poolBase():null,
-        tunnels:pool.tunnels.map(x=>({name:x.name,...x.t.stats})),log:pool.proc?pool.proc.log(12):[],startedAt:pool.startedAt}
+        tunnels:pool.tunnels.map(x=>({name:x.name,...x.t.stats})),log:pool.proc?pool.proc.log(12):[],probe:pool.probe||'',startedAt:pool.startedAt}
     };
   }
   async function handle(route,method,b={}){

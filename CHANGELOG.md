@@ -5,6 +5,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-11-23
+
+### Fixed
+- **Pool memory on Macs:** the device list showed `BLAS · 0.0 of 0.0 GB free` as a used local device. BLAS (Apple Accelerate) is a CPU helper that holds no layers and reports no memory; it is now marked *not used* with “memory not reported”. The Metal GPU (`MTL0`, from the macOS arm64/x64 llama.cpp build, which includes Metal) is the device that gets layers. Checked against the real `llama-server --list-devices` output of b12651 on macOS.
+- Devices that report no memory show “memory not reported” instead of “0.0 of 0.0 GB”; a Metal GPU without a figure gets an estimate of its share of unified memory (marked ≈).
+
+### Added
+- If this computer's GPU is selected but llama.cpp finds none (no Metal on a Mac, a CPU-only build elsewhere), the pool shows a warning, and *Devices found by llama.cpp* shows the raw `--list-devices` output.
+- A worker whose GPUs are busy with its own local pool is marked “GPUs busy with its own local pool”; a computer that lends its GPU to another host sees a note before starting its own pool.
+
+### Changed
+- Settings: the *Open “Devices”…* button uses the accent (primary) style, so it no longer blends into the card (light and dark themes).
+
 ## [0.8.3] - 2026-11-23
 
 ### Fixed

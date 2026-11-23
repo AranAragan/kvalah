@@ -78,14 +78,44 @@ export function llamaServerArgs({model,rpc=[],port:p,ctx=8192,localGpu=true,alia
   if(apiKey)args.push('--api-key',apiKey);
   return args;
 }
-// "  RPC0: 127.0.0.1:50152 (16002 MiB, 15000 MiB free)" lines from --list-devices.
+// "  RPC0: 127.0.0.1:50152 (16002 MiB, 15000 MiB free)" lines from --list-devices. A device line without
+// memory (some backends) is kept with null memory.
 export function parseListDevices(text){
-  const out=[];
+  const out=[];let inList=false;
   for(const line of String(text||'').split(/\r?\n/)){
+    if(/^\s*Available devices:/i.test(line)){inList=true;continue;}
     const m=/^\s*([A-Za-z][\w-]*\d*):\s*(.*?)\s*\((\d+)\s*MiB,\s*(\d+)\s*MiB free\)\s*$/.exec(line);
-    if(m)out.push({name:m[1],description:m[2],totalMiB:Number(m[3]),freeMiB:Number(m[4])});
+    if(m){out.push({name:m[1],description:m[2],totalMiB:Number(m[3]),freeMiB:Number(m[4])});continue;}
+    const bare=inList&&/^\s{2,}([A-Za-z][\w-]*\d*):\s*(\S.*?)\s*$/.exec(line);
+    if(bare)out.push({name:bare[1],description:bare[2],totalMiB:null,freeMiB:null});
   }
   return out;
+}
+// What a --list-devices entry is: a remote worker, a GPU that can hold layers, or CPU-side helpers
+// (BLAS/Accelerate, AMX) that hold no layers and report no memory.
+export function deviceKind(name){
+  const n=String(name||'');
+  if(/^RPC\d+$/.test(n))return 'rpc';
+  if(/^CPU/i.test(n))return 'cpu';
+  if(/^(BLAS|AMX|ACCEL)/i.test(n))return 'accel';
+  return 'gpu';
+}
+// Apple GPUs share RAM with the CPU. llama.cpp reports Metal's recommendedMaxWorkingSetSize; when a device
+// reports nothing, estimate it the way macOS does (about 2/3 of RAM up to 36 GB, 3/4 above).
+export function unifiedMemoryEstimate(totalBytes=os.totalmem(),freeBytes=os.freemem()){
+  const share=totalBytes>36*2**30?0.75:2/3;
+  const totalMiB=Math.floor(totalBytes*share/2**20);
+  return {totalMiB,freeMiB:Math.min(totalMiB,Math.floor(freeBytes/2**20)),estimated:true};
+}
+// Local + remote devices for the pool screen. used = gets layers.
+export function poolDeviceRows(devices,{names=[],selfName='',localGpu=true,platform=process.platform,mem}={}){
+  return devices.map(d=>{
+    const kind=deviceKind(d.name),m=/^RPC(\d+)$/.exec(d.name);
+    let totalMiB=d.totalMiB,freeMiB=d.freeMiB,estimated=false;
+    if(kind==='gpu'&&platform==='darwin'&&!(totalMiB>0)){({totalMiB,freeMiB,estimated}=mem||unifiedMemoryEstimate());}
+    return {device:d.name,description:d.description||'',kind,name:m?names[Number(m[1])]:selfName,local:!m,used:kind==='rpc'||(localGpu&&kind==='gpu'),
+      totalMiB:totalMiB>0?totalMiB:null,freeMiB:totalMiB>0?freeMiB:null,estimated};
+  });
 }
 
 // GGUF models already downloaded by Ollama: manifests/<registry>/<namespace>/<model>/<tag> → blobs/sha256-<hex>.

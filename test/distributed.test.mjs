@@ -53,6 +53,7 @@ test('distributed tasks across paired devices: pairing, peer proxy auth, paralle
     assert.equal(sa.nodes.length,1);const node=sa.nodes[0];
     assert.equal(node.name,'Laptop B');assert.equal(node.kind,'kvalah');assert.equal(node.status.online,true,node.status.error);
     assert.deepEqual(node.status.models,['mock:latest']);assert.equal(node.paired,true);
+    assert.deepEqual(node.status.info?.pool,{running:false},'the worker tells whether its GPUs run its own pool');
     assert.ok(!JSON.stringify(sa).includes('"token"'),'the pairing token never reaches the UI');
     sb=(await b.api('/api/devices')).body;assert.equal(sb.share.hosts.length,1);assert.equal(sb.share.hosts[0].hash,undefined);
     const stored=JSON.parse(fs.readFileSync(path.join(root,'a','devices.json'),'utf8')).nodes[0].token;

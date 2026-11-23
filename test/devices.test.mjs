@@ -10,7 +10,7 @@ import http from 'node:http';
 import {isPrivateAddress,lanAddresses,broadcastAddresses,buildAnnouncement,buildProbe,parseAnnouncement,parseHostPort,newPairingCode,normalizeCode,codesEqual,newToken,tokenHash,hashesEqual,createLimiter} from '../lan.mjs';
 import {createRegistry,normalizeNode,sameModel} from '../nodes.mjs';
 import {createScheduler,NoNodeError} from '../scheduler.mjs';
-import {pickAssets,rpcServerArgs,llamaServerArgs,parseListDevices,ollamaGgufModels,findBinary,LLAMA_BUILD,ollamaModelsDir,parseOllamaName,ollamaManifestPath,manifestModelBlob,resolveOllamaModel,explainServerLog} from '../llamacpp.mjs';
+import {pickAssets,rpcServerArgs,llamaServerArgs,parseListDevices,deviceKind,poolDeviceRows,unifiedMemoryEstimate,ollamaGgufModels,findBinary,LLAMA_BUILD,ollamaModelsDir,parseOllamaName,ollamaManifestPath,manifestModelBlob,resolveOllamaModel,explainServerLog} from '../llamacpp.mjs';
 import {createPeerListener,createTunnelClient} from '../tunnel.mjs';
 import {parseEdit,batchPrompt,runSubagent} from '../subagent.mjs';
 import {tempDir} from './helpers.mjs';
@@ -182,6 +182,31 @@ test('llama.cpp --list-devices output parsing',()=>{
     {name:'RPC0',description:'127.0.0.1:50152',totalMiB:16002,freeMiB:15990},
     {name:'RPC1',description:'127.0.0.1:50153',totalMiB:8000,freeMiB:7000}]);
   assert.deepEqual(parseListDevices('Available devices:\n  (none)\n'),[]);
+});
+
+test('pool devices: Metal, BLAS, RPC rows; unknown memory; unified memory estimate',()=>{
+  const mac=`ggml_metal_device_init: GPU name:   Apple M2 Pro
+Available devices:
+  MTL0: Apple M2 Pro (21845 MiB, 21844 MiB free)
+  BLAS: Accelerate (0 MiB, 0 MiB free)
+  RPC0: 127.0.0.1:50152 (7884 MiB, 7168 MiB free)
+  RPC1: 127.0.0.1:50152 (7987 MiB, 7577 MiB free)
+`;
+  const devs=parseListDevices(mac);
+  assert.deepEqual(devs.map(d=>d.name),['MTL0','BLAS','RPC0','RPC1']);
+  assert.deepEqual(['MTL0','BLAS','CPU','RPC3','Vulkan0','CUDA1','AMX'].map(deviceKind),['gpu','accel','cpu','rpc','gpu','gpu','accel']);
+  const rows=poolDeviceRows(devs,{names:['ENVERDASH','ENVERDASH'],selfName:'Envers-MacBook-Pro.local',localGpu:true,platform:'darwin'});
+  assert.deepEqual(rows.map(r=>[r.device,r.name,r.used,r.totalMiB]),[['MTL0','Envers-MacBook-Pro.local',true,21845],['BLAS','Envers-MacBook-Pro.local',false,null],['RPC0','ENVERDASH',true,7884],['RPC1','ENVERDASH',true,7987]]);
+  assert.equal(rows[1].freeMiB,null,'BLAS: memory not reported, not 0 of 0');
+  assert.equal(poolDeviceRows(devs,{localGpu:false,platform:'darwin'})[0].used,false);
+  // A Metal device that reports no memory gets an estimate of the GPU share of unified memory.
+  const est=poolDeviceRows([{name:'MTL0',description:'Apple M1',totalMiB:0,freeMiB:0}],{platform:'darwin',mem:unifiedMemoryEstimate(16*2**30,6*2**30)})[0];
+  assert.deepEqual([est.totalMiB,est.freeMiB,est.estimated],[10922,6144,true]);
+  assert.equal(unifiedMemoryEstimate(64*2**30,60*2**30).totalMiB,49152);
+  assert.equal(poolDeviceRows([{name:'Vulkan0',totalMiB:0,freeMiB:0}],{platform:'win32'})[0].totalMiB,null);
+  // Lines without memory are kept (inside the device list only).
+  assert.deepEqual(parseListDevices('load_backend: loaded X\nAvailable devices:\n  BLAS: Accelerate\n'),[{name:'BLAS',description:'Accelerate',totalMiB:null,freeMiB:null}]);
+  assert.deepEqual(parseListDevices('main: build: 12651\n'),[]);
 });
 
 test('Ollama model store: GGUF blobs are found from manifests',async()=>{
