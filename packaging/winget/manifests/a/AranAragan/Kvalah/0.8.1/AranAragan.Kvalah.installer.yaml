@@ -14,6 +14,6 @@ ReleaseDate: 2026-11-23
 Installers:
 - Architecture: x64
   InstallerUrl: https://github.com/AranAragan/kvalah/releases/download/v0.8.1/kvalah-0.8.1-win-x64-setup.exe
-  InstallerSha256: '0000000000000000000000000000000000000000000000000000000000000000'
+  InstallerSha256: 430B284E891946C8B757788BF09D8153E0E6EF23483BB1F4F4609F7CC35AB7D6
 ManifestType: installer
 ManifestVersion: 1.10.0
