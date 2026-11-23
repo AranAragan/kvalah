@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SignPath artifact configuration "win-unpacked" (stage 1 of .github/workflows/release.yml).
+     Input: the zipped release/win-unpacked folder. Signs only kvalah's own executable;
+     upstream Electron/Chromium DLLs are left as shipped by their projects (SignPath Foundation policy).
+     electron-builder writes ProductVersion "X.Y.Z.0" into kvalah.exe and "X.Y.Z" into the NSIS installer. -->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <parameters>
+    <parameter name="version" required="true" />
+  </parameters>
+  <zip-file>
+    <pe-file path="kvalah.exe" product-name="kvalah" product-version="${version}.0">
+      <authenticode-sign />
+    </pe-file>
+  </zip-file>
+</artifact-configuration>

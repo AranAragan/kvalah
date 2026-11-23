@@ -1,0 +1,19 @@
+name: Feature request
+description: Suggest an improvement
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+  - type: input
+    id: model
+    attributes:
+      label: Model / hardware you use
+      placeholder: "e.g. 24 GB GPU, Qwen3 32B Q4, llama.cpp"

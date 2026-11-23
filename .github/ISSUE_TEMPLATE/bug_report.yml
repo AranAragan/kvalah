@@ -1,0 +1,47 @@
+name: Bug report
+description: Something does not work as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for the report! Please remove private paths, code and keys from logs.
+  - type: input
+    id: version
+    attributes:
+      label: kvalah version
+      placeholder: "0.7.0 (shown at the bottom-left of the window)"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [Windows, macOS, Linux]
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Installed via
+      options: [Installer (setup.exe), winget, Scoop, Portable zip, dmg, AppImage, deb, From source]
+  - type: input
+    id: model
+    attributes:
+      label: Model server and model
+      placeholder: "Ollama 0.12, qwen2.5-coder:14b, context 16K"
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Help → Data folder → logs/desktop.log (and logs/updater.log for update problems)
+      render: text

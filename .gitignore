@@ -1,0 +1,32 @@
+# dependencies and build output
+node_modules/
+release/
+dist/
+signed/
+build-cache/
+*.log
+
+# runtime data (never commit chats, uploads, settings or agent state)
+data/
+workspace/
+.kvalah/
+PLAN.md
+STATUS.md
+
+# local test/smoke output
+smoke-result.json
+native.png
+
+# editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# secrets
+.env
+.env.*
+*.pfx
+*.p12
+*.pem
+*.key
