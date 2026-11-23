@@ -38,10 +38,11 @@ fs.writeFileSync(script,mac.helperScript({pid:sleeper.pid,app,newApp,version,upd
 const helper=spawn('/bin/bash',[script],{stdio:'inherit'});
 setTimeout(()=>sleeper.kill(),1000);
 const code=await new Promise(r=>helper.on('exit',r));
-console.log(fs.readFileSync(path.join(updates,'install.log'),'utf8'));
-const result=JSON.parse(fs.readFileSync(path.join(updates,'result.json'),'utf8'));
+const logText=fs.readFileSync(path.join(updates,'install.log'),'utf8');console.log(logText);
+// The relaunched app reads (and removes) result.json itself, so it may already be gone: the exit code and the log decide.
+let result=null;try{result=JSON.parse(fs.readFileSync(path.join(updates,'result.json'),'utf8'));}catch{}
 try{execFileSync('/usr/bin/pkill',['-f',path.join(app,'Contents','MacOS','kvalah')]);}catch{}
-if(code!==0||!result.ok)throw Error('helper failed: '+JSON.stringify(result));
+if(code!==0||result&&!result.ok||!logText.includes('update to '+version+' done'))throw Error('helper failed: exit '+code+' '+JSON.stringify(result));
 if(fs.existsSync(path.join(app,'Contents','old-marker')))throw Error('the bundle was not replaced');
 const left=fs.readdirSync(apps);if(left.join()!=='kvalah.app')throw Error('leftovers: '+left);
 execFileSync('/usr/bin/codesign',['--verify','--deep','--strict',app]);
