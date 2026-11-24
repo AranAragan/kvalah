@@ -22,6 +22,7 @@ import {openStore,chatSummary} from './storage.mjs';
 import {createDevices} from './devices.mjs';
 import {createScheduler} from './scheduler.mjs';
 import {runSubagent,complete,batchPrompt,parseEdit} from './subagent.mjs';
+import {createComputeLink} from './compute-link.mjs';
 
 const ROOT=path.dirname(fileURLToPath(import.meta.url));
 const VERSION=(()=>{try{return JSON.parse(readFileSync(path.join(ROOT,'package.json'),'utf8')).version;}catch{return '0.0.0';}})();
@@ -53,6 +54,11 @@ function persist(chat){return chat?store.save(chat):Promise.resolve();}
 function publicSettings(){const {apiKey,allowRules,tokenRatios,poolPrevious,...rest}=settings;return {...rest,apiKeySet:!!apiKey,poolInUse:!!poolPrevious};}
 const provider=()=>createProvider(settings);
 // Multi-device mode (Settings → Devices). Stopping a memory pool that the agent uses restores the previous backend.
+// Optional link to the Kvalah Compute Offload service: shared queue/GPU budget with cloud agents (see compute-link.mjs).
+const compute=createComputeLink({dataDir:DATA,log:m=>console.error('[compute] '+m)});
+// Only generations on THIS machine's model server take a shared slot (a remote/cloud backend does not use the GPU here).
+const localBackend=()=>{try{const u=new URL(settings.provider==='openai'?settings.baseUrl:settings.ollamaUrl);const h=u.hostname.replace(/^\[|\]$/g,'');return h==='localhost'||h==='::1'||/^127\./.test(h);}catch{return false;}};
+const computeGate={lease:o=>localBackend()?compute.lease(o):Promise.resolve(()=>{})};
 const devices=await createDevices({dataDir:DATA,version:VERSION,getLocalBackend:()=>settings,localModels:()=>provider().models(),
   onPoolStopped:base=>{if(base&&settings.provider==='openai'&&settings.baseUrl===base.replace(/\/+$/,'')&&settings.poolPrevious){settings={...settings,...settings.poolPrevious};delete settings.poolPrevious;persistSettings().catch(()=>{});}}});
 const active=new Map(),approvals=new Map();
@@ -334,7 +340,7 @@ async function execute(call,run,send){
 // ---------- distributed tasks (parallel_tasks / batch_files) ----------
 function taskScheduler(run,send){
   const lp=Number(devices.tasks.localParallel??1);
-  return createScheduler({registry:devices.registry,local:{provider:provider(),model:run.conf.model,maxParallel:Math.max(1,lp),fallbackOnly:lp<=0},
+  return createScheduler({registry:devices.registry,local:{provider:provider(),model:run.conf.model,maxParallel:Math.max(1,lp),fallbackOnly:lp<=0,gate:computeGate},
     onEvent:e=>{if(e.type==='retry')send('warning',{text:tr('dist.retry',{device:e.node})});}});
 }
 const capsCache=new Map();
@@ -497,14 +503,17 @@ async function chatTurn(req,res,input){
       assistant={id:randomUUID(),role:'assistant',content:'',thinking:'',time:Date.now(),model:conf.model};
       chat.messages.push(assistant);send('assistant',{message:assistant});
       let calls=[],last=null;
-      const stream=backend.chat({model:conf.model,messages:outgoing,tools:nativeTools,think:caps.includes('thinking')?conf.thinking:undefined,options:{context:conf.context,maxTokens:predictTokens(conf.context),temperature:Number(conf.temperature??0.25)},format:forceFormat?toolCallSchema(toolNames):undefined,signal:run.controller.signal});
-      forceFormat=false;
-      for await(const event of stream){
-        if(event.type==='content'){devices.addTokens(1);assistant.content+=event.text;send('delta',{id:assistant.id,text:event.text});}
-        else if(event.type==='thinking'){devices.addTokens(1);assistant.thinking+=event.text;send('thinking',{id:assistant.id,text:event.text});}
-        else if(event.type==='tool_calls')calls.push(...event.calls);
-        else if(event.type==='done')last=event;
-      }
+      const unlease=await computeGate.lease({label:'chat',signal:run.controller.signal});   // shared slot (no-op without the service)
+      try{
+        const stream=backend.chat({model:conf.model,messages:outgoing,tools:nativeTools,think:caps.includes('thinking')?conf.thinking:undefined,options:{context:conf.context,maxTokens:predictTokens(conf.context),temperature:Number(conf.temperature??0.25)},format:forceFormat?toolCallSchema(toolNames):undefined,signal:run.controller.signal});
+        forceFormat=false;
+        for await(const event of stream){
+          if(event.type==='content'){devices.addTokens(1);assistant.content+=event.text;send('delta',{id:assistant.id,text:event.text});}
+          else if(event.type==='thinking'){devices.addTokens(1);assistant.thinking+=event.text;send('thinking',{id:assistant.id,text:event.text});}
+          else if(event.type==='tool_calls')calls.push(...event.calls);
+          else if(event.type==='done')last=event;
+        }
+      }finally{unlease();}
       if(!last)throw Error(tr('srv.streamBroken'));
       const st=last.stats||{};
       assistant.stats={tokens:st.tokens,tps:st.tokens&&st.evalSeconds?Math.round(st.tokens/st.evalSeconds*10)/10:null,promptTokens:st.promptTokens,seconds:Math.round((st.seconds||0)*10)/10,context:conf.context};
@@ -653,6 +662,7 @@ const server=http.createServer(async(req,res)=>{
     }
     if(route==='/api/state'&&req.method==='GET')return json(res,{app:'kvalah',version:VERSION,chats:chats.map(chatSummary),settings:publicSettings(),platform:process.platform,active:[...active.values()].map(r=>({id:r.id,chatId:r.chatId}))});
     if(route==='/api/chats/get'&&req.method==='GET'){const chat=chats.find(c=>c.id===url.searchParams.get('id'));if(!chat)throw Error(tr('srv.chatNotFound'));return json(res,chat);}
+    if(route==='/api/compute'&&req.method==='GET')return json(res,await compute.snapshot());
     if(route==='/api/models'){const backend=provider();return json(res,{provider:backend.kind,label:backend.label,models:await backend.models()});}
     if(route==='/api/health'){const backend=provider();return json(res,{provider:backend.kind,label:backend.label,...await backend.health()});}
     if(route==='/api/language'&&req.method==='POST'){
@@ -770,6 +780,6 @@ server.listen(PORT,'127.0.0.1',()=>{
   else console.log('\nkvalah — '+BROWSER_URL+'\n'+tr('srv.consoleWorkspace',{path:settings.workspace})+'\n'+tr('srv.consoleKeepOpen')+'\n');
   if(process.argv.includes('--open'))openWindow();
 });
-for(const signal of ['SIGTERM','SIGINT'])process.on(signal,()=>{devices.shutdown();process.exit(0);});
+for(const signal of ['SIGTERM','SIGINT'])process.on(signal,()=>{devices.shutdown();compute.close();process.exit(0);});
 process.on('exit',()=>devices.shutdown());
 server.on('error',e=>{console.error(e.code==='EADDRINUSE'?tr('srv.portBusy',{origin:ORIGIN}):e.message);process.exitCode=1;});

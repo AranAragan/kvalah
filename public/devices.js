@@ -17,8 +17,31 @@
     try{const r=await api('/api/devices'+route,payload);if(r&&r.self)data=r;render();return r;}
     catch(e){errorEl.textContent=e.message;throw e;}
   }
+  // Compute tab: the shared Kvalah Compute Service (queue with cloud agents). Read-only view of /api/compute.
+  let compute=null;
   async function refresh(force){
-    try{const r=await api('/api/devices');data=r;if(force||!busyField())render();}catch(e){errorEl.textContent=e.message;}
+    try{const r=await api('/api/devices');data=r;if(tab==='compute')compute=await api('/api/compute').catch(e=>({connected:false,error:e.message}));if(force||!busyField())render();}catch(e){errorEl.textContent=e.message;}
+  }
+  function renderCompute(){
+    const c=compute;let h='<section class="dev-section"><p class="field-note">'+esc(t('compute.note'))+'</p>';
+    if(!c)return h+'</section>';
+    if(!c.connected)return h+'<p><span class="badge">'+esc(t('compute.off'))+'</span></p>'+(c.error?'<p class="field-note">'+esc(c.error)+'</p>':'')+'</section>';
+    const s=c.metrics?.service||{},m=c.metrics||{},num=v=>Number.isFinite(v)?String(v):'—';
+    h+='<p><span class="badge ok">'+esc(t('compute.on',{model:c.welcome?.model||'—'}))+'</span></p>';
+    h+='<h3>'+esc(t('compute.agents'))+'</h3><ul class="dev-list">'+((s.clients||[]).map(x=>'<li><span><strong>'+esc(x.client)+'</strong><small>'+esc(t('compute.agentLine',{pending:num(x.pending),leases:num(x.leases)}))+'</small></span></li>').join('')||'<li><span>'+esc(t('compute.none'))+'</span></li>')+'</ul>';
+    h+='<h3>'+esc(t('compute.queue'))+'</h3><p>'+esc(t('compute.queueLine',{active:num(s.active?.llm),limit:num(s.limits?.llm),queued:num(s.queued),p50:num(s.waitMs?.p50),p95:num(s.waitMs?.p95)}))+'</p>';
+    const nodes=c.status?.lan?.nodes||[];
+    h+='<h3>'+esc(t('compute.devices'))+'</h3><ul class="dev-list"><li><span><strong>'+esc(t('compute.thisDevice'))+'</strong><small>'+esc(t('compute.slots',{active:num(s.active?.llm),limit:num(s.limits?.llm)}))+'</small></span></li>'
+      +(s.leases?.list||[]).map(l=>'<li><span>'+esc(l.client)+' · '+esc(l.label||'')+'<small>'+esc(t('compute.held',{s:num(Math.round((l.heldMs||0)/1000))}))+'</small></span></li>').join('')
+      +nodes.map(n=>'<li><span><strong>'+esc(n.name)+'</strong><small>'+esc(t(n.online?'compute.nodeOnline':'compute.nodeOffline',{inflight:num(n.inflight),max:num(n.maxParallel)}))+'</small></span></li>').join('')+'</ul>';
+    const perf=m.devicePerf||[];
+    if(perf.some(d=>d.samples))h+='<p class="field-note">'+perf.filter(d=>d.samples).map(d=>esc(t('compute.speed',{name:d.name,tps:num(d.genTokensPerSec),ttft:num(d.ttftMs),load:num(d.load)}))).join(' · ')+'</p>';
+    h+='<h3>'+esc(t('compute.errors'))+'</h3><p>'+esc(t('compute.errorsLine',{failed:num(s.failed),cancelled:num(s.cancelled),rejected:num(s.rejected),timeouts:num(s.queueTimeouts)}))+'</p>';
+    const est=m.savings||{},meas=m.measured||{};
+    h+='<h3>'+esc(t('compute.savings'))+'</h3><p>'+esc(t('compute.estimated',{tokens:num(est.netCloudTokensSaved),usd:est.savedUsd==null?'—':String(est.savedUsd)}))+'</p>';
+    if(est.netCloudTokensSavedAfterOverhead!=null)h+='<p class="field-note">'+esc(t('compute.afterOverhead',{tokens:num(est.netCloudTokensSavedAfterOverhead)}))+'</p>';
+    h+='<p>'+esc(meas.available?t('compute.measured',{pct:num(meas.savingsPct),pairs:num(meas.pairs)}):t('compute.notMeasured'))+'</p>';
+    return h+'</section>';
   }
   function open(next){
     if(next)tab=next;
@@ -27,7 +50,7 @@
   }
   window.openDevices=open;window.renderDevices=()=>{if(dialog.open)render();};
   dialog.addEventListener('close',()=>clearInterval(timer));
-  for(const b of dialog.querySelectorAll('.tab'))b.onclick=()=>{tab=b.dataset.tab;render();};
+  for(const b of dialog.querySelectorAll('.tab'))b.onclick=()=>{tab=b.dataset.tab;render();if(tab==='compute')refresh(true);};
   async function loadGguf(){if(ggufLoading)return;ggufLoading=true;ggufError='';try{const r=await api('/api/devices/gguf');gguf=r.models||[];ggufBlobs=r.blobs||'';ggufDir=r.dir||'';ggufOllama=r.ollama||null;}catch(e){gguf=[];ggufError=e.message;}finally{ggufLoading=false;}if(dialog.open&&tab==='pool')render();}
   // Picking an Ollama model shows its GGUF file in the path field (from the list, or resolved by the host).
   async function fillPath(name){
@@ -156,7 +179,7 @@
   function render(){
     for(const b of dialog.querySelectorAll('.tab')){const on=b.dataset.tab===tab;b.classList.toggle('active',on);b.setAttribute('aria-selected',on);}
     if(!data){bodyEl.innerHTML='';return;}
-    bodyEl.innerHTML=tab==='this'?renderThis():tab==='network'?renderNetwork():renderPool();
+    bodyEl.innerHTML=tab==='this'?renderThis():tab==='network'?renderNetwork():tab==='compute'?renderCompute():renderPool();
     kvI18n.apply(bodyEl);bind();
     if(tab==='pool'&&gguf===null)loadGguf();
   }

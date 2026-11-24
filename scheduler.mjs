@@ -5,7 +5,8 @@
 export class NoNodeError extends Error{constructor(m){super(m);this.name='NoNodeError';}}
 
 export function createScheduler({registry,local,maxAttempts=4,now=Date.now,onEvent=()=>{}}){
-  // local: {provider, model, maxParallel, enabled}
+  // local: {provider, model, maxParallel, enabled, gate?}. gate.lease({label,signal}) → release(): optional shared
+  // model-slot lease (Kvalah Compute Service), so local jobs and cloud-agent delegations share one GPU budget.
   const localState={id:'local',inflight:0,ewmaMs:null};
   const waiters=new Set();
   const wake=()=>{for(const w of [...waiters]){waiters.delete(w);w();}};
@@ -52,12 +53,16 @@ export function createScheduler({registry,local,maxAttempts=4,now=Date.now,onEve
       const name=choice.id==='local'?'local':choice.node.name;
       const started=now();
       onEvent({type:'start',label,node:name,attempt});
+      let unlease=null;
       try{
+        if(choice.id==='local'&&local.gate)unlease=await local.gate.lease({label:'task '+(label??''),signal});
         const value=await job(provider,nodeModel,{id:choice.id,name});
+        unlease?.();
         release(choice,true,now()-started);
         onEvent({type:'done',label,node:name,attempt});
         return {value,node:name,nodeId:choice.id,attempts:attempt,errors};
       }catch(e){
+        unlease?.();
         release(choice,false);
         if(signal?.aborted||e.fatal)throw e;
         errors.push({node:name,error:String(e.message||e).slice(0,200)});
