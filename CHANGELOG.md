@@ -5,6 +5,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-11-25
+
+### Added
+- **Compute tab** in *Devices* (after *Pool*): a shared GPU queue with Kvalah Compute Offload. When the optional Compute Service is running, the kvalah chat and other agents take turns on the GPU instead of loading a model at the same time and filling VRAM. Without the service, kvalah works as before, and the tab reports that the service is not running. The tab is translated into all 10 languages. Checked on ENVERDASH (RTX 5070 Laptop): the tab is visible; cancelling a chat task unloads the model in Ollama (`ollama ps` empty, GPU utilization back to 0%).
+
 ## [0.9.0] - 2026-11-23
 
 ### Added
