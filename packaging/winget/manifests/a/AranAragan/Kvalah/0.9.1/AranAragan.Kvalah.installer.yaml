@@ -10,10 +10,10 @@ InstallModes:
 - silent
 UpgradeBehavior: install
 ProductCode: f936544c-6ee8-50bb-a352-19341f994284
-ReleaseDate: 2026-11-25
+ReleaseDate: 2026-11-24
 Installers:
 - Architecture: x64
   InstallerUrl: https://github.com/AranAragan/kvalah/releases/download/v0.9.1/kvalah-0.9.1-win-x64-setup.exe
-  InstallerSha256: '0000000000000000000000000000000000000000000000000000000000000000'
+  InstallerSha256: B81807042B9C15E3937AFB5D06979F83DF181F1971EF1AAB11785CB721750A02
 ManifestType: installer
 ManifestVersion: 1.10.0
