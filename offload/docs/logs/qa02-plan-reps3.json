@@ -1,0 +1,2606 @@
+{
+  "seed": 1,
+  "reps": 3,
+  "scenarios": 54,
+  "runs": [
+    {
+      "scenario": "ci-log-0",
+      "category": "ci-log",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-0.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-0",
+      "category": "ci-log",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Which tests failed in logs/ci-0.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-1",
+      "category": "ci-log",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-1.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-1",
+      "category": "ci-log",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Which tests failed in logs/ci-1.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-2",
+      "category": "ci-log",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Which tests failed in logs/ci-2.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-2",
+      "category": "ci-log",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-2.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-3",
+      "category": "ci-log",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Which tests failed in logs/ci-3.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-3",
+      "category": "ci-log",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-3.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-4",
+      "category": "ci-log",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-4.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-4",
+      "category": "ci-log",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Which tests failed in logs/ci-4.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-5",
+      "category": "ci-log",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-5.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-5",
+      "category": "ci-log",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Which tests failed in logs/ci-5.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-6",
+      "category": "ci-log",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Which tests failed in logs/ci-6.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-6",
+      "category": "ci-log",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-6.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-7",
+      "category": "ci-log",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Which tests failed in logs/ci-7.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-7",
+      "category": "ci-log",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-7.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-count-0",
+      "category": "ci-log",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "How many tests failed in logs/ci-0.log and in which test files?"
+    },
+    {
+      "scenario": "ci-log-count-0",
+      "category": "ci-log",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "How many tests failed in logs/ci-0.log and in which test files?"
+    },
+    {
+      "scenario": "ci-log-count-3",
+      "category": "ci-log",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "How many tests failed in logs/ci-3.log and in which test files?"
+    },
+    {
+      "scenario": "ci-log-count-3",
+      "category": "ci-log",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "How many tests failed in logs/ci-3.log and in which test files?"
+    },
+    {
+      "scenario": "search-env",
+      "category": "search",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Where does the code read environment variables?"
+    },
+    {
+      "scenario": "search-env",
+      "category": "search",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Where does the code read environment variables?"
+    },
+    {
+      "scenario": "search-deprecated",
+      "category": "search",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Where is deprecatedApi used?"
+    },
+    {
+      "scenario": "search-deprecated",
+      "category": "search",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Where is deprecatedApi used?"
+    },
+    {
+      "scenario": "search-innerhtml",
+      "category": "search",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Find all innerHTML assignments."
+    },
+    {
+      "scenario": "search-innerhtml",
+      "category": "search",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Find all innerHTML assignments."
+    },
+    {
+      "scenario": "search-eval",
+      "category": "search",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Is eval used anywhere?"
+    },
+    {
+      "scenario": "search-eval",
+      "category": "search",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Is eval used anywhere?"
+    },
+    {
+      "scenario": "search-todo",
+      "category": "search",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "List the TODO comments in src/."
+    },
+    {
+      "scenario": "search-todo",
+      "category": "search",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "List the TODO comments in src/."
+    },
+    {
+      "scenario": "search-exec",
+      "category": "search",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Where is a shell command built from user input?"
+    },
+    {
+      "scenario": "search-exec",
+      "category": "search",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Where is a shell command built from user input?"
+    },
+    {
+      "scenario": "deps-importers-widget",
+      "category": "outline-deps",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Which files import src/pkg0/widget.mjs?"
+    },
+    {
+      "scenario": "deps-importers-widget",
+      "category": "outline-deps",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Which files import src/pkg0/widget.mjs?"
+    },
+    {
+      "scenario": "deps-cycle",
+      "category": "outline-deps",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Are there import cycles? Name the files."
+    },
+    {
+      "scenario": "deps-cycle",
+      "category": "outline-deps",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Are there import cycles? Name the files."
+    },
+    {
+      "scenario": "deps-transitive",
+      "category": "outline-deps",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "What transitively depends on src/pkg2/mod3.mjs?"
+    },
+    {
+      "scenario": "deps-transitive",
+      "category": "outline-deps",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "What transitively depends on src/pkg2/mod3.mjs?"
+    },
+    {
+      "scenario": "outline-review",
+      "category": "outline-deps",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Outline src/review/r2.mjs: is there a checkPassword function and where?"
+    },
+    {
+      "scenario": "outline-review",
+      "category": "outline-deps",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Outline src/review/r2.mjs: is there a checkPassword function and where?"
+    },
+    {
+      "scenario": "symbols-createWidget",
+      "category": "outline-deps",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Where is createWidget defined?"
+    },
+    {
+      "scenario": "symbols-createWidget",
+      "category": "outline-deps",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Where is createWidget defined?"
+    },
+    {
+      "scenario": "references-createWidget",
+      "category": "outline-deps",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "List the textual references to createWidget."
+    },
+    {
+      "scenario": "references-createWidget",
+      "category": "outline-deps",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "List the textual references to createWidget."
+    },
+    {
+      "scenario": "docs-storage",
+      "category": "docs",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Summarize docs/storage.md section by section (quote each heading)."
+    },
+    {
+      "scenario": "docs-storage",
+      "category": "docs",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Summarize docs/storage.md section by section (quote each heading)."
+    },
+    {
+      "scenario": "docs-scheduler",
+      "category": "docs",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Summarize docs/scheduler.md section by section (quote each heading)."
+    },
+    {
+      "scenario": "docs-scheduler",
+      "category": "docs",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Summarize docs/scheduler.md section by section (quote each heading)."
+    },
+    {
+      "scenario": "docs-network",
+      "category": "docs",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Summarize docs/network.md section by section (quote each heading)."
+    },
+    {
+      "scenario": "docs-network",
+      "category": "docs",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Summarize docs/network.md section by section (quote each heading)."
+    },
+    {
+      "scenario": "docs-security",
+      "category": "docs",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Summarize docs/security.md section by section (quote each heading)."
+    },
+    {
+      "scenario": "docs-security",
+      "category": "docs",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Summarize docs/security.md section by section (quote each heading)."
+    },
+    {
+      "scenario": "docs-release",
+      "category": "docs",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Summarize docs/release.md section by section (quote each heading)."
+    },
+    {
+      "scenario": "docs-release",
+      "category": "docs",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Summarize docs/release.md section by section (quote each heading)."
+    },
+    {
+      "scenario": "docs-telemetry",
+      "category": "docs",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Summarize docs/telemetry.md section by section (quote each heading)."
+    },
+    {
+      "scenario": "docs-telemetry",
+      "category": "docs",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Summarize docs/telemetry.md section by section (quote each heading)."
+    },
+    {
+      "scenario": "tests-m0",
+      "category": "tests",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Draft node:test unit tests for every exported function in src/money/m0.mjs."
+    },
+    {
+      "scenario": "tests-m0",
+      "category": "tests",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Draft node:test unit tests for every exported function in src/money/m0.mjs."
+    },
+    {
+      "scenario": "tests-m1",
+      "category": "tests",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Draft node:test unit tests for every exported function in src/money/m1.mjs."
+    },
+    {
+      "scenario": "tests-m1",
+      "category": "tests",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Draft node:test unit tests for every exported function in src/money/m1.mjs."
+    },
+    {
+      "scenario": "tests-m2",
+      "category": "tests",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Draft node:test unit tests for every exported function in src/money/m2.mjs."
+    },
+    {
+      "scenario": "tests-m2",
+      "category": "tests",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Draft node:test unit tests for every exported function in src/money/m2.mjs."
+    },
+    {
+      "scenario": "tests-m3",
+      "category": "tests",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Draft node:test unit tests for every exported function in src/money/m3.mjs."
+    },
+    {
+      "scenario": "tests-m3",
+      "category": "tests",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Draft node:test unit tests for every exported function in src/money/m3.mjs."
+    },
+    {
+      "scenario": "tests-m4",
+      "category": "tests",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Draft node:test unit tests for every exported function in src/money/m4.mjs."
+    },
+    {
+      "scenario": "tests-m4",
+      "category": "tests",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Draft node:test unit tests for every exported function in src/money/m4.mjs."
+    },
+    {
+      "scenario": "review-r0",
+      "category": "pre-review",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Pre-review src/review/r0.mjs for security problems; quote the offending line."
+    },
+    {
+      "scenario": "review-r0",
+      "category": "pre-review",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Pre-review src/review/r0.mjs for security problems; quote the offending line."
+    },
+    {
+      "scenario": "review-r1",
+      "category": "pre-review",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Pre-review src/review/r1.mjs for security problems; quote the offending line."
+    },
+    {
+      "scenario": "review-r1",
+      "category": "pre-review",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Pre-review src/review/r1.mjs for security problems; quote the offending line."
+    },
+    {
+      "scenario": "review-r2",
+      "category": "pre-review",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Pre-review src/review/r2.mjs for security problems; quote the offending line."
+    },
+    {
+      "scenario": "review-r2",
+      "category": "pre-review",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Pre-review src/review/r2.mjs for security problems; quote the offending line."
+    },
+    {
+      "scenario": "review-r3",
+      "category": "pre-review",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Pre-review src/review/r3.mjs for security problems; quote the offending line."
+    },
+    {
+      "scenario": "review-r3",
+      "category": "pre-review",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Pre-review src/review/r3.mjs for security problems; quote the offending line."
+    },
+    {
+      "scenario": "review-r4",
+      "category": "pre-review",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Pre-review src/review/r4.mjs for security problems; quote the offending line."
+    },
+    {
+      "scenario": "review-r4",
+      "category": "pre-review",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Pre-review src/review/r4.mjs for security problems; quote the offending line."
+    },
+    {
+      "scenario": "review-r5",
+      "category": "pre-review",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Pre-review src/review/r5.mjs for security problems; quote the offending line."
+    },
+    {
+      "scenario": "review-r5",
+      "category": "pre-review",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Pre-review src/review/r5.mjs for security problems; quote the offending line."
+    },
+    {
+      "scenario": "repo-summary-pkg4",
+      "category": "large-repo",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Summarize what package src/pkg4 does, file by file."
+    },
+    {
+      "scenario": "repo-summary-pkg4",
+      "category": "large-repo",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Summarize what package src/pkg4 does, file by file."
+    },
+    {
+      "scenario": "repo-stats",
+      "category": "large-repo",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "How many source files and lines does the repository have, by extension?"
+    },
+    {
+      "scenario": "repo-stats",
+      "category": "large-repo",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "How many source files and lines does the repository have, by extension?"
+    },
+    {
+      "scenario": "repo-graph",
+      "category": "large-repo",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Give the import graph summary: file count, cycles, entry points."
+    },
+    {
+      "scenario": "repo-graph",
+      "category": "large-repo",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Give the import graph summary: file count, cycles, entry points."
+    },
+    {
+      "scenario": "repo-symbols-mod",
+      "category": "large-repo",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Where is mod3_7 defined?"
+    },
+    {
+      "scenario": "repo-symbols-mod",
+      "category": "large-repo",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Where is mod3_7 defined?"
+    },
+    {
+      "scenario": "repo-review-all",
+      "category": "large-repo",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Pre-review src/review/r1.mjs and src/review/r3.mjs together for injection and weak randomness."
+    },
+    {
+      "scenario": "repo-review-all",
+      "category": "large-repo",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Pre-review src/review/r1.mjs and src/review/r3.mjs together for injection and weak randomness."
+    },
+    {
+      "scenario": "short-table",
+      "category": "short",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Convert to a markdown table: a=1, b=2"
+    },
+    {
+      "scenario": "short-table",
+      "category": "short",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Convert to a markdown table: a=1, b=2"
+    },
+    {
+      "scenario": "short-rename",
+      "category": "short",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Rename variable x to count in: let x = 0; x++;"
+    },
+    {
+      "scenario": "short-rename",
+      "category": "short",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Rename variable x to count in: let x = 0; x++;"
+    },
+    {
+      "scenario": "short-json",
+      "category": "short",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Make this valid JSON: {a:1}"
+    },
+    {
+      "scenario": "short-json",
+      "category": "short",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Make this valid JSON: {a:1}"
+    },
+    {
+      "scenario": "short-regex",
+      "category": "short",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Write a regex for a 4-digit year."
+    },
+    {
+      "scenario": "short-regex",
+      "category": "short",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Write a regex for a 4-digit year."
+    },
+    {
+      "scenario": "short-commit",
+      "category": "short",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "Write a commit message for: fix typo in README"
+    },
+    {
+      "scenario": "short-commit",
+      "category": "short",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "Write a commit message for: fix typo in README"
+    },
+    {
+      "scenario": "read-config",
+      "category": "already-read",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "(file already open) Which env vars does src/config.mjs use?"
+    },
+    {
+      "scenario": "read-config",
+      "category": "already-read",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "(file already open) Which env vars does src/config.mjs use?"
+    },
+    {
+      "scenario": "read-widget",
+      "category": "already-read",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "(file already open) What does createWidget return?"
+    },
+    {
+      "scenario": "read-widget",
+      "category": "already-read",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "(file already open) What does createWidget return?"
+    },
+    {
+      "scenario": "read-cycle",
+      "category": "already-read",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "(file already open) What does a.mjs import?"
+    },
+    {
+      "scenario": "read-cycle",
+      "category": "already-read",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "(file already open) What does a.mjs import?"
+    },
+    {
+      "scenario": "read-deprecated",
+      "category": "already-read",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "(file already open) What does legacyFetch call?"
+    },
+    {
+      "scenario": "read-deprecated",
+      "category": "already-read",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "(file already open) What does legacyFetch call?"
+    },
+    {
+      "scenario": "read-readme",
+      "category": "already-read",
+      "arm": "baseline",
+      "rep": 0,
+      "cacheMode": "warm",
+      "prompt": "(file already open) What is this project?"
+    },
+    {
+      "scenario": "read-readme",
+      "category": "already-read",
+      "arm": "hybrid",
+      "rep": 0,
+      "cacheMode": "cold",
+      "prompt": "(file already open) What is this project?"
+    },
+    {
+      "scenario": "ci-log-0",
+      "category": "ci-log",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-0.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-0",
+      "category": "ci-log",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-0.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-1",
+      "category": "ci-log",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-1.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-1",
+      "category": "ci-log",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-1.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-2",
+      "category": "ci-log",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-2.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-2",
+      "category": "ci-log",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-2.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-3",
+      "category": "ci-log",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-3.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-3",
+      "category": "ci-log",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-3.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-4",
+      "category": "ci-log",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-4.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-4",
+      "category": "ci-log",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-4.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-5",
+      "category": "ci-log",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-5.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-5",
+      "category": "ci-log",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-5.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-6",
+      "category": "ci-log",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-6.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-6",
+      "category": "ci-log",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-6.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-7",
+      "category": "ci-log",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-7.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-7",
+      "category": "ci-log",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-7.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-count-0",
+      "category": "ci-log",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "How many tests failed in logs/ci-0.log and in which test files?"
+    },
+    {
+      "scenario": "ci-log-count-0",
+      "category": "ci-log",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "How many tests failed in logs/ci-0.log and in which test files?"
+    },
+    {
+      "scenario": "ci-log-count-3",
+      "category": "ci-log",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "How many tests failed in logs/ci-3.log and in which test files?"
+    },
+    {
+      "scenario": "ci-log-count-3",
+      "category": "ci-log",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "How many tests failed in logs/ci-3.log and in which test files?"
+    },
+    {
+      "scenario": "search-env",
+      "category": "search",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Where does the code read environment variables?"
+    },
+    {
+      "scenario": "search-env",
+      "category": "search",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Where does the code read environment variables?"
+    },
+    {
+      "scenario": "search-deprecated",
+      "category": "search",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Where is deprecatedApi used?"
+    },
+    {
+      "scenario": "search-deprecated",
+      "category": "search",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Where is deprecatedApi used?"
+    },
+    {
+      "scenario": "search-innerhtml",
+      "category": "search",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Find all innerHTML assignments."
+    },
+    {
+      "scenario": "search-innerhtml",
+      "category": "search",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Find all innerHTML assignments."
+    },
+    {
+      "scenario": "search-eval",
+      "category": "search",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Is eval used anywhere?"
+    },
+    {
+      "scenario": "search-eval",
+      "category": "search",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Is eval used anywhere?"
+    },
+    {
+      "scenario": "search-todo",
+      "category": "search",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "List the TODO comments in src/."
+    },
+    {
+      "scenario": "search-todo",
+      "category": "search",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "List the TODO comments in src/."
+    },
+    {
+      "scenario": "search-exec",
+      "category": "search",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Where is a shell command built from user input?"
+    },
+    {
+      "scenario": "search-exec",
+      "category": "search",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Where is a shell command built from user input?"
+    },
+    {
+      "scenario": "deps-importers-widget",
+      "category": "outline-deps",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Which files import src/pkg0/widget.mjs?"
+    },
+    {
+      "scenario": "deps-importers-widget",
+      "category": "outline-deps",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Which files import src/pkg0/widget.mjs?"
+    },
+    {
+      "scenario": "deps-cycle",
+      "category": "outline-deps",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Are there import cycles? Name the files."
+    },
+    {
+      "scenario": "deps-cycle",
+      "category": "outline-deps",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Are there import cycles? Name the files."
+    },
+    {
+      "scenario": "deps-transitive",
+      "category": "outline-deps",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "What transitively depends on src/pkg2/mod3.mjs?"
+    },
+    {
+      "scenario": "deps-transitive",
+      "category": "outline-deps",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "What transitively depends on src/pkg2/mod3.mjs?"
+    },
+    {
+      "scenario": "outline-review",
+      "category": "outline-deps",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Outline src/review/r2.mjs: is there a checkPassword function and where?"
+    },
+    {
+      "scenario": "outline-review",
+      "category": "outline-deps",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Outline src/review/r2.mjs: is there a checkPassword function and where?"
+    },
+    {
+      "scenario": "symbols-createWidget",
+      "category": "outline-deps",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Where is createWidget defined?"
+    },
+    {
+      "scenario": "symbols-createWidget",
+      "category": "outline-deps",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Where is createWidget defined?"
+    },
+    {
+      "scenario": "references-createWidget",
+      "category": "outline-deps",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "List the textual references to createWidget."
+    },
+    {
+      "scenario": "references-createWidget",
+      "category": "outline-deps",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "List the textual references to createWidget."
+    },
+    {
+      "scenario": "docs-storage",
+      "category": "docs",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Summarize docs/storage.md section by section (quote each heading)."
+    },
+    {
+      "scenario": "docs-storage",
+      "category": "docs",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Summarize docs/storage.md section by section (quote each heading)."
+    },
+    {
+      "scenario": "docs-scheduler",
+      "category": "docs",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Summarize docs/scheduler.md section by section (quote each heading)."
+    },
+    {
+      "scenario": "docs-scheduler",
+      "category": "docs",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Summarize docs/scheduler.md section by section (quote each heading)."
+    },
+    {
+      "scenario": "docs-network",
+      "category": "docs",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Summarize docs/network.md section by section (quote each heading)."
+    },
+    {
+      "scenario": "docs-network",
+      "category": "docs",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Summarize docs/network.md section by section (quote each heading)."
+    },
+    {
+      "scenario": "docs-security",
+      "category": "docs",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Summarize docs/security.md section by section (quote each heading)."
+    },
+    {
+      "scenario": "docs-security",
+      "category": "docs",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Summarize docs/security.md section by section (quote each heading)."
+    },
+    {
+      "scenario": "docs-release",
+      "category": "docs",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Summarize docs/release.md section by section (quote each heading)."
+    },
+    {
+      "scenario": "docs-release",
+      "category": "docs",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Summarize docs/release.md section by section (quote each heading)."
+    },
+    {
+      "scenario": "docs-telemetry",
+      "category": "docs",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Summarize docs/telemetry.md section by section (quote each heading)."
+    },
+    {
+      "scenario": "docs-telemetry",
+      "category": "docs",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Summarize docs/telemetry.md section by section (quote each heading)."
+    },
+    {
+      "scenario": "tests-m0",
+      "category": "tests",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Draft node:test unit tests for every exported function in src/money/m0.mjs."
+    },
+    {
+      "scenario": "tests-m0",
+      "category": "tests",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Draft node:test unit tests for every exported function in src/money/m0.mjs."
+    },
+    {
+      "scenario": "tests-m1",
+      "category": "tests",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Draft node:test unit tests for every exported function in src/money/m1.mjs."
+    },
+    {
+      "scenario": "tests-m1",
+      "category": "tests",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Draft node:test unit tests for every exported function in src/money/m1.mjs."
+    },
+    {
+      "scenario": "tests-m2",
+      "category": "tests",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Draft node:test unit tests for every exported function in src/money/m2.mjs."
+    },
+    {
+      "scenario": "tests-m2",
+      "category": "tests",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Draft node:test unit tests for every exported function in src/money/m2.mjs."
+    },
+    {
+      "scenario": "tests-m3",
+      "category": "tests",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Draft node:test unit tests for every exported function in src/money/m3.mjs."
+    },
+    {
+      "scenario": "tests-m3",
+      "category": "tests",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Draft node:test unit tests for every exported function in src/money/m3.mjs."
+    },
+    {
+      "scenario": "tests-m4",
+      "category": "tests",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Draft node:test unit tests for every exported function in src/money/m4.mjs."
+    },
+    {
+      "scenario": "tests-m4",
+      "category": "tests",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Draft node:test unit tests for every exported function in src/money/m4.mjs."
+    },
+    {
+      "scenario": "review-r0",
+      "category": "pre-review",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Pre-review src/review/r0.mjs for security problems; quote the offending line."
+    },
+    {
+      "scenario": "review-r0",
+      "category": "pre-review",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Pre-review src/review/r0.mjs for security problems; quote the offending line."
+    },
+    {
+      "scenario": "review-r1",
+      "category": "pre-review",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Pre-review src/review/r1.mjs for security problems; quote the offending line."
+    },
+    {
+      "scenario": "review-r1",
+      "category": "pre-review",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Pre-review src/review/r1.mjs for security problems; quote the offending line."
+    },
+    {
+      "scenario": "review-r2",
+      "category": "pre-review",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Pre-review src/review/r2.mjs for security problems; quote the offending line."
+    },
+    {
+      "scenario": "review-r2",
+      "category": "pre-review",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Pre-review src/review/r2.mjs for security problems; quote the offending line."
+    },
+    {
+      "scenario": "review-r3",
+      "category": "pre-review",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Pre-review src/review/r3.mjs for security problems; quote the offending line."
+    },
+    {
+      "scenario": "review-r3",
+      "category": "pre-review",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Pre-review src/review/r3.mjs for security problems; quote the offending line."
+    },
+    {
+      "scenario": "review-r4",
+      "category": "pre-review",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Pre-review src/review/r4.mjs for security problems; quote the offending line."
+    },
+    {
+      "scenario": "review-r4",
+      "category": "pre-review",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Pre-review src/review/r4.mjs for security problems; quote the offending line."
+    },
+    {
+      "scenario": "review-r5",
+      "category": "pre-review",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Pre-review src/review/r5.mjs for security problems; quote the offending line."
+    },
+    {
+      "scenario": "review-r5",
+      "category": "pre-review",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Pre-review src/review/r5.mjs for security problems; quote the offending line."
+    },
+    {
+      "scenario": "repo-summary-pkg4",
+      "category": "large-repo",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Summarize what package src/pkg4 does, file by file."
+    },
+    {
+      "scenario": "repo-summary-pkg4",
+      "category": "large-repo",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Summarize what package src/pkg4 does, file by file."
+    },
+    {
+      "scenario": "repo-stats",
+      "category": "large-repo",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "How many source files and lines does the repository have, by extension?"
+    },
+    {
+      "scenario": "repo-stats",
+      "category": "large-repo",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "How many source files and lines does the repository have, by extension?"
+    },
+    {
+      "scenario": "repo-graph",
+      "category": "large-repo",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Give the import graph summary: file count, cycles, entry points."
+    },
+    {
+      "scenario": "repo-graph",
+      "category": "large-repo",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Give the import graph summary: file count, cycles, entry points."
+    },
+    {
+      "scenario": "repo-symbols-mod",
+      "category": "large-repo",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Where is mod3_7 defined?"
+    },
+    {
+      "scenario": "repo-symbols-mod",
+      "category": "large-repo",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Where is mod3_7 defined?"
+    },
+    {
+      "scenario": "repo-review-all",
+      "category": "large-repo",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Pre-review src/review/r1.mjs and src/review/r3.mjs together for injection and weak randomness."
+    },
+    {
+      "scenario": "repo-review-all",
+      "category": "large-repo",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Pre-review src/review/r1.mjs and src/review/r3.mjs together for injection and weak randomness."
+    },
+    {
+      "scenario": "short-table",
+      "category": "short",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Convert to a markdown table: a=1, b=2"
+    },
+    {
+      "scenario": "short-table",
+      "category": "short",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Convert to a markdown table: a=1, b=2"
+    },
+    {
+      "scenario": "short-rename",
+      "category": "short",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Rename variable x to count in: let x = 0; x++;"
+    },
+    {
+      "scenario": "short-rename",
+      "category": "short",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Rename variable x to count in: let x = 0; x++;"
+    },
+    {
+      "scenario": "short-json",
+      "category": "short",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Make this valid JSON: {a:1}"
+    },
+    {
+      "scenario": "short-json",
+      "category": "short",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Make this valid JSON: {a:1}"
+    },
+    {
+      "scenario": "short-regex",
+      "category": "short",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Write a regex for a 4-digit year."
+    },
+    {
+      "scenario": "short-regex",
+      "category": "short",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Write a regex for a 4-digit year."
+    },
+    {
+      "scenario": "short-commit",
+      "category": "short",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Write a commit message for: fix typo in README"
+    },
+    {
+      "scenario": "short-commit",
+      "category": "short",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "Write a commit message for: fix typo in README"
+    },
+    {
+      "scenario": "read-config",
+      "category": "already-read",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "(file already open) Which env vars does src/config.mjs use?"
+    },
+    {
+      "scenario": "read-config",
+      "category": "already-read",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "(file already open) Which env vars does src/config.mjs use?"
+    },
+    {
+      "scenario": "read-widget",
+      "category": "already-read",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "(file already open) What does createWidget return?"
+    },
+    {
+      "scenario": "read-widget",
+      "category": "already-read",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "(file already open) What does createWidget return?"
+    },
+    {
+      "scenario": "read-cycle",
+      "category": "already-read",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "(file already open) What does a.mjs import?"
+    },
+    {
+      "scenario": "read-cycle",
+      "category": "already-read",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "(file already open) What does a.mjs import?"
+    },
+    {
+      "scenario": "read-deprecated",
+      "category": "already-read",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "(file already open) What does legacyFetch call?"
+    },
+    {
+      "scenario": "read-deprecated",
+      "category": "already-read",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "(file already open) What does legacyFetch call?"
+    },
+    {
+      "scenario": "read-readme",
+      "category": "already-read",
+      "arm": "baseline",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "(file already open) What is this project?"
+    },
+    {
+      "scenario": "read-readme",
+      "category": "already-read",
+      "arm": "hybrid",
+      "rep": 1,
+      "cacheMode": "warm",
+      "prompt": "(file already open) What is this project?"
+    },
+    {
+      "scenario": "ci-log-0",
+      "category": "ci-log",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-0.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-0",
+      "category": "ci-log",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-0.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-1",
+      "category": "ci-log",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-1.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-1",
+      "category": "ci-log",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-1.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-2",
+      "category": "ci-log",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-2.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-2",
+      "category": "ci-log",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-2.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-3",
+      "category": "ci-log",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-3.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-3",
+      "category": "ci-log",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-3.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-4",
+      "category": "ci-log",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-4.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-4",
+      "category": "ci-log",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-4.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-5",
+      "category": "ci-log",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-5.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-5",
+      "category": "ci-log",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-5.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-6",
+      "category": "ci-log",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-6.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-6",
+      "category": "ci-log",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-6.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-7",
+      "category": "ci-log",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-7.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-7",
+      "category": "ci-log",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Which tests failed in logs/ci-7.log? Give each test name with its assertion and file:line."
+    },
+    {
+      "scenario": "ci-log-count-0",
+      "category": "ci-log",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "How many tests failed in logs/ci-0.log and in which test files?"
+    },
+    {
+      "scenario": "ci-log-count-0",
+      "category": "ci-log",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "How many tests failed in logs/ci-0.log and in which test files?"
+    },
+    {
+      "scenario": "ci-log-count-3",
+      "category": "ci-log",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "How many tests failed in logs/ci-3.log and in which test files?"
+    },
+    {
+      "scenario": "ci-log-count-3",
+      "category": "ci-log",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "How many tests failed in logs/ci-3.log and in which test files?"
+    },
+    {
+      "scenario": "search-env",
+      "category": "search",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Where does the code read environment variables?"
+    },
+    {
+      "scenario": "search-env",
+      "category": "search",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Where does the code read environment variables?"
+    },
+    {
+      "scenario": "search-deprecated",
+      "category": "search",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Where is deprecatedApi used?"
+    },
+    {
+      "scenario": "search-deprecated",
+      "category": "search",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Where is deprecatedApi used?"
+    },
+    {
+      "scenario": "search-innerhtml",
+      "category": "search",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Find all innerHTML assignments."
+    },
+    {
+      "scenario": "search-innerhtml",
+      "category": "search",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Find all innerHTML assignments."
+    },
+    {
+      "scenario": "search-eval",
+      "category": "search",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Is eval used anywhere?"
+    },
+    {
+      "scenario": "search-eval",
+      "category": "search",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Is eval used anywhere?"
+    },
+    {
+      "scenario": "search-todo",
+      "category": "search",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "List the TODO comments in src/."
+    },
+    {
+      "scenario": "search-todo",
+      "category": "search",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "List the TODO comments in src/."
+    },
+    {
+      "scenario": "search-exec",
+      "category": "search",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Where is a shell command built from user input?"
+    },
+    {
+      "scenario": "search-exec",
+      "category": "search",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Where is a shell command built from user input?"
+    },
+    {
+      "scenario": "deps-importers-widget",
+      "category": "outline-deps",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Which files import src/pkg0/widget.mjs?"
+    },
+    {
+      "scenario": "deps-importers-widget",
+      "category": "outline-deps",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Which files import src/pkg0/widget.mjs?"
+    },
+    {
+      "scenario": "deps-cycle",
+      "category": "outline-deps",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Are there import cycles? Name the files."
+    },
+    {
+      "scenario": "deps-cycle",
+      "category": "outline-deps",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Are there import cycles? Name the files."
+    },
+    {
+      "scenario": "deps-transitive",
+      "category": "outline-deps",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "What transitively depends on src/pkg2/mod3.mjs?"
+    },
+    {
+      "scenario": "deps-transitive",
+      "category": "outline-deps",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "What transitively depends on src/pkg2/mod3.mjs?"
+    },
+    {
+      "scenario": "outline-review",
+      "category": "outline-deps",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Outline src/review/r2.mjs: is there a checkPassword function and where?"
+    },
+    {
+      "scenario": "outline-review",
+      "category": "outline-deps",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Outline src/review/r2.mjs: is there a checkPassword function and where?"
+    },
+    {
+      "scenario": "symbols-createWidget",
+      "category": "outline-deps",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Where is createWidget defined?"
+    },
+    {
+      "scenario": "symbols-createWidget",
+      "category": "outline-deps",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Where is createWidget defined?"
+    },
+    {
+      "scenario": "references-createWidget",
+      "category": "outline-deps",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "List the textual references to createWidget."
+    },
+    {
+      "scenario": "references-createWidget",
+      "category": "outline-deps",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "List the textual references to createWidget."
+    },
+    {
+      "scenario": "docs-storage",
+      "category": "docs",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Summarize docs/storage.md section by section (quote each heading)."
+    },
+    {
+      "scenario": "docs-storage",
+      "category": "docs",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Summarize docs/storage.md section by section (quote each heading)."
+    },
+    {
+      "scenario": "docs-scheduler",
+      "category": "docs",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Summarize docs/scheduler.md section by section (quote each heading)."
+    },
+    {
+      "scenario": "docs-scheduler",
+      "category": "docs",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Summarize docs/scheduler.md section by section (quote each heading)."
+    },
+    {
+      "scenario": "docs-network",
+      "category": "docs",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Summarize docs/network.md section by section (quote each heading)."
+    },
+    {
+      "scenario": "docs-network",
+      "category": "docs",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Summarize docs/network.md section by section (quote each heading)."
+    },
+    {
+      "scenario": "docs-security",
+      "category": "docs",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Summarize docs/security.md section by section (quote each heading)."
+    },
+    {
+      "scenario": "docs-security",
+      "category": "docs",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Summarize docs/security.md section by section (quote each heading)."
+    },
+    {
+      "scenario": "docs-release",
+      "category": "docs",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Summarize docs/release.md section by section (quote each heading)."
+    },
+    {
+      "scenario": "docs-release",
+      "category": "docs",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Summarize docs/release.md section by section (quote each heading)."
+    },
+    {
+      "scenario": "docs-telemetry",
+      "category": "docs",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Summarize docs/telemetry.md section by section (quote each heading)."
+    },
+    {
+      "scenario": "docs-telemetry",
+      "category": "docs",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Summarize docs/telemetry.md section by section (quote each heading)."
+    },
+    {
+      "scenario": "tests-m0",
+      "category": "tests",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Draft node:test unit tests for every exported function in src/money/m0.mjs."
+    },
+    {
+      "scenario": "tests-m0",
+      "category": "tests",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Draft node:test unit tests for every exported function in src/money/m0.mjs."
+    },
+    {
+      "scenario": "tests-m1",
+      "category": "tests",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Draft node:test unit tests for every exported function in src/money/m1.mjs."
+    },
+    {
+      "scenario": "tests-m1",
+      "category": "tests",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Draft node:test unit tests for every exported function in src/money/m1.mjs."
+    },
+    {
+      "scenario": "tests-m2",
+      "category": "tests",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Draft node:test unit tests for every exported function in src/money/m2.mjs."
+    },
+    {
+      "scenario": "tests-m2",
+      "category": "tests",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Draft node:test unit tests for every exported function in src/money/m2.mjs."
+    },
+    {
+      "scenario": "tests-m3",
+      "category": "tests",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Draft node:test unit tests for every exported function in src/money/m3.mjs."
+    },
+    {
+      "scenario": "tests-m3",
+      "category": "tests",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Draft node:test unit tests for every exported function in src/money/m3.mjs."
+    },
+    {
+      "scenario": "tests-m4",
+      "category": "tests",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Draft node:test unit tests for every exported function in src/money/m4.mjs."
+    },
+    {
+      "scenario": "tests-m4",
+      "category": "tests",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Draft node:test unit tests for every exported function in src/money/m4.mjs."
+    },
+    {
+      "scenario": "review-r0",
+      "category": "pre-review",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Pre-review src/review/r0.mjs for security problems; quote the offending line."
+    },
+    {
+      "scenario": "review-r0",
+      "category": "pre-review",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Pre-review src/review/r0.mjs for security problems; quote the offending line."
+    },
+    {
+      "scenario": "review-r1",
+      "category": "pre-review",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Pre-review src/review/r1.mjs for security problems; quote the offending line."
+    },
+    {
+      "scenario": "review-r1",
+      "category": "pre-review",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Pre-review src/review/r1.mjs for security problems; quote the offending line."
+    },
+    {
+      "scenario": "review-r2",
+      "category": "pre-review",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Pre-review src/review/r2.mjs for security problems; quote the offending line."
+    },
+    {
+      "scenario": "review-r2",
+      "category": "pre-review",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Pre-review src/review/r2.mjs for security problems; quote the offending line."
+    },
+    {
+      "scenario": "review-r3",
+      "category": "pre-review",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Pre-review src/review/r3.mjs for security problems; quote the offending line."
+    },
+    {
+      "scenario": "review-r3",
+      "category": "pre-review",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Pre-review src/review/r3.mjs for security problems; quote the offending line."
+    },
+    {
+      "scenario": "review-r4",
+      "category": "pre-review",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Pre-review src/review/r4.mjs for security problems; quote the offending line."
+    },
+    {
+      "scenario": "review-r4",
+      "category": "pre-review",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Pre-review src/review/r4.mjs for security problems; quote the offending line."
+    },
+    {
+      "scenario": "review-r5",
+      "category": "pre-review",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Pre-review src/review/r5.mjs for security problems; quote the offending line."
+    },
+    {
+      "scenario": "review-r5",
+      "category": "pre-review",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Pre-review src/review/r5.mjs for security problems; quote the offending line."
+    },
+    {
+      "scenario": "repo-summary-pkg4",
+      "category": "large-repo",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Summarize what package src/pkg4 does, file by file."
+    },
+    {
+      "scenario": "repo-summary-pkg4",
+      "category": "large-repo",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Summarize what package src/pkg4 does, file by file."
+    },
+    {
+      "scenario": "repo-stats",
+      "category": "large-repo",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "How many source files and lines does the repository have, by extension?"
+    },
+    {
+      "scenario": "repo-stats",
+      "category": "large-repo",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "How many source files and lines does the repository have, by extension?"
+    },
+    {
+      "scenario": "repo-graph",
+      "category": "large-repo",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Give the import graph summary: file count, cycles, entry points."
+    },
+    {
+      "scenario": "repo-graph",
+      "category": "large-repo",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Give the import graph summary: file count, cycles, entry points."
+    },
+    {
+      "scenario": "repo-symbols-mod",
+      "category": "large-repo",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Where is mod3_7 defined?"
+    },
+    {
+      "scenario": "repo-symbols-mod",
+      "category": "large-repo",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Where is mod3_7 defined?"
+    },
+    {
+      "scenario": "repo-review-all",
+      "category": "large-repo",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Pre-review src/review/r1.mjs and src/review/r3.mjs together for injection and weak randomness."
+    },
+    {
+      "scenario": "repo-review-all",
+      "category": "large-repo",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Pre-review src/review/r1.mjs and src/review/r3.mjs together for injection and weak randomness."
+    },
+    {
+      "scenario": "short-table",
+      "category": "short",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Convert to a markdown table: a=1, b=2"
+    },
+    {
+      "scenario": "short-table",
+      "category": "short",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Convert to a markdown table: a=1, b=2"
+    },
+    {
+      "scenario": "short-rename",
+      "category": "short",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Rename variable x to count in: let x = 0; x++;"
+    },
+    {
+      "scenario": "short-rename",
+      "category": "short",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Rename variable x to count in: let x = 0; x++;"
+    },
+    {
+      "scenario": "short-json",
+      "category": "short",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Make this valid JSON: {a:1}"
+    },
+    {
+      "scenario": "short-json",
+      "category": "short",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Make this valid JSON: {a:1}"
+    },
+    {
+      "scenario": "short-regex",
+      "category": "short",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Write a regex for a 4-digit year."
+    },
+    {
+      "scenario": "short-regex",
+      "category": "short",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Write a regex for a 4-digit year."
+    },
+    {
+      "scenario": "short-commit",
+      "category": "short",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Write a commit message for: fix typo in README"
+    },
+    {
+      "scenario": "short-commit",
+      "category": "short",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "Write a commit message for: fix typo in README"
+    },
+    {
+      "scenario": "read-config",
+      "category": "already-read",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "(file already open) Which env vars does src/config.mjs use?"
+    },
+    {
+      "scenario": "read-config",
+      "category": "already-read",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "(file already open) Which env vars does src/config.mjs use?"
+    },
+    {
+      "scenario": "read-widget",
+      "category": "already-read",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "(file already open) What does createWidget return?"
+    },
+    {
+      "scenario": "read-widget",
+      "category": "already-read",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "(file already open) What does createWidget return?"
+    },
+    {
+      "scenario": "read-cycle",
+      "category": "already-read",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "(file already open) What does a.mjs import?"
+    },
+    {
+      "scenario": "read-cycle",
+      "category": "already-read",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "(file already open) What does a.mjs import?"
+    },
+    {
+      "scenario": "read-deprecated",
+      "category": "already-read",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "(file already open) What does legacyFetch call?"
+    },
+    {
+      "scenario": "read-deprecated",
+      "category": "already-read",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "(file already open) What does legacyFetch call?"
+    },
+    {
+      "scenario": "read-readme",
+      "category": "already-read",
+      "arm": "hybrid",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "(file already open) What is this project?"
+    },
+    {
+      "scenario": "read-readme",
+      "category": "already-read",
+      "arm": "baseline",
+      "rep": 2,
+      "cacheMode": "warm",
+      "prompt": "(file already open) What is this project?"
+    }
+  ],
+  "requirements": [
+    "Use the same agent, model, settings, repository snapshot, prompt and quality criteria in both arms.",
+    "Baseline: the agent with its normal tools only (Kvalah MCP server disabled). Hybrid: same agent with Kvalah enabled.",
+    "cold = clear the Kvalah cache before the run (KVALAH_CACHE_DIR emptied); warm = keep it.",
+    "Record usage from the agent/API usage report (usageSource), never from Kvalah estimates.",
+    "Check the final answer with scenario.assert.includes and the rubric; grade blind where possible."
+  ]
+}

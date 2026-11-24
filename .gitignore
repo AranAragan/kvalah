@@ -30,3 +30,10 @@ Thumbs.db
 *.p12
 *.pem
 *.key
+
+# compute service runtime (kvalah-offload): never commit tokens, sockets or local config
+.config/
+*.token
+*.sock
+offload/bench/results/
+offload/*.tmp

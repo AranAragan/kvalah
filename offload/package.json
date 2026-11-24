@@ -1,0 +1,58 @@
+{
+  "name": "kvalah-offload",
+  "version": "0.4.0",
+  "description": "Kvalah Compute Offload: MCP server that lets cloud coding agents (Claude Code, Codex, Cursor) offload bulky read-only work to deterministic algorithms and local LLMs",
+  "license": "MIT",
+  "author": {
+    "name": "Enver Abdullaev",
+    "email": "AranAragan@users.noreply.github.com"
+  },
+  "homepage": "https://github.com/AranAragan/kvalah",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AranAragan/kvalah.git"
+  },
+  "type": "module",
+  "engines": {
+    "node": "^22.18.0 || >=24.11.0"
+  },
+  "bin": {
+    "kvalah-offload": "mcp/server.mjs",
+    "kvalah-offload-service": "compute/service.mjs"
+  },
+  "main": "compute/index.mjs",
+  "files": [
+    "compute/",
+    "mcp/",
+    "bench/",
+    "skill/",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "docs/INSTALL.md",
+    "docs/THREAT-MODEL.md"
+  ],
+  "scripts": {
+    "start": "node mcp/server.mjs",
+    "test": "node --test --test-timeout=60000 test/*.test.mjs",
+    "bench": "node bench/run.mjs",
+    "check": "node scripts/check-syntax.mjs",
+    "pack:check": "npm pack --dry-run",
+    "service": "node compute/service.mjs"
+  },
+  "keywords": [
+    "mcp",
+    "ollama",
+    "llama.cpp",
+    "local-llm",
+    "offload",
+    "claude-code",
+    "codex",
+    "cursor"
+  ],
+  "dependencies": {
+    "@babel/parser": "^8.1.3",
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "zod": "^4.6.7"
+  }
+}
