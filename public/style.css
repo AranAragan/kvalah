@@ -132,7 +132,7 @@ fieldset.kc-field{border:1px solid var(--border);border-radius:8px;padding:8px 1
 .kc-facts{font-size:12.5px;line-height:1.5;padding-left:18px}
 .kc-table{width:100%;border-collapse:collapse;font-size:12px}.kc-table th,.kc-table td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top}.kc-table th{color:var(--muted);font-weight:550}
 .kc-scroll{overflow:auto}
-.kc-chart{width:100%;max-width:560px;height:auto;display:block;margin:6px 0}.kc-chart polyline{fill:none;stroke:var(--accent);stroke-width:2}.kc-chart circle{fill:var(--accent)}.kc-chart text{fill:var(--muted);font-size:10px}
+.kc-chart{width:100%;max-width:560px;height:auto;display:block;margin:6px 0}.kc-chart polyline{fill:none;stroke:var(--accent);stroke-width:2}.kc-chart circle{fill:var(--accent)}.kc-chart text{fill:var(--muted);stroke:none;font-size:10px}
 .kc-events{list-style:none;margin:0;padding:0;font-size:11px;max-height:260px;overflow:auto}.kc-events li{padding:4px 0;border-top:1px solid var(--border);overflow-wrap:anywhere}.kc-events li.lvl-error,.kc-events li.lvl-warn{color:var(--accent)}.kc-events time{color:var(--muted)}
 .dev-list progress{width:120px;accent-color:var(--accent)}
 #computeConsent h2{margin-top:0}

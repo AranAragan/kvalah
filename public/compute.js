@@ -12,6 +12,7 @@
   const when=ts=>ts?new Date(ts).toLocaleString(lang()):ct('none');
   const desktop=()=>window.kvalahDesktop;
   const call=(route,body)=>api('/api/compute/v2/'+route,body);
+  let form={},planInput=null;
   let S=null,tab='participate',open=false,busy=false,timer=null,selExp=null,expData=null,coordEvents=[],plan=null,pairing=null,lastResult={};
   const root=()=>document.getElementById('computeView');
   const body=()=>document.getElementById('computeBody');
@@ -24,7 +25,7 @@
     try{S=await call('state');}catch(e){S={feature_enabled:false,error:e.message};}
     if(S.feature_enabled&&S.lab&&tab==='monitor'){
       const exps=S.lab.experiments||[];if(!selExp||!exps.find(e=>e.id===selExp))selExp=exps[0]?.id||null;
-      try{expData=selExp?await call('lab/status',{id:selExp}):null;const ev=await call('lab/events',{after:0});coordEvents=Array.isArray(ev)?ev.slice(-60):[];}catch{expData=null;}
+      try{expData=selExp?await call('lab/experiment/status',{id:selExp}):null;const ev=await call('lab/events',{after:0});coordEvents=Array.isArray(ev)?ev.slice(-60):[];}catch{expData=null;}
     }
     render(full);
   }
@@ -39,6 +40,9 @@
     if(!full&&editing()){for(const el of body().querySelectorAll('[data-live]'))if(live[el.dataset.live]&&!el.contains(document.activeElement))el.innerHTML=live[el.dataset.live]();return;}
     const y=body().scrollTop;
     body().innerHTML=!S?'':!S.feature_enabled?featureOff():({participate,devices,lab,monitor,data})[tab]();
+    // Keep what the user typed across re-renders (polling, actions).
+    for(const [id,v] of Object.entries(form)){const el=body().querySelector('#'+CSS.escape(id));if(!el)continue;if(el.type==='checkbox')el.checked=v;else el.value=v;}
+    if(busy)body().querySelectorAll('button,input,select').forEach(el=>{if(!el.closest('#computeTabs'))el.disabled=true;});
     body().scrollTop=y;
   }
   const card=(title,inner,extra='')=>'<section class="kc-card'+extra+'">'+(title?'<h3>'+esc(title)+'</h3>':'')+inner+'</section>';
@@ -83,7 +87,7 @@
       +L('status',statusLine)+L('setup',setupList)
       +'<div class="kc-actions">'+btn(S.manual_pause?'resume':'pause',ct(S.manual_pause?'btn.resume':'btn.pause'),{disabled:!S.participation})+btn('stop',ct('btn.stop'),{disabled:!S.link&&!S.participation})+btn('diag',ct('btn.diag'))+'</div>'
       +(lastResult.diag?'<pre class="kc-pre">'+esc(JSON.stringify({state:S.state,reason:S.reason,missing:S.missing,decision:S.governor?.decision,sensors:S.governor?.sensors,broker:S.governor?.broker,runtime:S.runtime,preflight:S.preflight,link:S.link&&{endpoint:S.link.endpoint,fingerprint:S.link.fingerprint,device_state:S.link.device_state},worker:S.worker&&{state:S.worker.state,reason:S.worker.reason,outbox:S.worker.outbox},last_error:S.last_error},null,1))+'</pre>':''));
-    h+='<div class="kc-grid">'+card(ct('status'),slider('gpu_target_pct',ct('gpu'),ct('gpu.note'))+slider('cpu_target_pct',ct('cpu'),ct('cpu.note'))+slider('daily_hours',ct('hours'),'',p.extended_hours?24:12,1,'h')
+    h+='<div class="kc-grid">'+card(ct('limits'),slider('gpu_target_pct',ct('gpu'),ct('gpu.note'))+slider('cpu_target_pct',ct('cpu'),ct('cpu.note'))+slider('daily_hours',ct('hours'),'',p.extended_hours?24:12,1,'h')
       +chk('only_idle',ct('only_idle'))+chk('only_ac',ct('only_ac'))+chk('pause_on_games',ct('pause_on_games'))+chk('pause_on_local_ai',ct('pause_on_local_ai'))+chk('pause_on_fullscreen',ct('pause_on_fullscreen'))
       +'<details class="kc-adv"><summary>'+esc(ct('advanced'))+'</summary><label class="kc-field"><span>'+esc(ct('profile'))+'</span><select data-pol="profile">'+['gentle','custom','full'].map(x=>'<option value="'+x+'"'+(p.profile===x?' selected':'')+'>'+esc(ct('profile.'+x))+'</option>').join('')+'</select></label>'
       +chk('extended_hours',ct('extended_hours'))+num('idle_minutes',ct('idle_minutes'),1,120)+num('min_free_ram_gib',ct('min_free_ram_gib'),0,256,0.5)+num('temp_limit_c',ct('temp_limit_c'),50,95)+num('daily_traffic_mb',ct('daily_traffic_mb'),10,1e6,10)+chk('allow_metered',ct('allow_metered'))
@@ -169,7 +173,7 @@
       +field('kcName',ct('lab.name'),'',{wide:true})
       +'<label class="kc-field"><span>'+esc(ct('lab.preset'))+'</span><select id="kcPreset">'+['smoke','pilot','research'].map(x=>'<option value="'+x+'">'+esc(ct('preset.'+x))+'</option>').join('')+'</select></label>'
       +'<label class="kc-field"><span>'+esc(ct('lab.dataset'))+'</span><select id="kcDataset">'+l.datasets.map(d=>'<option>'+esc(d.id)+'</option>').join('')+'</select></label>'
-      +'<fieldset class="kc-field wide"><legend>'+esc(ct('lab.variants'))+'</legend>'+vlist.map(v=>'<label class="kc-check"><input type="checkbox" class="kcVar" value="'+esc(v)+'"'+(variants.find(x=>x.variant_id===v)?' checked':'')+'> '+esc(v)+'</label>').join('')+'</fieldset>'
+      +'<fieldset class="kc-field wide"><legend>'+esc(ct('lab.variants'))+'</legend>'+vlist.map(v=>'<label class="kc-check"><input type="checkbox" class="kcVar" id="kcVar_'+esc(v)+'" value="'+esc(v)+'"'+(variants.find(x=>x.variant_id===v)?' checked':'')+'> '+esc(v)+'</label>').join('')+'</fieldset>'
       +field('kcRounds',ct('lab.rounds'),'',{type:'number',placeholder:'2'})+field('kcSteps',ct('lab.steps'),'',{type:'number',placeholder:'3'})
       +'<label class="kc-field"><span>'+esc(ct('lab.optimizer'))+'</span><select id="kcOpt"><option>sgd</option><option>adamw</option></select></label>'+field('kcLr',ct('lab.lr'),'',{placeholder:'0.001'})
       +'<label class="kc-field"><span>'+esc(ct('lab.maxlen'))+'</span><select id="kcMaxLen"><option>256</option><option disabled>'+esc(ct('lab.ctx512'))+'</option></select></label>'
@@ -196,7 +200,7 @@
   }
   // ---------- Monitoring ----------
   function chart(points){
-    if(points.length<1)return '';
+    if(points.length<2)return '';
     const W=520,H=140,pad=28,xs=points.map(p=>p[0]),ys=points.map(p=>p[1]);
     const x0=Math.min(...xs),x1=Math.max(...xs)||1,y0=Math.min(...ys),y1=Math.max(...ys);
     const X=x=>pad+(x1===x0?0.5:(x-x0)/(x1-x0))*(W-2*pad),Y=y=>H-pad-(y1===y0?0.5:(y-y0)/(y1-y0))*(H-2*pad);
@@ -234,7 +238,7 @@
     const rt=S.runtime,m=S.model,pf=S.preflight,pr=rt?.probe;
     const backends=S.test_mode?['cuda','mlx','torch-cpu-test','mock']:['cuda','mlx'];
     const defB=rt?.backend||(S.platform==='darwin'?'mlx':'cuda');
-    let h=card(ct('data.profile'),'<select id="kcProfile" data-act-change="profile">'+S.profile.available.map(p=>'<option value="'+esc(p)+'"'+(p===S.profile.id?' selected':'')+'>'+esc(p)+'</option>').join('')+'</select>');
+    let h=card(ct('data.profile'),'<label class="kc-field"><select id="kcProfile" data-act-change="profile">'+S.profile.available.map(p=>'<option value="'+esc(p)+'"'+(p===S.profile.id?' selected':'')+'>'+esc(p)+'</option>').join('')+'</select></label>');
     h+='<div class="kc-grid">'+card(ct('data.runtime'),'<p class="kc-note">'+esc(ct('data.runtime.note'))+'</p>'+field('kcPython',ct('data.python'),rt?.python||'',{browse:'file',wide:true,placeholder:S.platform==='win32'?'C:\\kvalah-compute\\.venv\\Scripts\\python.exe':'~/kvalah-compute/.venv/bin/python'})
       +'<label class="kc-field"><span>'+esc(ct('data.backend'))+'</span><select id="kcBackend">'+backends.map(b=>'<option'+(b===defB?' selected':'')+'>'+b+'</option>').join('')+'</select></label>'+btn('runtime',ct('data.check'),{primary:true})
       +(pr?(pr.backend_ok?'<p class="kc-msg">'+esc(ct('data.ok'))+'</p>':'<p class="kc-msg bad">'+esc(ct('data.fail',{e:pr.backend_error?.message||'?'}))+'</p>')+kv([['python',esc(pr.python)],pr.torch?['torch',esc(pr.torch+(pr.cuda?' · CUDA '+pr.cuda:''))]:null,pr.bitsandbytes?['bitsandbytes',esc(pr.bitsandbytes)]:null,pr.mlx?['mlx',esc(pr.mlx+(pr.mlx_vlm?' · mlx-vlm '+pr.mlx_vlm:''))]:null,pr.gpu?['GPU',esc(pr.gpu+(pr.memory_total_bytes?' · '+fmtB(pr.memory_total_bytes):''))]:null,pr.transformers?['transformers',esc(pr.transformers)]:null]):'')+msg('runtime'))
@@ -257,7 +261,7 @@
   const numv=id=>{const v=val(id);return v===''?undefined:Number(v);};
   const note=(k,text,bad)=>{lastResult[k]={text,bad};};
   async function run(fn,key){
-    if(busy)return;busy=true;render(true);
+    if(busy)return;busy=true;body().querySelectorAll('button,input,select').forEach(el=>el.disabled=true);
     try{const r=await fn();if(r&&typeof r==='object'&&'state' in r&&'policy' in r)S={feature_enabled:true,...r};return r;}
     catch(e){if(key)note(key,e.message,true);else toast(e.message);}
     finally{busy=false;await refresh(true);}
@@ -287,7 +291,7 @@
     stop:()=>{if(confirm(ct('confirm.stop')))run(async()=>{await call('participation',{enabled:false});return call('link/forget',{});});},
     diag:()=>{lastResult.diag=!lastResult.diag;render(true);},
     'consent-revoke':()=>run(()=>call('consent/revoke',{})),
-    pair:()=>run(async()=>{lastResult.pair=null;const r=await call('link/pair',{pairing:val('kcPairing'),alias:val('kcAlias')||undefined});return r;},'pair'),
+    pair:()=>run(async()=>{lastResult.pair=null;const r=await call('link/pair',{pairing:val('kcPairing'),alias:val('kcAlias')||undefined});delete form.kcPairing;return r;},'pair'),
     'link-refresh':()=>run(()=>call('link/refresh',{}),'pair'),
     'link-forget':()=>{if(confirm(ct('confirm.stop')))run(()=>call('link/forget',{}));},
     'lab-start':()=>run(()=>call('lab/start',{bind_ip:val('kcBind'),port:numv('kcPort')}),'lab'),
@@ -302,12 +306,12 @@
     'register-model':()=>run(async()=>{await call('lab/register-model',{});note('model',ct('saved'));},'model'),
     'import-fixture':()=>run(async()=>{const r=await call('lab/import-dataset',{fixture:true});note('dataset',ct('saved')+': '+(r.id||r.dataset_id||''));},'dataset'),
     'import-dataset':()=>run(async()=>{const r=await call('lab/import-dataset',{file:val('kcDsFile'),dataset_id:val('kcDsId'),revision:val('kcDsRev')||'1'});note('dataset',ct('saved')+': '+(r.id||r.dataset_id||''));},'dataset'),
-    'dry-run':()=>run(async()=>{plan=null;lastResult.plan=null;plan=await call('lab/dry-run',{config:experimentConfig()});},'plan'),
-    create:()=>{if(!plan)return;if(!confirm(ct('lab.confirmStart',{n:plan.config.name,t:plan.tasks})))return;
-      run(async()=>{const e=await call('lab/create',{config:experimentConfig()});await call('lab/start',{id:e.id});selExp=e.id;plan=null;tab='monitor';},'plan');},
-    'exp-start':el=>run(()=>call('lab/start',{id:el.dataset.arg}),'exp'),'exp-pause':el=>run(()=>call('lab/pause',{id:el.dataset.arg}),'exp'),
-    'exp-resume':el=>run(()=>call('lab/resume',{id:el.dataset.arg}),'exp'),'exp-finish':el=>run(()=>call('lab/finish',{id:el.dataset.arg}),'exp'),
-    'exp-cancel':el=>{if(confirm(ct('exp.confirmCancel')))run(()=>call('lab/cancel',{id:el.dataset.arg}),'exp');},
+    'dry-run':()=>run(async()=>{plan=null;lastResult.plan=null;const cfg=experimentConfig();plan=await call('lab/dry-run',{config:cfg});planInput=cfg;},'plan'),
+    create:()=>{if(!plan||!planInput)return;if(!confirm(ct('lab.confirmStart',{n:plan.config.name,t:plan.tasks})))return;
+      run(async()=>{const e=await call('lab/create',{config:planInput});for(const k of Object.keys(form))if(/^kc(Name|Rounds|Steps|Lr|Q|Deadline|Seed|EvalEvery|Research|Var_)/.test(k))delete form[k];planInput=null;await call('lab/experiment/start',{id:e.id});selExp=e.id;plan=null;tab='monitor';},'plan');},
+    'exp-start':el=>run(()=>call('lab/experiment/start',{id:el.dataset.arg}),'exp'),'exp-pause':el=>run(()=>call('lab/experiment/pause',{id:el.dataset.arg}),'exp'),
+    'exp-resume':el=>run(()=>call('lab/experiment/resume',{id:el.dataset.arg}),'exp'),'exp-finish':el=>run(()=>call('lab/experiment/finish',{id:el.dataset.arg}),'exp'),
+    'exp-cancel':el=>{if(confirm(ct('exp.confirmCancel')))run(()=>call('lab/experiment/cancel',{id:el.dataset.arg}),'exp');},
     'exp-monitor':el=>{selExp=el.dataset.arg;tab='monitor';refresh(true);},
     'exp-report':el=>{const w=body().querySelector('#kcWeights')?.checked===true;pickDir().then(d=>{d=d||prompt(ct('browse'));if(d)run(async()=>{const r=await call('lab/report',{experiment_id:el.dataset.arg,dir:d,include_weights:w});note('exp',ct('exp.done',{p:r.path}));},'exp');});},
     'exp-peft':el=>{pickDir().then(d=>{d=d||prompt(ct('browse'));if(d)run(async()=>{const r=await call('lab/export-peft',{experiment_id:el.dataset.arg,dir:d});note('exp',ct('exp.done',{p:r.out_dir||r.path||d}));},'exp');});},
@@ -320,7 +324,7 @@
     preflight:()=>run(()=>call('preflight',{}),'model'),
     legacy:()=>run(async()=>{await call('legacy/import',{file:val('kcLegacy')});},'legacy'),
     'verify-report':()=>run(async()=>{const r=await call('verify-report',{file:val('kcReport')});note('verify',(r.ok?'OK':'FAIL')+' · '+(r.run_id||'')+' · rounds '+(r.committed_rounds??'?')+(r.problems?.length?' · '+r.problems.slice(0,5).join('; '):''),!r.ok);},'verify'),
-    browse:async el=>{const [id,kind]=el.dataset.arg.split('|');if(!desktop())return;try{const f=kind==='folder'?await desktop().chooseFolder('other'):await desktop().chooseFile('any');if(f)body().querySelector('#'+id).value=f;}catch(e){toast(e.message);}}
+    browse:async el=>{const [id,kind]=el.dataset.arg.split('|');if(!desktop())return;try{const f=kind==='folder'?await desktop().chooseFolder('other'):await desktop().chooseFile('any');if(f){body().querySelector('#'+id).value=f;form[id]=f;}}catch(e){toast(e.message);}}
   };
   // ---------- wiring ----------
   function init(){
@@ -331,10 +335,11 @@
     root().addEventListener('click',e=>{const b=e.target.closest('[data-act]');if(b&&!b.disabled&&acts[b.dataset.act]){e.preventDefault();acts[b.dataset.act](b);}});
     root().addEventListener('change',e=>{
       const t=e.target;
+      if(t.id&&t.dataset.pol===undefined&&!t.dataset.actChange){form[t.id]=t.type==='checkbox'?t.checked:t.value;if(t.closest('.kc-form'))plan=null;}
       if(t.dataset.actChange&&acts[t.dataset.actChange])return acts[t.dataset.actChange](t);
       if(t.dataset.pol!==undefined){const p=collectPolicy();run(async()=>{lastResult.policy=null;await call('policy',{policy:p,revision:S.policy.revision});},'policy');}
     });
-    root().addEventListener('input',e=>{const t=e.target;if(t.type==='range'&&t.dataset.pol){const o=document.getElementById('v_'+t.dataset.pol);if(o)o.textContent=t.dataset.unit==='h'?ct('hours.unit',{n:t.value}):t.value+t.dataset.unit;
+    root().addEventListener('input',e=>{const t=e.target;if(t.id&&t.dataset.pol===undefined&&t.type!=='checkbox'&&!t.dataset.actChange){form[t.id]=t.value;if(t.closest('.kc-form')&&plan){plan=null;const cb=body().querySelector('[data-act=create]');if(cb)cb.disabled=true;}}if(t.type==='range'&&t.dataset.pol){const o=document.getElementById('v_'+t.dataset.pol);if(o)o.textContent=t.dataset.unit==='h'?ct('hours.unit',{n:t.value}):t.value+t.dataset.unit;
       if(t.dataset.pol==='gpu_target_pct'||t.dataset.pol==='daily_hours'){const g=Number(body().querySelector('[data-pol=gpu_target_pct]').value),hh=Number(body().querySelector('[data-pol=daily_hours]').value);const n=document.getElementById('kcNominal');if(n)n.textContent=(Math.round(g/100*hh*30*10)/10)+' '+(lang()==='ru'?'ч':'h');}}});
     document.addEventListener('keydown',e=>{if(e.key==='Escape'&&open&&!document.querySelector('dialog[open]'))show(false);});
     const ic=document.getElementById('computeIcon');if(ic)ic.innerHTML='<svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg>';

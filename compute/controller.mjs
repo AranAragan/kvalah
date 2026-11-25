@@ -267,12 +267,12 @@ export function createController({dir,secretBox=fileSecretBox,startSidecar=rawSi
       case 'import-dataset':return s.importDataset({file:b.file,fixture:b.fixture===true,dataset_id:b.dataset_id,revision:b.revision||'1',profile_id:st.profile_id,max_length:Number(b.max_length)||256,source:b.source,provenance:b.provenance});
       case 'dry-run':return c.dryRun({...b.config,profile_id:st.profile_id});
       case 'create':return c.createExperiment({...b.config,profile_id:st.profile_id});
-      case 'start':return c.startExperiment(String(b.id));
-      case 'pause':return c.pauseExperiment(String(b.id));
-      case 'resume':return c.resumeExperiment(String(b.id));
-      case 'cancel':return c.cancelExperiment(String(b.id));
-      case 'finish':return c.finishAfterRound(String(b.id));
-      case 'status':return {status:c.status(String(b.id)),rounds:c.rounds(String(b.id))};
+      case 'experiment/start':return c.startExperiment(String(b.id));
+      case 'experiment/pause':return c.pauseExperiment(String(b.id));
+      case 'experiment/resume':return c.resumeExperiment(String(b.id));
+      case 'experiment/cancel':return c.cancelExperiment(String(b.id));
+      case 'experiment/finish':return c.finishAfterRound(String(b.id));
+      case 'experiment/status':return {status:c.status(String(b.id)),rounds:c.rounds(String(b.id))};
       case 'events':return c.events(Number(b.after)||0,200);
       case 'report':{
         if(!b.dir||!path.isAbsolute(b.dir)||!fs.statSync(b.dir).isDirectory())fail('INVALID_SCHEMA','choose an existing folder for the report');

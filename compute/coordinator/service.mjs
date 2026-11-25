@@ -92,6 +92,9 @@ export function createCoordinatorService({dir,startSidecar=defaultSidecar,evalua
   // Dataset import: validation → dedup → PII/secret/licence filters → group-aware split → tokenization with
   // the coordinator's pinned tokenizer → mask validation → immutable shards + manifest.
   async function importDataset({file,fixture=false,dataset_id,revision='1',profile_id,max_length=256,seed=1,source,provenance,runtime}){
+    if(!fixture&&(typeof file!=='string'||!path.isAbsolute(file)||!fs.existsSync(file)))fail('NOT_FOUND','choose an existing JSONL file');
+    // Default id: the fixture name, or the file name reduced to the allowed alphabet.
+    dataset_id=String(dataset_id||(fixture?'smoke-sft-v1':path.basename(file).replace(/\.jsonl?$/i,'').toLowerCase().replace(/[^a-z0-9._-]+/g,'-').replace(/^[^a-z0-9]+/,'').slice(0,64)||'dataset'));
     const text=fs.readFileSync(fixture?FIXTURE:file,'utf8');
     const {rows,rejected}=parseJSONL(text);
     const p=getProfile(profile_id);
