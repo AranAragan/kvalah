@@ -5,6 +5,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Kvalah Compute v0.2** (experimental, **off by default**): new *Compute* section in the sidebar with *Participation*, *Devices*, *Training Lab*, *Monitoring* and *Models & data* (English and Russian). Volunteer participation with a versioned consent per project, a local resource governor (GPU time share, CPU share, hours per day, idle, mains power, games on Windows, local AI, full screen, temperature, memory, quiet hours, traffic), a LAN coordinator with pinned TLS, one-time pairing, per-device Ed25519 identities and approval/revoke, federated Freeze-A LoRA SFT on Ministral 3 3B (CUDA NF4 and MLX workers), trusted validation, report export with offline verification, PEFT adapter export, and a read-only import that reproduces the v0.1 experiment bit-exactly. CLI: `npm run compute -- --help`. Hardware runs are not verified yet (docs/compute/HW-TEST.md). The existing *Devices → Compute* tab (Offload GPU queue) is unchanged.
+
+### Fixed
+- `test/mac-updater.test.mjs`: the corrupted-sha512 case could equal the real digest (1 in 64 runs).
+
 ## [0.9.1] - 2026-11-25
 
 ### Added
