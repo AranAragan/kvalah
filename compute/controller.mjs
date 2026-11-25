@@ -234,7 +234,7 @@ export function createController({dir,secretBox=fileSecretBox,startSidecar=rawSi
   }
   const hasLab=()=>!!service||fs.existsSync(path.join(dir,'coordinator','db','coordinator.sqlite'));
   async function labStart({bind_ip,port}){
-    const r=await svc().start({bindIp:bind_ip,port:Number(port)||DEFAULT_PORT});st.lab={bind_ip,port:r.port,was_running:true};save();sensorsOn();ev('info','lab.started',{endpoint:r.endpoint});return snapshot();
+    const r=await svc().start({bindIp:bind_ip,port:port===0||port==='0'?0:Number(port)||DEFAULT_PORT});st.lab={bind_ip,port:r.port,was_running:true};save();sensorsOn();ev('info','lab.started',{endpoint:r.endpoint});return snapshot();
   }
   async function labStop(){if(service){await service.stop();}st.lab={...st.lab,was_running:false};save();ev('info','lab.stopped',{});return snapshot();}
   // This computer joins its own coordinator as a worker (local admin approves it directly; audited).
