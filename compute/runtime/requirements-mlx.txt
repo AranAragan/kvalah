@@ -1,0 +1,14 @@
+# Kvalah Compute v0.2 — Apple Silicon (MLX) worker runtime, macOS 14+, Python 3.12 (arm64, not Rosetta).
+#   python3.12 -m venv ~/kvalah-compute/.venv && ~/kvalah-compute/.venv/bin/python -m pip install -r requirements-mlx.txt
+# mlx-vlm 0.8.1 / mlx-lm 0.32.2 / mlx 0.32.5 are the versions the Torch<->MLX parity test (tiny Mistral3,
+# CPU MLX on Linux) was run with. Metal behaviour on a real Mac is NOT verified yet (see docs/compute/HW-TEST.md).
+# Hashes are not pinned in v0.2.
+mlx==0.32.5
+mlx-lm==0.32.2
+mlx-vlm==0.8.1
+transformers==5.24.1
+tokenizers==0.23.3
+safetensors==0.8.0
+numpy==2.5.5
+sentencepiece==0.2.3
+Jinja2==3.1.6

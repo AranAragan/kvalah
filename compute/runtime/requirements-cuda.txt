@@ -1,0 +1,17 @@
+# Kvalah Compute v0.2 — CUDA worker / coordinator runtime (Windows or Linux, Python 3.12, NVIDIA).
+# Install torch FIRST from the PyTorch index (pick the CUDA build that matches the driver):
+#   RTX 50xx (Blackwell, sm_120) and RTX 20xx (Turing, sm_75), driver >= 580:
+#     python -m pip install torch==2.14.1 --index-url https://download.pytorch.org/whl/cu130
+#   then:  python -m pip install -r requirements-cuda.txt
+# Versions are pinned to what the CPU tests were run with on the build box (transformers/peft/safetensors/
+# tokenizers/numpy/accelerate) plus the current bitsandbytes release. Hashes are NOT pinned in v0.2
+# (pip --require-hashes is not used); verify with `kvalah-compute doctor` afterwards.
+transformers==5.24.1
+tokenizers==0.23.3
+safetensors==0.8.0
+numpy==2.5.5
+accelerate==1.16.0
+peft==0.22.0
+bitsandbytes==0.50.2
+sentencepiece==0.2.3
+Jinja2==3.1.6
