@@ -608,5 +608,8 @@
   "compute.measured": "实测：{pairs} 次配对运行，节省 {pct}%",
   "compute.notMeasured": "实测：暂无配对基准测试结果",
   "compute.speed": "{name}：{tps} token/秒（实测），首个 token {ttft} ms，负载 {load}",
-  "compute.afterOverhead": "扣除 Skill/MCP 开销后（估算）：{tokens} 个 token"
+  "compute.afterOverhead": "扣除 Skill/MCP 开销后（估算）：{tokens} 个 token",
+  "desktop.chooseFolder": "选择文件夹",
+  "desktop.chooseFile": "选择文件",
+  "compute2.nav": "Compute"
 }

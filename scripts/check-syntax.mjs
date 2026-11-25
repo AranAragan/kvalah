@@ -2,7 +2,7 @@
 import {spawnSync} from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-const roots=['.','public','test','scripts'];
+const roots=['.','public','test','scripts','compute','compute/protocol','compute/coordinator','compute/worker','compute/governor','compute/datasets'];
 const files=roots.flatMap(dir=>fs.readdirSync(dir).filter(f=>/\.(mjs|cjs|js)$/.test(f)).map(f=>path.join(dir,f)));
 let failed=0;
 for(const file of files){

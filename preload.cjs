@@ -2,7 +2,7 @@ const {contextBridge,ipcRenderer}=require('electron');
 contextBridge.exposeInMainWorld('kvalahDesktop',{
   createShortcuts:()=>ipcRenderer.invoke('kvalah:shortcuts'),
   quit:()=>ipcRenderer.invoke('kvalah:quit'),
-  chooseFolder:purpose=>ipcRenderer.invoke('kvalah:folder',purpose==='project'?'project':'workspace'),
+  chooseFolder:purpose=>ipcRenderer.invoke('kvalah:folder',purpose==='project'?'project':purpose==='other'?'other':'workspace'),
   chooseFile:purpose=>ipcRenderer.invoke('kvalah:file',purpose==='gguf'?'gguf':'any'),
   getToken:()=>ipcRenderer.invoke('kvalah:token'),
   getLanguage:()=>ipcRenderer.invoke('kvalah:language'),

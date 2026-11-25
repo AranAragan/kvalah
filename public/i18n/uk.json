@@ -623,5 +623,8 @@
   "compute.measured": "Виміряна: {pct}% за {pairs} парними прогонами",
   "compute.notMeasured": "Виміряна: результатів парних бенчмарків поки немає",
   "compute.speed": "{name}: {tps} ток/с (виміряно), перший токен {ttft} мс, завантаження {load}",
-  "compute.afterOverhead": "Після накладних витрат Skill/MCP (розрахунок): {tokens} токенів"
+  "compute.afterOverhead": "Після накладних витрат Skill/MCP (розрахунок): {tokens} токенів",
+  "desktop.chooseFolder": "Виберіть теку",
+  "desktop.chooseFile": "Виберіть файл",
+  "compute2.nav": "Compute"
 }

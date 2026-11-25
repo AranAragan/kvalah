@@ -34,6 +34,9 @@ module.exports={
   npmRebuild:false,
   files:[
     '*.mjs','*.cjs','package.json','LICENSE','public/**/*',
+    // Kvalah Compute v0.2 (off by default): Node coordinator/worker + the Python sidecar sources and the
+    // CC0 smoke fixture. No Python runtime, no model weights and no test-only scripts are shipped.
+    'compute/**/*','!compute/python/tests/**','!**/__pycache__/**','!**/*.pyc',
     '!electron-builder.cjs','!test/**','!scripts/**','!docs/**','!packaging/**',
     // pdf.js: only the Node (legacy) build is used; the optional native canvas is not needed for text.
     '!node_modules/@napi-rs/**',

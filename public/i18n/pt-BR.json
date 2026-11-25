@@ -618,5 +618,8 @@
   "compute.measured": "Medida: {pct}% em {pairs} execuções pareadas",
   "compute.notMeasured": "Medida: ainda não há resultados de benchmarks pareados",
   "compute.speed": "{name}: {tps} tok/s (medido), primeiro token {ttft} ms, carga {load}",
-  "compute.afterOverhead": "Após o custo extra de Skill/MCP (estimado): {tokens} tokens"
+  "compute.afterOverhead": "Após o custo extra de Skill/MCP (estimado): {tokens} tokens",
+  "desktop.chooseFolder": "Escolher uma pasta",
+  "desktop.chooseFile": "Escolher um arquivo",
+  "compute2.nav": "Compute"
 }
