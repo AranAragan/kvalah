@@ -37,15 +37,17 @@ test('packaging config is consistent with the app and the release channels',()=>
   const chromium={ru:'ru',en:'en-US',uk:'uk',de:'de',fr:'fr',es:'es','pt-BR':'pt-BR','zh-CN':'zh-CN',tr:'tr',ja:'ja'};
   for(const lang of LANGS)assert.ok(config.electronLanguages.includes(chromium[lang]),lang);
   assert.ok(fs.existsSync(path.join(ROOT,config.nsis.include)));
-  // Package manager manifests point at this version's release assets.
-  const scoop=JSON.parse(fs.readFileSync(path.join(ROOT,'bucket/kvalah.json'),'utf8'));
-  assert.equal(scoop.version,pkg.version);
-  assert.ok(scoop.architecture['64bit'].url.includes(`/v${pkg.version}/kvalah-${pkg.version}-win-x64-portable.zip`));
-  const dir=path.join(ROOT,'packaging/winget/manifests/a/AranAragan/Kvalah',pkg.version);
-  const installer=fs.readFileSync(path.join(dir,'AranAragan.Kvalah.installer.yaml'),'utf8');
-  assert.match(installer,new RegExp(`PackageVersion: ${pkg.version.replace(/\./g,'\\.')}`));
-  assert.ok(installer.includes(`/v${pkg.version}/kvalah-${pkg.version}-win-x64-setup.exe`));
-  assert.match(installer,/InstallerType: nullsoft/);
+  // Package manager manifests point at this version's release assets (prereleases skip Scoop/winget).
+  if(!pkg.version.includes('-')){
+    const scoop=JSON.parse(fs.readFileSync(path.join(ROOT,'bucket/kvalah.json'),'utf8'));
+    assert.equal(scoop.version,pkg.version);
+    assert.ok(scoop.architecture['64bit'].url.includes(`/v${pkg.version}/kvalah-${pkg.version}-win-x64-portable.zip`));
+    const dir=path.join(ROOT,'packaging/winget/manifests/a/AranAragan/Kvalah',pkg.version);
+    const installer=fs.readFileSync(path.join(dir,'AranAragan.Kvalah.installer.yaml'),'utf8');
+    assert.match(installer,new RegExp(`PackageVersion: ${pkg.version.replace(/\./g,'\\.')}`));
+    assert.ok(installer.includes(`/v${pkg.version}/kvalah-${pkg.version}-win-x64-setup.exe`));
+    assert.match(installer,/InstallerType: nullsoft/);
+  }
   const changelog=fs.readFileSync(path.join(ROOT,'CHANGELOG.md'),'utf8');
   assert.ok(changelog.includes(`## [${pkg.version}]`),'CHANGELOG has an entry for this version');
 });
