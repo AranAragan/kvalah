@@ -5,8 +5,23 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.10.0-compute.1] - 2026-11-26
+
+> **Pre-release — NOT tested on real GPUs or Apple Silicon Metal.**
+> Verified on the Linux build box on CPU only (`torch-cpu-test` and CPU-MLX on tiny random models, protocol/coordinator/governor/UI/CLI suites). Hardware runs on ENVERDASH (RTX 5070), ROG (RTX 2070) and MacBook M1 Pro are pending — see [docs/compute/HW-TEST.md](https://github.com/AranAragan/kvalah/blob/v0.10.0-compute.1/docs/compute/HW-TEST.md).
+
 ### Added
-- **Kvalah Compute v0.2** (experimental, **off by default**): new *Compute* section in the sidebar with *Participation*, *Devices*, *Training Lab*, *Monitoring* and *Models & data* (English and Russian). Volunteer participation with a versioned consent per project, a local resource governor (GPU time share, CPU share, hours per day, idle, mains power, games on Windows, local AI, full screen, temperature, memory, quiet hours, traffic), a LAN coordinator with pinned TLS, one-time pairing, per-device Ed25519 identities and approval/revoke, federated Freeze-A LoRA SFT on Ministral 3 3B (CUDA NF4 and MLX workers), trusted validation, report export with offline verification, PEFT adapter export, and a read-only import that reproduces the v0.1 experiment bit-exactly. CLI: `npm run compute -- --help`. Hardware runs are not verified yet (docs/compute/HW-TEST.md). The existing *Devices → Compute* tab (Offload GPU queue) is unchanged.
+- **Kvalah Compute v0.2** (experimental, **off by default**): new *Compute* section in the sidebar with *Participation*, *Devices*, *Training Lab*, *Monitoring* and *Models & data* (English and Russian). The existing *Devices → Compute* tab (Offload GPU queue) and chat/agent/local inference workflows are unchanged.
+- **Process isolation & Node control (`compute/`):** separate `compute/host.mjs` process started only when enabled (exits on close); Node owns the coordinator (SQLite WAL + CAS), worker, resource governor, pinned self-signed TLS, one-time pairing, per-device Ed25519 identities, admin approval/revoke, and FP64 FedAvg aggregation.
+- **FFA-LoRA & SFT engine:** canonical coordinator-generated frozen A, B-only absolute updates weighted by coordinator-counted assistant-only supervised tokens, central tokenization (`fix_mistral_regex=True`, fixed system prompt), trusted validation NLL evaluator, report export + offline `verify-report`, PEFT adapter export, model registry with pinned revisions + Hugging Face provenance check, and a read-only `experiment-v01.zip` import reproducing v0.1 bit-exactly.
+- **Local Resource Governor:** versioned consent per project/endpoint/fingerprint, GPU/CPU time share sliders, daily wall-time budget persisted across restarts, idle/AC/Windows game/local AI/full-screen/thermal/memory/quiet-hours/traffic limits; missing sensors pause with an explicit reason.
+- **CLI:** `compute/cli.mjs` (`npm run compute -- --help` or `ELECTRON_RUN_AS_NODE=1` with packaged builds).
+
+### Known Limitations
+- **Hardware untested:** CUDA NF4 (RTX 5070 BF16 / RTX 2070 FP16), Metal MLX (M1 Pro), 3-device LAN runs, memory/throughput benchmarks, and real-model PEFT loading have **not** been executed yet.
+- **Model provenance & quantization:** the community MLX 4-bit model remains `unverified` (its card lists `Base` rather than `Instruct`); mixed CUDA NF4 vs MLX 4-bit quantization is a confounder and is reported rather than hidden.
+- **Sensors & background mode:** game detection exists only on Windows (`SHQueryUserNotificationState`), so macOS/Linux users should untick *Pause when games start* if needed; closing the Kvalah window stops Compute (no tray/background mode in v0.2); energy consumption is not measured.
+- **Runtime & pairing:** Python 3.12 runtime and model folders are prepared manually using `compute/runtime/requirements-{cuda,mlx}.txt` (no auto-installer or hash pinning yet); changing coordinator bind IP or port regenerates the TLS certificate and requires re-pairing; device keys use `0600` file storage where Electron `safeStorage` is unavailable (Linux `basic_text` / CLI).
 
 ### Fixed
 - `test/mac-updater.test.mjs`: the corrupted-sha512 case could equal the real digest (1 in 64 runs).
