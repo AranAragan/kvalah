@@ -312,7 +312,7 @@ export function createController({dir,secretBox=fileSecretBox,startSidecar=rawSi
       consent:{required:!!st.link&&!consentFor(st.link),current:consentFor(st.link)||null,text:consentText(),history:st.consents.slice(-10)},
       policy:gov.policy,nominal_monthly_hours:nominalMonthlyHours(gov.policy),budget:gov.budget(),month:gov.month(),measured:gov.measured(),
       governor:{decision,broker:gov.brokerBusy,sensors:redactSensors(gov.sensors)},
-      profile:{id:st.profile_id,available:listProfiles().map(p=>p.id)},runtime:st.runtime,model:st.model?(({file_list,...m})=>m)(st.model):null,preflight:st.preflight,
+      profile:{id:st.profile_id,available:listProfiles().map(p=>p.id),variants:Object.keys(profile().variants)},runtime:st.runtime,model:st.model?(({file_list,...m})=>m)(st.model):null,preflight:st.preflight,
       link:st.link,identity:identity?{device_id:identity.device_id,key_fingerprint:identity.key_fingerprint,secret_store:identity.secret_store}:null,
       worker:w?{state:w.state,reason:w.reason,task:w.task,metrics:w.metrics,last_accepted:w.last_accepted,outbox:w.outbox,session:w.session}:null,
       last_error:lastError,lab:labView(),lab_addresses:lanAddresses(),legacy:legacyView(),events:events.slice(-80)};

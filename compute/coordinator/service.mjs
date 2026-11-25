@@ -70,7 +70,7 @@ export function createCoordinatorService({dir,startSidecar=defaultSidecar,evalua
   }
   async function stop(){clearInterval(timer);timer=null;if(server){await new Promise(r=>server.close(()=>r()));server.closeAllConnections?.();server=null;}return info();}
   const endpoint=()=>bind?`https://${bind.ip}:${bind.port}`:null;
-  function info(){return {running:!!server,endpoint:endpoint(),fingerprint:cert?.fingerprint||null,project_id:coord.projectId,addresses:lanAddresses(),port:bind?.port||DEFAULT_PORT};}
+  function info(){return {running:!!server,endpoint:endpoint(),fingerprint:cert?.fingerprint||null,project_id:coord.projectId,addresses:lanAddresses(),bind_ip:bind?.ip||null,port:bind?.port||DEFAULT_PORT};}
   function createPairing(o={}){
     if(!server)fail('UNAVAILABLE','start the coordinator first');
     const p=coord.createPairing(o);
