@@ -76,7 +76,9 @@ const CHROME=['/usr/bin/google-chrome','/usr/bin/chromium','/usr/bin/chromium-br
 async function cdp(url,{width=1024,height=768}={}){
   const port=await freePort(),prof=tmp('kc-chrome-');
   const ch=spawn(CHROME,['--headless=new','--no-sandbox','--disable-gpu','--remote-debugging-port='+port,'--user-data-dir='+prof,'--window-size='+width+','+height,'about:blank'],{stdio:'ignore'});
-  const tabs=await until(async()=>{try{return (await (await fetch('http://127.0.0.1:'+port+'/json')).json()).filter(t=>t.type==='page');}catch{return null;}},15000,'chrome devtools');
+  let tabs;
+  try{tabs=await until(async()=>{try{const t=(await (await fetch('http://127.0.0.1:'+port+'/json')).json()).filter(t=>t.type==='page'&&t.webSocketDebuggerUrl);return t.length?t:null;}catch{return null;}},15000,'chrome devtools');}
+  catch(e){ch.kill();throw e;}
   const ws=new WebSocket(tabs[0].webSocketDebuggerUrl);await new Promise(r=>ws.onopen=r);
   let id=0;const pend=new Map(),errors=[];
   ws.onmessage=m=>{const d=JSON.parse(m.data);if(d.id&&pend.has(d.id)){pend.get(d.id)(d);pend.delete(d.id);}
@@ -91,7 +93,8 @@ async function cdp(url,{width=1024,height=768}={}){
 }
 test('UI: Compute view is wired to the real API (enable, tabs, policy, lab), no JS errors, fits 1024×768',{skip:!CHROME?'no Chrome/Chromium':skip,timeout:240000},async()=>{
   const app=await startApp(),py=python(PY),model=tinyModel(),shots=process.env.KVALAH_UI_SHOTS;
-  const b=await cdp(app.origin+'/#token='+app.token);
+  let b;
+  try{b=await cdp(app.origin+'/#token='+app.token);}catch(e){await app.stop();throw e;}
   try{
     await until(()=>b.ev("!!document.getElementById('openCompute')&&document.getElementById('openCompute').textContent.length>0"),15000,'app loaded');
     await b.ev("click:#openCompute");
