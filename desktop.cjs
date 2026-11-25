@@ -1,4 +1,4 @@
-const {app,BrowserWindow,Menu,dialog,shell,ipcMain,nativeImage}=require('electron');
+const {app,BrowserWindow,Menu,dialog,shell,ipcMain,nativeImage,powerMonitor,safeStorage}=require('electron');
 const path=require('node:path');
 const fs=require('node:fs');
 const os=require('node:os');
@@ -87,6 +87,28 @@ async function launchBackend(){
     stdio:['ignore','pipe','pipe','ipc']
   });
   backend.stdout.pipe(log,{end:false});backend.stderr.pipe(log,{end:false});
+  // Kvalah Compute: OS sensors for the Resource Governor (null = not available here, never guessed) and the
+  // OS credential store (DPAPI / Keychain via safeStorage) for the device key. Plain IPC, no network.
+  const sensors=()=>{let thermal=null;try{if(process.platform==='darwin')thermal=powerMonitor.getCurrentThermalState?.()||null;}catch{}
+    let battery=null;try{battery=powerMonitor.isOnBatteryPower();}catch{}
+    let idle=null;try{idle=powerMonitor.getSystemIdleTime();}catch{}
+    return {on_battery:typeof battery==='boolean'?battery:null,idle_s:Number.isFinite(idle)?idle:null,thermal_state:thermal&&thermal!=='unknown'?thermal:null};};
+  const sendSensors=()=>{try{if(backend?.connected)backend.send({type:'compute-sensors',sensors:sensors()});}catch{}};
+  const sensorTimer=setInterval(sendSensors,5000);sensorTimer.unref?.();
+  for(const e of ['on-ac','on-battery','thermal-state-change'])try{powerMonitor.on(e,sendSensors);}catch{}
+  const secureStore=()=>{try{if(!safeStorage.isEncryptionAvailable())return false;if(process.platform==='linux'&&safeStorage.getSelectedStorageBackend?.()==='basic_text')return false;return true;}catch{return false;}};
+  backend.on('message',m=>{
+    if(m?.type!=='compute-secret')return;
+    let reply;
+    try{
+      if(m.op==='available')reply={ok:true,data:secureStore()};
+      else if(!secureStore())throw Error('OS secret store unavailable');
+      else if(m.op==='seal')reply={ok:true,data:safeStorage.encryptString(String(m.data)).toString('base64')};
+      else if(m.op==='open')reply={ok:true,data:safeStorage.decryptString(Buffer.from(String(m.data),'base64'))};
+      else throw Error('unknown secret operation');
+    }catch(e){reply={ok:false,error:e.message};}
+    try{backend.send({type:'compute-secret-reply',id:m.id,...reply});}catch{}
+  });
   backend.on('exit',(code)=>{log.end();if(!quitting&&origin){dialog.showErrorBox('kvalah',L('desktop.backendStopped',{code}));app.quit();}});
   return new Promise((resolve,reject)=>{
     const timer=setTimeout(()=>reject(Error(L('desktop.backendTimeout',{path:logs}))),30000);
@@ -147,8 +169,8 @@ async function start(){
   win.webContents.on('will-navigate',(event,url)=>{if(new URL(url).origin!==origin){event.preventDefault();if(/^https?:\/\//i.test(url))shell.openExternal(url);}});
   ipcMain.handle('kvalah:shortcuts',event=>{checkSender(event);return shortcuts();});
   ipcMain.handle('kvalah:quit',event=>{checkSender(event);setTimeout(()=>app.quit(),50);return {ok:true};});
-  ipcMain.handle('kvalah:folder',async(event,purpose)=>{checkSender(event);const result=await dialog.showOpenDialog(win,{title:L(purpose==='project'?'desktop.projectFolder':'desktop.workspaceFolder'),properties:['openDirectory','createDirectory']});return result.canceled?null:result.filePaths[0];});
-  ipcMain.handle('kvalah:file',async(event,purpose)=>{checkSender(event);const result=await dialog.showOpenDialog(win,{title:L('desktop.ggufFile'),properties:['openFile'],filters:purpose==='gguf'?[{name:L('desktop.ggufFilter'),extensions:['gguf']},{name:L('desktop.allFiles'),extensions:['*']}]:undefined});return result.canceled?null:result.filePaths[0];});
+  ipcMain.handle('kvalah:folder',async(event,purpose)=>{checkSender(event);const result=await dialog.showOpenDialog(win,{title:purpose==='other'?L('desktop.chooseFolder'):L(purpose==='project'?'desktop.projectFolder':'desktop.workspaceFolder'),properties:['openDirectory','createDirectory']});return result.canceled?null:result.filePaths[0];});
+  ipcMain.handle('kvalah:file',async(event,purpose)=>{checkSender(event);const result=await dialog.showOpenDialog(win,{title:L(purpose==='gguf'?'desktop.ggufFile':'desktop.chooseFile'),properties:['openFile'],filters:purpose==='gguf'?[{name:L('desktop.ggufFilter'),extensions:['gguf']},{name:L('desktop.allFiles'),extensions:['*']}]:undefined});return result.canceled?null:result.filePaths[0];});
   // The API token is handed to the window over IPC instead of an unauthenticated HTTP endpoint.
   ipcMain.handle('kvalah:token',event=>{checkSender(event);return token;});
   ipcMain.handle('kvalah:language',event=>{checkSender(event);return {language:uiLanguage,source:languagePref?.source||'auto',system:systemLanguages};});

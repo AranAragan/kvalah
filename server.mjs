@@ -23,6 +23,7 @@ import {createDevices} from './devices.mjs';
 import {createScheduler} from './scheduler.mjs';
 import {runSubagent,complete,batchPrompt,parseEdit} from './subagent.mjs';
 import {createComputeLink} from './compute-link.mjs';
+import {createComputeHost} from './compute/host-client.mjs';
 
 const ROOT=path.dirname(fileURLToPath(import.meta.url));
 const VERSION=(()=>{try{return JSON.parse(readFileSync(path.join(ROOT,'package.json'),'utf8')).version;}catch{return '0.0.0';}})();
@@ -58,7 +59,23 @@ const provider=()=>createProvider(settings);
 const compute=createComputeLink({dataDir:DATA,log:m=>console.error('[compute] '+m)});
 // Only generations on THIS machine's model server take a shared slot (a remote/cloud backend does not use the GPU here).
 const localBackend=()=>{try{const u=new URL(settings.provider==='openai'?settings.baseUrl:settings.ollamaUrl);const h=u.hostname.replace(/^\[|\]$/g,'');return h==='localhost'||h==='::1'||/^127\./.test(h);}catch{return false;}};
-const computeGate={lease:o=>localBackend()?compute.lease(o):Promise.resolve(()=>{})};
+// Kvalah Compute v0.2 (volunteer training, experimental): a separate host process, started only when the
+// feature is switched on. The desktop shell relays OS sensors and the safeStorage secret box over IPC.
+const desktopSecrets=new Map();let desktopSecretSeq=0;
+const computeV2=createComputeHost({dir:path.join(DATA,'compute-v2'),log:m=>console.error('[compute-v2] '+m),
+  onSecret:process.send?(op,data)=>new Promise((resolve,reject)=>{const id=++desktopSecretSeq;const t=setTimeout(()=>{desktopSecrets.delete(id);reject(Error('no answer from the desktop secret store'));},10000);
+    desktopSecrets.set(id,{resolve,reject,t});process.send({type:'compute-secret',id,op,data});}):null});
+process.on('message',m=>{
+  if(m?.type==='compute-sensors')computeV2.sensors(m.sensors||{});
+  else if(m?.type==='compute-secret-reply'){const w=desktopSecrets.get(m.id);if(w){desktopSecrets.delete(m.id);clearTimeout(w.t);m.ok?w.resolve(m.data):w.reject(Error(m.error||'secret store error'));}}
+});
+if(settings.computeV2)computeV2.start().catch(e=>console.error('[compute-v2] '+e.message));
+// Resource broker: a generation on this machine's model server pauses Compute training at the next microstep.
+const computeGate={lease:o=>{
+  if(!localBackend())return Promise.resolve(()=>{});
+  const id='ai-'+randomUUID();computeV2.broker(id,true);
+  return compute.lease(o).then(release=>()=>{computeV2.broker(id,false);release();},e=>{computeV2.broker(id,false);throw e;});
+}};
 const devices=await createDevices({dataDir:DATA,version:VERSION,getLocalBackend:()=>settings,localModels:()=>provider().models(),
   onPoolStopped:base=>{if(base&&settings.provider==='openai'&&settings.baseUrl===base.replace(/\/+$/,'')&&settings.poolPrevious){settings={...settings,...settings.poolPrevious};delete settings.poolPrevious;persistSettings().catch(()=>{});}}});
 const active=new Map(),approvals=new Map();
@@ -663,6 +680,21 @@ const server=http.createServer(async(req,res)=>{
     if(route==='/api/state'&&req.method==='GET')return json(res,{app:'kvalah',version:VERSION,chats:chats.map(chatSummary),settings:publicSettings(),platform:process.platform,active:[...active.values()].map(r=>({id:r.id,chatId:r.chatId}))});
     if(route==='/api/chats/get'&&req.method==='GET'){const chat=chats.find(c=>c.id===url.searchParams.get('id'));if(!chat)throw Error(tr('srv.chatNotFound'));return json(res,chat);}
     if(route==='/api/compute'&&req.method==='GET')return json(res,await compute.snapshot());
+    if(route==='/api/compute/v2/feature'&&req.method==='POST'){
+      const b=await body(req),on=b.enabled===true;
+      if(!on&&computeV2.running){await computeV2.request('POST','participation',{enabled:false}).catch(()=>{});await computeV2.close();}
+      settings={...settings,computeV2:on};await persistSettings();
+      if(on)await computeV2.start();
+      return json(res,{feature_enabled:on});
+    }
+    if(route.startsWith('/api/compute/v2/')){
+      if(!settings.computeV2)return route==='/api/compute/v2/state'&&req.method==='GET'?json(res,{feature_enabled:false}):json(res,{error:'Kvalah Compute is switched off',code:'DISABLED'},409);
+      const sub=route.slice('/api/compute/v2/'.length);
+      try{
+        const data=await computeV2.request(req.method,sub,req.method==='POST'?await body(req):Object.fromEntries(url.searchParams));
+        return json(res,sub==='state'?{feature_enabled:true,...data}:data);
+      }catch(e){return json(res,{error:e.message,code:e.code||'ERROR'},e.status&&e.status>=400&&e.status<600?e.status:400);}
+    }
     if(route==='/api/models'){const backend=provider();return json(res,{provider:backend.kind,label:backend.label,models:await backend.models()});}
     if(route==='/api/health'){const backend=provider();return json(res,{provider:backend.kind,label:backend.label,...await backend.health()});}
     if(route==='/api/language'&&req.method==='POST'){
@@ -740,7 +772,7 @@ const server=http.createServer(async(req,res)=>{
     if(route==='/api/cancel'&&req.method==='POST'){const b=await body(req),run=active.get(b.id);run?.controller.abort();return json(res,{ok:true});}
     if(route==='/api/shutdown'&&req.method==='POST'){
       if(active.size)throw Error(tr('busy.stopFirst'));
-      await store.flush();await persistSettings();devices.shutdown();json(res,{ok:true});
+      await store.flush();await persistSettings();devices.shutdown();await computeV2.close().catch(()=>{});json(res,{ok:true});
       setTimeout(()=>server.close(()=>process.exit(0)),150);
       return;
     }
@@ -750,7 +782,7 @@ const server=http.createServer(async(req,res)=>{
       pending.finish(b.allowed===true,b.always===true);return json(res,{ok:true});
     }
     if(route==='/api/export'&&req.method==='GET'){const chat=chats.find(c=>c.id===url.searchParams.get('id'));if(!chat)throw Error(tr('srv.chatNotFound'));res.setHeader('Content-Disposition','attachment; filename="chat.json"');return json(res,chat);}
-    const staticFiles={'/':'index.html','/app.js':'app.js','/devices.js':'devices.js','/i18n.js':'i18n.js','/style.css':'style.css','/logo.svg':'logo.svg','/app-icon.svg':'app-icon.svg','/favicon.ico':'favicon.ico','/icon-192.png':'icon-192.png','/icon-512.png':'icon-512.png','/manifest.webmanifest':'manifest.webmanifest'};
+    const staticFiles={'/':'index.html','/app.js':'app.js','/devices.js':'devices.js','/compute.js':'compute.js','/compute-i18n.js':'compute-i18n.js','/i18n.js':'i18n.js','/style.css':'style.css','/logo.svg':'logo.svg','/app-icon.svg':'app-icon.svg','/favicon.ico':'favicon.ico','/icon-192.png':'icon-192.png','/icon-512.png':'icon-512.png','/manifest.webmanifest':'manifest.webmanifest'};
     if(req.method==='GET'&&route==='/i18n/locales.js'){res.writeHead(200,{'Content-Type':'text/javascript; charset=utf-8','Cache-Control':'no-store'});return res.end(localesScript());}
     if(req.method==='GET'&&staticFiles[route]){
       const extension=path.extname(staticFiles[route]);
@@ -780,6 +812,6 @@ server.listen(PORT,'127.0.0.1',()=>{
   else console.log('\nkvalah — '+BROWSER_URL+'\n'+tr('srv.consoleWorkspace',{path:settings.workspace})+'\n'+tr('srv.consoleKeepOpen')+'\n');
   if(process.argv.includes('--open'))openWindow();
 });
-for(const signal of ['SIGTERM','SIGINT'])process.on(signal,()=>{devices.shutdown();compute.close();process.exit(0);});
+for(const signal of ['SIGTERM','SIGINT'])process.on(signal,async()=>{devices.shutdown();compute.close();await computeV2.close().catch(()=>{});process.exit(0);});
 process.on('exit',()=>devices.shutdown());
 server.on('error',e=>{console.error(e.code==='EADDRINUSE'?tr('srv.portBusy',{origin:ORIGIN}):e.message);process.exitCode=1;});

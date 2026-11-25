@@ -613,5 +613,8 @@
   "compute.measured": "Ölçülen: {pairs} eşli çalıştırmada %{pct}",
   "compute.notMeasured": "Ölçülen: henüz eşli kıyaslama sonucu yok",
   "compute.speed": "{name}: {tps} token/sn (ölçülen), ilk token {ttft} ms, yük {load}",
-  "compute.afterOverhead": "Skill/MCP ek yükünden sonra (tahmini): {tokens} token"
+  "compute.afterOverhead": "Skill/MCP ek yükünden sonra (tahmini): {tokens} token",
+  "desktop.chooseFolder": "Klasör seçin",
+  "desktop.chooseFile": "Dosya seçin",
+  "compute2.nav": "Compute"
 }

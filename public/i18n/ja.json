@@ -608,5 +608,8 @@
   "compute.measured": "計測値：ペア実行 {pairs} 回で {pct}%",
   "compute.notMeasured": "計測値：ペアベンチマークの結果はまだありません",
   "compute.speed": "{name}：{tps} トークン/秒（計測）、最初のトークン {ttft} ms、負荷 {load}",
-  "compute.afterOverhead": "Skill/MCP のオーバーヘッド差し引き後（推定）：{tokens} トークン"
+  "compute.afterOverhead": "Skill/MCP のオーバーヘッド差し引き後（推定）：{tokens} トークン",
+  "desktop.chooseFolder": "フォルダーを選択",
+  "desktop.chooseFile": "ファイルを選択",
+  "compute2.nav": "Compute"
 }

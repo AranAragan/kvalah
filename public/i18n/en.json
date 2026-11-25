@@ -613,5 +613,8 @@
   "compute.measured": "Measured: {pct}% over {pairs} paired runs",
   "compute.notMeasured": "Measured: no paired benchmark results yet",
   "compute.speed": "{name}: {tps} tok/s (measured), first token {ttft} ms, load {load}",
-  "compute.afterOverhead": "After Skill/MCP overhead (estimated): {tokens} tokens"
+  "compute.afterOverhead": "After Skill/MCP overhead (estimated): {tokens} tokens",
+  "desktop.chooseFolder": "Choose a folder",
+  "desktop.chooseFile": "Choose a file",
+  "compute2.nav": "Compute"
 }

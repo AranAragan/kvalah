@@ -52,7 +52,7 @@ test('download verification: size, sha512 (latest-mac.yml) and SHA256SUMS.txt',a
   assert.deepEqual(await mac.verifyDownload(file,{sha512,size:5000}),{ok:true});
   assert.deepEqual(await mac.verifyDownload(file,{sha512,size:5000,sha256}),{ok:true});
   assert.equal((await mac.verifyDownload(file,{sha512,size:4999})).ok,false);
-  assert.equal((await mac.verifyDownload(file,{sha512:'x'+sha512.slice(1),size:5000})).error,'sha512 mismatch');
+  assert.equal((await mac.verifyDownload(file,{sha512:(sha512[0]==='x'?'y':'x')+sha512.slice(1),size:5000})).error,'sha512 mismatch'); // never equal to the real digest
   assert.equal((await mac.verifyDownload(file,{sha512,size:5000,sha256:'0'.repeat(64)})).error,'sha256 mismatch');
   assert.equal((await mac.verifyDownload(file,{size:5000})).ok,false,'a checksum is required');
   const sums=mac.parseSha256Sums(`${sha256}  kvalah-0.8.2-mac-arm64.zip\n${'f'.repeat(64)} *kvalah-0.8.2-win-x64-setup.exe\nnoise\n`);
