@@ -45,6 +45,12 @@ test('app routes: feature flag off by default, full lab run through server → h
     s=await c('policy',{policy:{...s.policy,only_idle:false,only_ac:false,pause_on_games:false,gpu_target_pct:50,cpu_target_pct:50},revision:s.policy.revision});
     await assert.rejects(c('policy',{policy:{...s.policy,gpu_target_pct:7},revision:s.policy.revision}),/steps of 5/);
     const ds=await c('lab/import-dataset',{fixture:true});assert.ok(ds.id);
+    // Register the variant the (self-joined) device reported, then the locally verified folder (same digest).
+    s=await c('state');const self=s.lab.devices.find(d=>d.id===s.lab.self_device);
+    assert.equal(self.capabilities.variants[0].files_digest,s.model.files_digest);
+    await c('lab/register-model',{device_id:self.id,variant_id:'cpu-test'});
+    assert.equal((await c('state')).lab.variants.find(v=>v.variant_id==='cpu-test').files_digest,s.model.files_digest);
+    await assert.rejects(c('lab/register-model',{device_id:'dev-'+'0'.repeat(32),variant_id:'cpu-test'}),/not found/);
     await c('lab/register-model',{});
     const cfg={name:'app-e2e',preset:'smoke',dataset_id:ds.id,variants:['cpu-test'],local_steps:2,quorum:{mode:'all',target:1},optimizer:{name:'adamw',lr:1e-3}};
     const plan=await c('lab/dry-run',{config:cfg});assert.equal(plan.tasks,2);assert.equal(plan.research_pass_possible,false,'synthetic data + unverified model');

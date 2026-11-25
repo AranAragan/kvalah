@@ -163,7 +163,7 @@
     const l=S.lab,prof=S.profile.id;
     const variants=l.variants.filter(v=>v.profile_id===prof);
     let h='<div class="kc-grid">'+card(ct('lab.models'),(variants.length?'<ul class="dev-list">'+variants.map(v=>'<li><span><strong>'+esc(v.variant_id)+'</strong><small>'+esc(short(v.files_digest))+'</small></span><span class="badge'+(v.provenance==='verified'?' ok':'')+'">'+esc(ct(v.provenance==='verified'?'prov.verified':'prov.unverified'))+'</span></li>').join('')+'</ul>':'<p class="kc-note">'+esc(ct('lab.noModels'))+'</p>')
-      +btn('register-model',ct('lab.registerModel'),{disabled:!S.model?.architecture_ok})+msg('model'))
+      +btn('register-model',ct('lab.registerModel'),{disabled:!S.model?.architecture_ok})+reportedVariants(variants)+msg('model'))
       +card(ct('lab.datasets'),(l.datasets.length?'<ul class="dev-list">'+l.datasets.map(d=>'<li><span><strong>'+esc(d.id)+'</strong><small>'+esc(Object.entries(d.split_counts||{}).map(([k,v])=>k+': '+v).join(' · '))+' · '+esc(d.license||'')+' · max '+esc(d.max_length)+'</small></span>'+(d.synthetic?'<span class="badge">'+esc(ct('lab.synthetic'))+'</span>':'')+'</li>').join('')+'</ul>':'<p class="kc-note">'+esc(ct('lab.noDatasets'))+'</p>')
         +'<details><summary>'+esc(ct('lab.import'))+'</summary>'+field('kcDsFile',ct('lab.file'),'',{browse:'file',wide:true})+'<div class="kc-row">'+field('kcDsId',ct('lab.dsid'),'')+field('kcDsRev',ct('lab.rev'),'1')+'</div>'+btn('import-dataset',ct('lab.import'))+'</details>'
         +btn('import-fixture',ct('lab.importFixture'))+msg('dataset'))+'</div>';
@@ -185,6 +185,17 @@
         +(!plan.research_pass_possible?'<p class="kc-msg bad">'+esc(ct('lab.planWarn',{why:[plan.dataset.synthetic?ct('lab.synthetic'):null,plan.model_variants.some(v=>v.provenance!=='verified')?ct('lab.unverified'):null].filter(Boolean).join(', ')}))+'</p>':''):''));
     h+=card(ct('lab.experiments'),L('exps',expList));
     return h;
+  }
+  // Variants reported by approved devices that are not registered here yet (or registered with another digest).
+  function reportedVariants(registered){
+    const out=[];
+    for(const d of (S.lab?.devices||[]))if(d.state==='active')for(const v of (d.capabilities?.variants||[])){
+      if(v.profile_id!==S.profile.id||!v.files_digest)continue;
+      const r=registered.find(x=>x.variant_id===v.variant_id);if(r&&r.files_digest===v.files_digest)continue;
+      if(out.some(o=>o.v.variant_id===v.variant_id&&o.v.files_digest===v.files_digest))continue;out.push({d,v,conflict:!!r});
+    }
+    if(!out.length)return '';
+    return '<h4>'+esc(ct('lab.reported'))+'</h4><ul class="dev-list">'+out.map(o=>'<li><span><strong>'+esc(o.v.variant_id)+'</strong> · '+esc(o.d.alias)+'<small>'+esc(short(o.v.files_digest))+(o.conflict?' · '+esc(ct('lab.digestDiffers')):'')+'</small></span>'+btn('register-device-model',ct('lab.registerReported'),{arg:o.d.id+'|'+o.v.variant_id})+'</li>').join('')+'</ul>';
   }
   function expList(){
     const ex=S.lab?.experiments||[];if(!ex.length)return '<p class="kc-note">'+esc(ct('lab.noExperiments'))+'</p>';
@@ -304,6 +315,7 @@
     'dev-drain':el=>{const [id,on]=el.dataset.arg.split('|');run(()=>call('lab/drain',{id,on:on==='true'}),'lab');},
     'dev-rename':el=>{const a=prompt(ct('dev.renamePrompt'));if(a)run(()=>call('lab/rename',{id:el.dataset.arg,alias:a}),'lab');},
     'register-model':()=>run(async()=>{await call('lab/register-model',{});note('model',ct('saved'));},'model'),
+    'register-device-model':el=>{const [device_id,variant_id]=el.dataset.arg.split('|');run(async()=>{await call('lab/register-model',{device_id,variant_id});note('model',ct('saved'));},'model');},
     'import-fixture':()=>run(async()=>{const r=await call('lab/import-dataset',{fixture:true});note('dataset',ct('saved')+': '+(r.id||r.dataset_id||''));},'dataset'),
     'import-dataset':()=>run(async()=>{const r=await call('lab/import-dataset',{file:val('kcDsFile'),dataset_id:val('kcDsId'),revision:val('kcDsRev')||'1'});note('dataset',ct('saved')+': '+(r.id||r.dataset_id||''));},'dataset'),
     'dry-run':()=>run(async()=>{plan=null;lastResult.plan=null;const cfg=experimentConfig();plan=await call('lab/dry-run',{config:cfg});planInput=cfg;},'plan'),

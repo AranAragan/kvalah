@@ -33,7 +33,7 @@ Clock skew window ±120 s (`CLOCK_SKEW`), replayed nonce → `REPLAY`, revoked d
 | POST | `/v2/updates/<id>/commit` | validate & accept/reject |
 | GET | `/v2/updates/<id>/status` | idempotent status (outbox resume) |
 
-## Task manifest (delivered over the pinned TLS channel; not separately signed in v0.2)
+## Task manifest (signed by the coordinator's Ed25519 key; the worker verifies it with the key pinned at pairing)
 ```
 protocol_version, task_type:'ffa_lora_sft', task_id, lease_id, attempt, project_id, experiment_id, run_id,
 round, round_attempt, device_id, model_profile, model_variant_id, base_adapter_hash, frozen_A_hash,

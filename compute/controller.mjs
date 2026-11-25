@@ -261,6 +261,16 @@ export function createController({dir,secretBox=fileSecretBox,startSidecar=rawSi
       case 'drain':return c.drainDevice(String(b.id),b.on!==false);
       case 'rename':return c.renameDevice(String(b.id),b.alias);
       case 'register-model':{
+        if(b.device_id){
+          // A variant this coordinator cannot verify locally (e.g. the Mac's MLX folder): register the files digest the
+          // approved device reported. Provenance stays unverified unless it is byte-identical to the verified local folder.
+          const d=c.listDevices().find(x=>x.id===String(b.device_id)&&x.state==='active');if(!d)fail('NOT_FOUND','approved device not found');
+          const v=(d.capabilities?.variants||[]).find(x=>x.profile_id===st.profile_id&&x.variant_id===b.variant_id);
+          if(!v?.files_digest)fail('NOT_FOUND','the device did not report a verified model for this variant');
+          const same=st.model?.variant_id===v.variant_id&&st.model.files_digest===v.files_digest;
+          c.db.prepare('insert into audit_log(ts,actor,action,details) values(?,?,?,?)').run(now(),'local-admin','model.register_from_device',JSON.stringify({device:d.id,variant:v.variant_id,files_digest:v.files_digest}));
+          return s.registerModel({profile_id:st.profile_id,variant_id:v.variant_id,model:same?{files_digest:v.files_digest,architecture:st.model.architecture,total_bytes:st.model.total_bytes,quantization:st.model.quantization}:{files_digest:v.files_digest},provenance_check:same?st.model.provenance_check:null});
+        }
         if(!st.model?.files_digest)fail('MODEL_REQUIRED','verify the local model folder first (Models & data)');
         return s.registerModel({profile_id:st.profile_id,variant_id:b.variant_id||st.model.variant_id,model:{files_digest:b.variant_id&&b.variant_id!==st.model.variant_id?null:st.model.files_digest,architecture:st.model.architecture,total_bytes:st.model.total_bytes,quantization:st.model.quantization},provenance_check:st.model.provenance_check});
       }

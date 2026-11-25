@@ -16,5 +16,5 @@ security/legal/abuse review (spec §17).
 | Local API | Other local apps calling `/api/compute/v2` | Existing local token + origin check; compute host has no listening port except the Lab coordinator | — |
 
 Known gaps (tracked in requirements-map.md): no robust aggregation/anomaly detection, no key rotation UI,
-no signed task manifests beyond TLS pinning, no automatic runtime installer with hash pinning, no
+no automatic runtime installer with hash pinning, no
 tray/background mode, no energy metrics.

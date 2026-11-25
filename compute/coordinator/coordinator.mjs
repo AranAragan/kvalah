@@ -497,14 +497,16 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
     if(cfg.eval.every&&(idx+1)%cfg.eval.every===0&&!done)runEval(expId,idx+1,h);
     if(done){event('info','experiment.completed',{experiment:expId},{rounds:idx+1});if(cfg.eval.final)runEval(expId,idx+1,h);}
   }
+  let closed=false;
   function runEval(expId,round,hash){
     if(!evaluate){db.prepare('update experiments set eval=? where id=?').run(J({...(P(experiment(expId).eval)||{}),status:'NOT RUN: no trusted evaluator configured on this coordinator'}),expId);return;}
     Promise.resolve().then(()=>evaluate({experiment:P(experiment(expId).config),checkpoint:cas.get(hash),round,hash})).then(res=>{
+      if(closed)return; // coordinator closed while the evaluator was running: drop the late result
       const e=experiment(expId),ev=P(e.eval)||{};ev.rounds=ev.rounds||{};ev.rounds[round]={...res,checkpoint:hash,at:now()};
       const r0=ev.rounds[0]?.nll,rf=ev.rounds[round]?.nll;
       if(e.state==='COMPLETED'&&Number.isFinite(r0)&&Number.isFinite(rf)&&round>0)ev.gate={rel_change:(rf-r0)/r0,passed:(r0-rf)/r0>=0.01,rule:'validation NLL reduction >= 1% vs r0 (engineering research target, not a guarantee)'};
       db.prepare('update experiments set eval=? where id=?').run(J(ev),expId);event('info','eval.done',{experiment:expId},{round,nll:res.nll});
-    }).catch(err=>{event('error','eval.failed',{experiment:expId},{round,message:String(err.message).slice(0,200)});});
+    }).catch(err=>{if(closed)return;event('error','eval.failed',{experiment:expId},{round,message:String(err.message).slice(0,200)});});
   }
   function tick(){
     // Expire leases (assignment returns to open → replacement possible, no double counting).
@@ -564,5 +566,5 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
   return {db,cas,projectId,coordinatorKey:key.publicKey,createPairing,pairStart,pairComplete,approveDevice,revokeDevice,drainDevice,renameDevice,authDevice,useNonce,startSession,heartbeat,listDevices,
     registerVariant,variants,registerDataset,datasetManifest,listDatasets,dryRun,createExperiment,startExperiment,pauseExperiment,resumeExperiment,cancelExperiment,finishAfterRound,
     claim,renew,progress,abandon,artifactFor,declareUpdate,putContent,commitUpdate,updateStatus,tick,recover,status,rounds,listExperiments,events,checkpoint,latestCheckpoint,
-    onEvent:fn=>{listeners.add(fn);return ()=>listeners.delete(fn);},close:()=>db.close()};
+    onEvent:fn=>{listeners.add(fn);return ()=>listeners.delete(fn);},close:()=>{closed=true;db.close();}};
 }
