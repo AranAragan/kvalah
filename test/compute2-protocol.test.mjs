@@ -5,6 +5,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
+import crypto from 'node:crypto';
+import {syncBuiltinESMExports} from 'node:module';
 import {decode,encode,parseHeader} from '../compute/protocol/safetensors.mjs';
 import {getProfile,tensorSchema,schemaHash,verifyTensors,frozenAHash,sameA,onlyB,trainableCount,frozenCount,listProfiles} from '../compute/protocol/schema.mjs';
 import {canonicalAdapter} from '../compute/protocol/canonical.mjs';
@@ -14,9 +16,26 @@ import {sha256,canonicalJSON} from '../compute/protocol/hash.mjs';
 import {newKeyPair,signJSON,verifyJSON,requestPayload,signBytes,verifyBytes} from '../compute/protocol/sign.mjs';
 import {readZip,writeZip} from '../compute/zip.mjs';
 import {importLegacy} from '../compute/legacy.mjs';
+import {coordinatorCertificate} from '../compute/coordinator/tls.mjs';
 import {python,skipNoPy,PY_ROOT,tmp,v01Zip} from './compute-helpers.mjs';
 
 const P=getProfile('ministral3b-ffa-r8-v1'),T=getProfile('tiny-test-ffa-r4');
+test('coordinator TLS encodes a valid serial when random bytes start with zero and reuses the certificate',t=>{
+  const directory=tmp('kc-tls-'),ips=['127.0.0.1'];
+  const entropy=t.mock.method(crypto,'randomBytes',size=>Buffer.alloc(size));
+  syncBuiltinESMExports();
+  try{
+    const first=coordinatorCertificate(directory,ips);
+    const cert=new crypto.X509Certificate(first.cert);
+    assert.equal(cert.serialNumber,'40'+'00'.repeat(15));
+    assert.ok(cert.verify(cert.publicKey));
+    assert.deepEqual(coordinatorCertificate(directory,ips),first);
+    assert.equal(entropy.mock.callCount(),1);
+  }finally{
+    entropy.mock.restore();
+    syncBuiltinESMExports();
+  }
+});
 test('production profile matches the v0.1 tensor schema (26 layers, q 3072→4096, v 3072→1024, r=8, α=16)',()=>{
   const s=tensorSchema(P,true);
   assert.equal(Object.keys(s).length,104);

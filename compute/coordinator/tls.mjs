@@ -28,7 +28,9 @@ export function makeCertificate({ips=['127.0.0.1'],dnsNames=['localhost'],common
     ext('2.5.29.15',true,bits(Buffer.from([0x84]))),             // keyUsage digitalSignature|keyCertSign
     ext('2.5.29.37',false,seq(oid('1.3.6.1.5.5.7.3.1'))),        // extKeyUsage serverAuth
     ext('2.5.29.17',false,san)));
-  const serial=randomBytes(16);serial[0]&=0x7f;
+  const serial=randomBytes(16);
+  // A nonzero first byte below 0x80 is already a minimal positive DER INTEGER.
+  serial[0]=(serial[0]&0x7f)|0x40;
   const tbs=seq(tlv(0xa0,int(Buffer.from([2]))),int(serial),algo,name,seq(time(now),time(end)),name,spki,exts);
   const sig=createSign('sha256').update(tbs).sign(privateKey);
   const der=seq(tbs,algo,bits(sig));
