@@ -174,9 +174,12 @@ export async function verifyLocalConversion({profile_id,manifest_file,source_dir
   checkResources();
   if(typeof manifest_file!=='string'||!path.isAbsolute(manifest_file))invalid('choose a conversion manifest file');
   const source=await directory(source_dir),output=await directory(output_dir);
+  // macOS exposes some directories through aliases such as /var -> /private/var.
+  // Resolve the parent only so openRegular still rejects a linked manifest file.
+  const manifestPath=path.join(await fs.realpath(path.dirname(manifest_file)),path.basename(manifest_file));
   const inside=(parent,child)=>{const d=path.relative(parent,child);return d===''||(!path.isAbsolute(d)&&d!=='..'&&!d.startsWith('..'+path.sep));};
-  if(inside(source,output)||inside(output,source)||inside(source,manifest_file)||inside(output,manifest_file))invalid('source, output and external manifest must be separate');
-  const raw=await smallFile(manifest_file),m=readJSON(raw);
+  if(inside(source,output)||inside(output,source)||inside(source,manifestPath)||inside(output,manifestPath))invalid('source, output and external manifest must be separate');
+  const raw=await smallFile(manifestPath),m=readJSON(raw);
   if(m?.source_repo!==PIN.source_repo||m.source_revision!==PIN.source_revision)invalid('conversion source must be the pinned official BF16 revision');
   if(!quantization(m.quantization))invalid('manifest must declare 4-bit affine quantization with group size 64');
   const sourceFiles=manifestFiles(m.source_files),outputFiles=manifestFiles(m.output_files);

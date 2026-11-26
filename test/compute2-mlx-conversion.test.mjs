@@ -108,7 +108,16 @@ test('local MLX import checks publisher files, output bytes, FFA-LoRA layout and
   save({...m,output_files:[file,{...tokenizer,sha256:'0'.repeat(64)},outConfig]});
   await assert.rejects(verify(),/metadata SHA-256 mismatch/);
   save(m);
-  const proof=await verify();
+  const manifestHome=path.join(dir,'manifests'),alias=path.join(dir,'manifest-alias');
+  fs.mkdirSync(manifestHome);
+  fs.copyFileSync(manifest_file,path.join(manifestHome,'model.provenance.json'));
+  fs.symlinkSync(manifestHome,alias,process.platform==='win32'?'junction':'dir');
+  if(process.platform!=='win32'){
+    const linkedFile=path.join(manifestHome,'linked.provenance.json');
+    fs.symlinkSync(manifest_file,linkedFile);
+    await assert.rejects(verify({manifest_file:linkedFile}),/linked or non-regular file/);
+  }
+  const proof=await verify({manifest_file:path.join(alias,'model.provenance.json')});
   const expected=hashJSON([outConfig,file,tokenizer]);
   assert.equal(proof.files_digest,expected,'digest uses the sidecar file order and canonical encoding');
   assert.equal(proof.source.status,'official_revision_verified');
