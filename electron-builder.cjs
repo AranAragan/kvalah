@@ -26,6 +26,7 @@ module.exports={
   appId:'kvalah.Desktop', // same AppUserModelID as desktop.cjs: keeps taskbar pins and toasts of existing installs
   productName:'kvalah',
   executableName:'kvalah',
+  protocols:[{name:'Kvalah Compute invitation',schemes:['kvalah-compute']}],
   copyright:'Copyright (c) 2026 Enver Abdullaev',
   directories:{output:'release',buildResources:'packaging/electron'},
   // Unpacked app (resources/app): the backend is a separate Node process (ELECTRON_RUN_AS_NODE) that

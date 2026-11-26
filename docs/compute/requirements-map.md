@@ -2,6 +2,8 @@
 
 ## Stability & Experience Update
 
+Фактическое сравнение двух режимов с прототипом, итог по каждому UX-требованию и ограничения приёмки обновлены в [UX-ONBOARDING.md](UX-ONBOARDING.md).
+
 This table tracks the development build against baseline `d642625`. The tables below retain the original v0.2 evidence. See [STABILITY-REVIEW.md](STABILITY-REVIEW.md) and [TEST-REPORT.md](TEST-REPORT.md) for the new test results and residual risks.
 
 | Requirement | Implementation and evidence | Status |

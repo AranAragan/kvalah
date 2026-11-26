@@ -41,6 +41,13 @@ export function normalizeConfig(input){
     research_confirmed:input.research_confirmed===true
   };
   if(!cfg.dataset_id)fail('DATASET_REQUIRED','choose an approved dataset');
+  if(input.target_device_ids!==undefined){
+    const ids=input.target_device_ids;
+    if(!Array.isArray(ids)||ids.length!==quorum.target||new Set(ids).size!==ids.length||ids.some(id=>typeof id!=='string'||!/^dev-[a-f0-9]{32}$/.test(id))){
+      fail('INVALID_SCHEMA','target devices must be distinct enrolled identities');
+    }
+    cfg.target_device_ids=[...ids].sort();
+  }
   if(cfg.preset==='smoke'&&cfg.rounds>3)fail('INVALID_SCHEMA','smoke profile is limited to 3 rounds');
   if(cfg.rounds>10&&!cfg.research_confirmed)fail('INVALID_SCHEMA','more than 10 rounds needs a completed pilot and explicit research confirmation');
   if(cfg.max_length===512&&!input.memory_checked)fail('INVALID_SCHEMA','max_length 512 needs a memory preflight first (start a new run)');

@@ -93,7 +93,7 @@ if(innerWidth<760||localStorage.getItem('local-codex-side')==='closed')document.
 function toast(text){$('#toast').textContent=text;$('#toast').classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('#toast').classList.remove('show'),5000);}
 async function api(route,data){
   const response=await fetch(route,data===undefined?{headers:{'X-Local-Token':token}}:{method:'POST',headers:{'Content-Type':'application/json','X-Local-Token':token},body:JSON.stringify(data)});
-  const result=await response.json();if(!response.ok)throw Error(result.error||t('error.request'));return result;
+  const result=await response.json();if(!response.ok)throw Object.assign(Error(result.error||t('error.request')),{code:result.code,status:response.status});return result;
 }
 let lastStatus=null;
 function statusT(key,params,isBusy=false){if(typeof params==='boolean'){isBusy=params;params=undefined;}status(t(key,params),isBusy);lastStatus={key,params};}

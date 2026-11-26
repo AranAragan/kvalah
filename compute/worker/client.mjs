@@ -14,8 +14,9 @@ export function parseEndpoint(s){
 }
 // Pairing string: kvalah-compute://pair?e=<endpoint>&fp=<sha256 fingerprint>&c=<one-time code>
 export function parsePairing(s){
-  let u;try{u=new URL(String(s||'').trim());}catch{throw new ComputeError('INVALID_SCHEMA','pairing string is not valid');}
-  if(u.protocol!=='kvalah-compute:')throw new ComputeError('INVALID_SCHEMA','pairing string must start with kvalah-compute://');
+  let u;try{if(typeof s!=='string'||s.length>4096)throw Error();u=new URL(s.trim());}catch{throw new ComputeError('INVALID_SCHEMA','pairing string is not valid');}
+  if(u.protocol!=='kvalah-compute:'||u.hostname!=='pair'||u.pathname||u.username||u.password||u.port||u.hash||
+    [...u.searchParams].length!==3)throw new ComputeError('INVALID_SCHEMA','pairing string is not valid');
   const e=u.searchParams.get('e'),fp=normFingerprint(u.searchParams.get('fp')),c=u.searchParams.get('c');
   if(!e||fp.length!==95||!c)throw new ComputeError('INVALID_SCHEMA','pairing string is incomplete');
   parseEndpoint(e);return {endpoint:e,fingerprint:fp,code:c};
@@ -116,7 +117,7 @@ export function createClient({endpoint,fingerprint,identity,timeoutMs=30000,cont
     }
   }
   return {
-    async syncTime(){const t0=Date.now();const r=await request('GET','/v2/health/live',{signed:false});const t1=Date.now();offset=r.server_time-(t0+t1)/2;return offset;},
+    async syncTime({signal}={}){const t0=Date.now();const r=await request('GET','/v2/health/live',{signed:false,signal});const t1=Date.now();offset=r.server_time-(t0+t1)/2;return offset;},
     get offset(){return offset;},get bytes(){return {in:bytesIn,out:bytesOut};},fingerprint:pin,endpoint,
     close(){controlAgent.destroy();transferAgent.destroy();},
     post:(p,body,o)=>request('POST',p,{body:body??{},...o}),

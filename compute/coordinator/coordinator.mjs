@@ -134,7 +134,8 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
   function checkSession(d,sid){if(!d.session_id||sid!==d.session_id){event('warn','device.session_conflict',{device:d.id});fail('SESSION_SUPERSEDED','another session of this installation is active');}}
   function heartbeat(id,{session_id,status,metrics,capabilities,runtime_version}={}){
     const d=authDevice(id,{allowPending:true});checkSession(d,session_id);
-    const s=status&&typeof status==='object'?{state:String(status.state||'').slice(0,24),pause_reason:status.pause_reason?String(status.pause_reason).slice(0,60):null,drain:!!(P(d.status)||{}).drain}:P(d.status);
+    const s=status&&typeof status==='object'?{state:String(status.state||'').slice(0,24),pause_reason:status.pause_reason?String(status.pause_reason).slice(0,60):null,
+      eligible:status.eligible===true,blocking_reason:typeof status.blocking_reason==='string'?status.blocking_reason.slice(0,60):null,drain:!!(P(d.status)||{}).drain}:P(d.status);
     db.prepare('update devices set last_heartbeat=?,status=?,metrics=?,capabilities=coalesce(?,capabilities),runtime_version=coalesce(?,runtime_version) where id=?')
       .run(now(),J(s),J(sanitizeMetrics(metrics)),capabilities?J(sanitizeCaps(capabilities)):null,runtime_version?String(runtime_version).slice(0,40):null,id);
     return {ok:true,state:d.state,server_time:now()};
@@ -223,7 +224,14 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
     const modelSnapshot=variants().filter(v=>v.profile_id===cfg.profile_id&&cfg.variants.includes(v.variant_id))
       .map(({variant_id,files_digest,provenance,manifest})=>({variant_id,files_digest,provenance,manifest}));
     if(!profile.test_only&&cfg.variants.some(id=>!modelSnapshot.find(v=>v.variant_id===id&&v.files_digest)))fail('MODEL_UNVERIFIED','register a model digest for every selected variant first');
-    if(!profile.test_only&&cfg.preset==='research'&&modelSnapshot.some(v=>v.provenance!=='verified'))fail('MODEL_UNVERIFIED','research requires verified provenance for all variants');
+    if(!profile.test_only&&cfg.preset==='research'){
+      if(!cfg.research_confirmed||modelSnapshot.some(v=>v.provenance!=='verified'))fail('MODEL_UNVERIFIED','research requires approval and verified provenance for all variants');
+      const pilots=db.prepare("select config,model_snapshot from experiments where state='COMPLETED' and json_extract(config,'$.preset')='pilot'").all();
+      if(!pilots.some(p=>{
+        const previous=P(p.config),models=P(p.model_snapshot)||[];
+        return previous.profile_id===cfg.profile_id&&previous.dataset_id===cfg.dataset_id&&modelSnapshot.every(v=>models.some(m=>m.variant_id===v.variant_id&&m.files_digest===v.files_digest));
+      }))fail('INVALID_TRANSITION','complete a pilot with the same dataset and model digests first');
+    }
     db.prepare("insert into experiments(id,run_id,name,config,config_hash,state,created_at,model_snapshot) values(?,?,?,?,?,'CREATED',?,?)").run(id,run,cfg.name,canonicalJSON(cfg),plan.config_hash,now(),canonicalJSON(modelSnapshot));
     audit('admin','experiment.create',{id,config_hash:plan.config_hash});event('info','experiment.created',{experiment:id},{run_id:run,preset:cfg.preset});
     return {id,run_id:run,...plan};
@@ -302,6 +310,7 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
     if(!exps.length)return {task:null,reason:'no_running_experiment',retry_after_s:15};
     for(const e of exps){
       const cfg=JSON.parse(e.config),r=currentRound(e);
+      if(cfg.target_device_ids&&!cfg.target_device_ids.includes(deviceId))continue;
       if(!r||!['OPEN','COLLECTING'].includes(r.state))continue;
       const profile=getProfile(cfg.profile_id);
       if(!profile.test_only&&caps.preflight_max_length!==cfg.max_length)continue;

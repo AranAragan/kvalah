@@ -782,7 +782,9 @@ const server=http.createServer(async(req,res)=>{
       pending.finish(b.allowed===true,b.always===true);return json(res,{ok:true});
     }
     if(route==='/api/export'&&req.method==='GET'){const chat=chats.find(c=>c.id===url.searchParams.get('id'));if(!chat)throw Error(tr('srv.chatNotFound'));res.setHeader('Content-Disposition','attachment; filename="chat.json"');return json(res,chat);}
-    const staticFiles={'/':'index.html','/app.js':'app.js','/devices.js':'devices.js','/compute.js':'compute.js','/compute-i18n.js':'compute-i18n.js','/i18n.js':'i18n.js','/style.css':'style.css','/logo.svg':'logo.svg','/app-icon.svg':'app-icon.svg','/favicon.ico':'favicon.ico','/icon-192.png':'icon-192.png','/icon-512.png':'icon-512.png','/manifest.webmanifest':'manifest.webmanifest'};
+    const staticFiles={'/':'index.html','/app.js':'app.js','/devices.js':'devices.js','/compute.js':'compute.js','/compute-i18n.js':'compute-i18n.js',
+      '/compute-experience-i18n.js':'compute-experience-i18n.js','/compute-experience.css':'compute-experience.css',
+      '/i18n.js':'i18n.js','/style.css':'style.css','/logo.svg':'logo.svg','/app-icon.svg':'app-icon.svg','/favicon.ico':'favicon.ico','/icon-192.png':'icon-192.png','/icon-512.png':'icon-512.png','/manifest.webmanifest':'manifest.webmanifest'};
     if(req.method==='GET'&&route==='/i18n/locales.js'){res.writeHead(200,{'Content-Type':'text/javascript; charset=utf-8','Cache-Control':'no-store'});return res.end(localesScript());}
     if(req.method==='GET'&&staticFiles[route]){
       const extension=path.extname(staticFiles[route]);

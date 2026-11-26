@@ -10,9 +10,9 @@ import path from 'node:path';
 import {ROOT,python,tinyModel,tmp} from './compute-helpers.mjs';
 const PY=['torch','transformers','tokenizers','safetensors','numpy'];
 const freePort=()=>new Promise(r=>{const s=net.createServer().listen(0,'127.0.0.1',()=>{const p=s.address().port;s.close(()=>r(p));});});
-async function startApp(){
+async function startApp(extraEnv={}){
   const data=tmp('kc-app-'),port=await freePort();
-  const child=spawn(process.execPath,[path.join(ROOT,'server.mjs')],{env:{...process.env,LOCAL_CODEX_DATA:data,LOCAL_CODEX_PORT:String(port),KVALAH_WORKSPACE:data,OLLAMA_URL:'http://127.0.0.1:9',KVALAH_COMPUTE_TEST:'1'},stdio:['ignore','pipe','pipe']});
+  const child=spawn(process.execPath,[path.join(ROOT,'server.mjs')],{env:{...process.env,LOCAL_CODEX_DATA:data,LOCAL_CODEX_PORT:String(port),KVALAH_WORKSPACE:data,OLLAMA_URL:'http://127.0.0.1:9',KVALAH_COMPUTE_TEST:'1',...extraEnv},stdio:['ignore','pipe','pipe']});
   let out='';child.stdout.on('data',d=>out+=d);child.stderr.on('data',d=>out+=d);
   for(let i=0;i<100&&!/token=([0-9a-f]+)/.test(out);i++)await new Promise(r=>setTimeout(r,100));
   const token=/token=([0-9a-f]+)/.exec(out)?.[1];assert.ok(token,'server printed its URL: '+out.slice(-500));
@@ -102,91 +102,58 @@ async function cdp(url,{width=1024,height=768}={}){
   const shot=async file=>{const r=await send('Page.captureScreenshot',{format:'png'});fs.writeFileSync(file,Buffer.from(r.result.data,'base64'));};
   return {ev,shot,errors,close:()=>{ws.close();ch.kill();}};
 }
-test('UI: Compute view is wired to the real API (enable, tabs, policy, lab), no JS errors, fits 1024×768',{skip:!CHROME?'no Chrome/Chromium':skip,timeout:240000},async()=>{
-  const app=await startApp(),py=python(PY),model=tinyModel(),shots=process.env.KVALAH_UI_SHOTS;
-  let b;
-  try{b=await cdp(app.origin+'/#token='+app.token);}catch(e){await app.stop();throw e;}
+test('UI: contribution, advanced settings, invitation consent and automatic setup use the real host',{skip:!CHROME?'no Chrome/Chromium':skip,timeout:180000},async()=>{
+  const app=await startApp({KVALAH_UX_TEST_PYTHON:python(PY),KVALAH_UX_TEST_MODEL:tinyModel()});
+  const c=(r,b)=>app.api('/api/compute/v2/'+r,b);
+  let browser;
   try{
-    await until(()=>b.ev("!!document.getElementById('openCompute')&&document.getElementById('openCompute').textContent.length>0"),15000,'app loaded');
-    await b.ev("click:#openCompute");
-    await until(()=>b.ev("!!document.querySelector('[data-act=feature-on]')"),10000,'feature-off card');
-    assert.equal(await b.ev("[...document.querySelectorAll('#computeTabs [data-tab]')].every(t=>t.hidden)"),true,'tabs hidden while off');
-    if(shots)await b.shot(path.join(shots,'00-off.png'));
-    await b.ev("click:[data-act=feature-on]");
-    await until(()=>b.ev("!!document.getElementById('kcToggle')"),20000,'participation tab after enabling');
-    assert.equal((await app.api('/api/compute/v2/state')).feature_enabled,true,'the button really enabled the feature');
-    // Policy slider → POST policy → governor state.
-    await b.ev("(()=>{const r=document.querySelector('[data-pol=gpu_target_pct]');r.value='25';r.dispatchEvent(new Event('input',{bubbles:true}));r.dispatchEvent(new Event('change',{bubbles:true}));})()");
-    await until(async()=>(await app.api('/api/compute/v2/state')).policy.gpu_target_pct===25,10000,'policy saved through the UI');
-    await until(async()=>/^30 /.test(await b.ev("document.getElementById('kcNominal').textContent")),5000,'25% × 4 h × 30 = 30 h shown');
-    // Toggle without a coordinator → goes to Devices (no fake participation).
-    await b.ev("click:#kcToggle");
-    await until(()=>b.ev("!!document.getElementById('kcPairing')"),5000,'devices tab');
-    assert.equal((await app.api('/api/compute/v2/state')).participation,false);
-    // Set up through the API, then let the UI show it.
-    const c=(r,x)=>app.api('/api/compute/v2/'+r,x);
-    await c('profile',{profile_id:'tiny-test-ffa-r4'});await c('runtime',{python:py,backend:'torch-cpu-test'});await c('model',{model_dir:model,variant_id:'cpu-test'});
-    // Lab start from the UI.
-    await b.ev("(()=>{const p=document.getElementById('kcPort');p.value='"+(await freePort())+"';document.querySelector('[data-act=lab-start]').click();})()");
-    await until(async()=>(await c('state')).lab?.info?.running,15000,'coordinator started via UI');
-    await until(()=>b.ev("!!document.querySelector('[data-act=lab-join]')"),10000,'join button');
-    await b.ev("click:[data-act=lab-pairing]");
-    await until(()=>b.ev("(document.getElementById('kcCode')||{}).textContent?.startsWith('kvalah-compute://pair?')"),10000,'pairing string shown');
-    await b.ev("click:[data-act=lab-join]");
-    await until(()=>b.ev("document.querySelectorAll('.dev-list li').length>=1"),20000,'device listed');
-    if(shots)await b.shot(path.join(shots,'02-devices.png'));
-    // Participation toggle now opens the consent dialog; accepting it goes through consent/accept.
-    await b.ev("click:[data-tab=participate]");await until(()=>b.ev("!!document.getElementById('kcToggle')"),5000,'participate');
-    await b.ev("click:#kcToggle");
-    await until(()=>b.ev("document.getElementById('computeConsent').open"),5000,'consent dialog');
-    assert.equal(await b.ev("document.getElementById('kcAccept').disabled"),true,'accept disabled until agreed');
-    if(shots)await b.shot(path.join(shots,'03-consent.png'));
-    await b.ev("(()=>{const a=document.getElementById('kcAgree');a.checked=true;a.dispatchEvent(new Event('change'));document.getElementById('kcAccept').click();})()");
-    await until(async()=>(await c('state')).participation===true,10000,'consent accepted via UI');
-    if(shots)await b.shot(path.join(shots,'01-participation.png'));
-    await b.ev("click:[data-act=pause]");await until(async()=>(await c('state')).manual_pause===true,5000,'pause via UI');
-    await b.ev("click:[data-act=resume]");await until(async()=>(await c('state')).manual_pause===false,5000,'resume via UI');
-    // This headless host has no Electron sensor bridge. Set its fixture policy before running preflight.
-    for(const k of ['only_ac','only_idle','pause_on_games']){
-      await until(()=>b.ev("!document.querySelector('[data-pol="+k+"]').disabled"),10000,'idle');
-      await b.ev("(()=>{const x=document.querySelector('[data-pol="+k+"]');x.checked=false;x.dispatchEvent(new Event('change',{bubbles:true}));})()");
-      await until(async()=>(await c('state')).policy[k]===false,10000,k+' saved');
-    }
-    await b.ev("click:[data-tab=data]");await b.ev("click:[data-act=preflight]");
-    await until(async()=>(await c('state')).preflight?.ok===true,60000,'preflight via UI');
-    await until(async()=>/Preflight (OK|пройден)/.test(await b.ev("document.getElementById('computeBody').textContent")),10000,'preflight result shown');
-    // Lab: fixture import + dry run from the UI.
-    await b.ev("click:[data-tab=lab]");await until(()=>b.ev("!!document.querySelector('[data-act=import-fixture]')"),5000,'lab');
-    await b.ev("click:[data-act=import-fixture]");
-    await until(()=>b.ev("document.querySelectorAll('#kcDataset option').length>0"),60000,'dataset imported via UI').catch(async e=>{throw Error(e.message+': '+(await b.ev("document.getElementById('computeBody').textContent")).slice(0,1500));});
-    await b.ev("click:[data-act=register-model]");await until(async()=>(await c('state')).lab.variants.length>0,10000,'model registered');
-    await until(()=>b.ev("!document.querySelector('[data-act=dry-run]').disabled"),10000,'idle');
-    await b.ev("(()=>{document.getElementById('kcName').value='ui-run';document.getElementById('kcQMode').value='all';document.getElementById('kcQTarget').value='1';document.getElementById('kcSteps').value='1';document.querySelector('[data-act=dry-run]').click();})()");
-    await until(()=>b.ev("!document.querySelector('[data-act=create]').disabled"),10000,'dry run plan shown').catch(async e=>{throw Error(e.message+': '+(await b.ev("[...document.querySelectorAll('.kc-msg')].map(x=>x.textContent).join(' | ')")));});
-    assert.match(await b.ev("document.getElementById('computeBody').textContent"),/2 tasks|2 заданий/);
-    if(shots)await b.shot(path.join(shots,'04-lab.png'));
-    await b.ev("window.confirm=()=>true;document.querySelector('[data-act=create]').click()");
-    await until(()=>b.ev("!!document.getElementById('kcExpSel')"),15000,'monitor tab after start');
-    await until(async()=>{const s=await c('state');return s.lab.experiments[0]?.state==='COMPLETED';},120000,'UI-started experiment completes').catch(async err=>{const s2=await c('state');throw Error(err.message+' '+JSON.stringify({state:s2.state,reason:s2.reason,missing:s2.missing,policy:s2.policy,decision:s2.governor.decision,exp:s2.lab.experiments[0]&&{state:s2.lab.experiments[0].state,round:s2.lab.experiments[0].round,cfg:s2.lab.experiments[0].config.quorum},ev:s2.events.slice(-12).map(e=>e.code+' '+JSON.stringify(e.details))}).slice(0,5000));});
-    await new Promise(r=>setTimeout(r,2500));
-    assert.match(await b.ev("document.getElementById('computeBody').textContent"),/COMPLETED/);
-    if(shots)await b.shot(path.join(shots,'05-monitor.png'));
-    await b.ev("click:[data-tab=data]");await until(()=>b.ev("!!document.getElementById('kcPython')"),5000,'data tab');
-    if(shots)await b.shot(path.join(shots,'06-data.png'));
-    // Layout: nothing wider than the 1024 px window, in light and dark themes.
+    browser=await cdp(app.origin+'/#token='+app.token);
+    const ev=browser.ev;
+    await until(()=>ev('document.readyState!=="loading"&&Boolean(window.kvCompute)&&document.querySelector("#openCompute")?.textContent.trim()'),'desktop renderer booted',15000);
+    await ev('click:#openCompute');
+    await until(()=>ev("Boolean(document.querySelector('[data-act=join-wizard]'))"),10000,'contribution');
+    assert.equal(await ev("document.querySelector('[data-mode=contribution]').getAttribute('aria-pressed')"),'true');
+    assert.equal(await ev("document.querySelectorAll('.kc-profile').length"),3);
+    assert.equal(await ev("Boolean(document.querySelector('#kcPython,[data-act=preflight],.kc-lab-tabs'))"),false);
+    await ev("click:[data-act=policy-preset][data-arg=balanced]");
+    await until(async()=>(await c('state')).policy.gpu_target_pct===25,15000,'selected Balanced');
+    assert.equal(await ev("document.querySelector('[data-expand=policy]').open"),false);
+    const initial=await c('state');
+    await c('policy',{policy:{only_idle:false,only_ac:false,pause_on_games:false},revision:initial.policy.revision});
+    await c('profile',{profile_id:'tiny-test-ffa-r4'});
+    await ev('click:[data-mode=laboratory]');
+    await ev('click:[data-act=auto-lab]');
+    await until(async()=>(await c('state')).lab?.info.running,15000,'native HTTPS lab');
+    await ev('click:[data-act=lab-join-ux]');
+    await until(()=>ev("Boolean(document.querySelector('#kcAccept'))"),10000,'consent');
+    assert.equal(await ev("document.querySelector('#kcAccept').disabled"),true);
+    const before=await c('state');
+    assert.equal(before.participation,false);
+    assert.equal(before.runtime,null);
+    await ev('click:#kcAgree');
+    await ev('click:#kcAccept');
+    const ready=await until(async()=>{
+      const s=await c('state');
+      if(s.preparation.status==='blocked')throw Error(JSON.stringify(s.preparation));
+      return s.preparation.status==='ready'&&s.worker?s:null;
+    },85000,'automatic runtime, model and preflight');
+    assert.equal(ready.runtime.backend,'torch-cpu-test');
+    assert.equal(ready.preflight.ok,true);
+    await ev('click:[data-act=pause]');
+    await until(async()=>(await c('state')).manual_pause,8000,'manual pause');
+    await ev('click:[data-act=resume]');
+    await until(async()=>!(await c('state')).manual_pause,8000,'resume');
+    await ev('click:[data-mode=laboratory]');
+    await ev('click:[data-act=show-smoke]');
+    assert.equal(await ev("document.querySelector('[data-act=smoke-start]').disabled"),true,'one worker cannot satisfy the three-device gate');
+    await ev('click:[data-act=close-dialog]');
     for(const theme of ['light','dark']){
-      await b.ev("document.documentElement.dataset.theme='"+theme+"'");
-      for(const t of ['participate','devices','lab','monitor','data']){
-        await b.ev("document.querySelector('[data-tab="+t+"]').click()");await new Promise(r=>setTimeout(r,400));
-        const w=await b.ev("document.getElementById('computeBody').scrollWidth<=document.getElementById('computeBody').clientWidth+1");
-        assert.equal(w,true,t+' fits 1024 px ('+theme+')');
+      await ev("document.documentElement.dataset.theme='"+theme+"'");
+      for(const tab of ['overview','devices','experiments','data']){
+        await ev("click:[data-act=lab-nav][data-arg="+tab+"]");
+        assert.ok(await ev("document.querySelector('#computeBody').scrollWidth<=document.querySelector('#computeBody').clientWidth+1"),tab+' fits at 1024 px in '+theme);
       }
-      if(shots)await b.shot(path.join(shots,'07-'+theme+'.png'));
     }
-    // Russian UI strings.
-    const ru=await b.ev("(async()=>{kvI18n.setLang('ru');document.querySelector('[data-tab=participate]').click();await new Promise(r=>setTimeout(r,600));return document.getElementById('computeBody').textContent;})()");
-    assert.match(ru,/Предоставлять вычислительные ресурсы/);
-    if(shots)await b.shot(path.join(shots,'08-ru.png'));
-    assert.deepEqual(b.errors,[],'no JS errors in the page');
-  }finally{b.close();await app.stop();}
+    assert.deepEqual(browser.errors,[]);
+  }finally{browser?.close();await app.stop();}
 });

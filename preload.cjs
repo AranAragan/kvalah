@@ -12,6 +12,12 @@ contextBridge.exposeInMainWorld('kvalahDesktop',{
   openUpdatePage:()=>ipcRenderer.invoke('kvalah:update-open'),
   getUpdatePrefs:()=>ipcRenderer.invoke('kvalah:update-prefs',null),
   setUpdatePrefs:autoCheck=>ipcRenderer.invoke('kvalah:update-prefs',{autoCheck:!!autoCheck}),
+  onComputeInvitation:callback=>{
+    const listener=()=>ipcRenderer.invoke('kvalah:compute-invite').then(value=>{if(typeof value==='string'&&value.length<=4096)callback(value);}).catch(()=>{});
+    ipcRenderer.on('kvalah:compute-invite-ready',listener);
+    listener();
+    return ()=>ipcRenderer.removeListener('kvalah:compute-invite-ready',listener);
+  },
   onUpdate:callback=>{
     const listener=(_event,state)=>{if(state&&typeof state==='object')callback({state:String(state.state),mode:String(state.mode),version:state.version==null?null:String(state.version)});};
     ipcRenderer.on('kvalah:update',listener);

@@ -5,6 +5,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.10.0-compute.2.dev.2] - 2026-11-26
+
+- Redesigned Compute with separate contribution and lab modes, participation presets, contextual status and locally translated errors.
+- Added invitation-driven setup with approval, discovery, verified optional downloads and governed preflight.
+- Added automatic local lab setup, device readiness and a standard three-device Smoke launch.
+
+Verified on Windows with an RTX 5070 using an existing runtime and model, and with a three-worker CPU Smoke that committed both rounds. Setup on an OS without Python or a model, end-to-end downloads, and the three-device hardware trial are still pending. [UX acceptance report](https://github.com/AranAragan/kvalah/blob/v0.10.0-compute.2.dev.2/docs/compute/UX-ONBOARDING.md).
+
 ## [0.10.0-compute.2.dev.1] - 2026-11-26
 
 Development build for local verification. GPU and hardware acceptance are pending.

@@ -40,9 +40,25 @@ app.setAppUserModelId('kvalah.Desktop');
 const APP_ID='kvalah.Desktop';
 const LOCK=app.requestSingleInstanceLock();
 let win=null,backend=null,origin=null,token=null,quitting=false,updates=null;
+let pendingComputeInvite=null;
+function queueComputeInvite(args){
+  for(const value of args){
+    if(typeof value!=='string'||!value.startsWith('kvalah-compute://pair?')||value.length>4096)continue;
+    try{
+      const url=new URL(value);
+      if(url.protocol!=='kvalah-compute:'||url.hostname!=='pair'||url.pathname||url.username||url.password||url.hash||url.port)continue;
+      if([...url.searchParams].length!==3||!['e','fp','c'].every(k=>url.searchParams.get(k)))continue;
+      pendingComputeInvite=value;
+      if(win&&!win.webContents.isLoadingMainFrame())win.webContents.send('kvalah:compute-invite-ready');
+      break;
+    }catch{}
+  }
+}
+queueComputeInvite(process.argv.slice(1));
 if(!LOCK){app.quit();}
 else{
-  app.on('second-instance',()=>{if(win){if(win.isMinimized())win.restore();win.show();win.focus();}});
+  app.on('open-url',(event,url)=>{event.preventDefault();queueComputeInvite([url]);});
+  app.on('second-instance',(_event,args)=>{queueComputeInvite(args);if(win){if(win.isMinimized())win.restore();win.show();win.focus();}});
   app.whenReady().then(start).catch(e=>{if(TEST_ROOT)fs.writeFileSync(path.join(TEST_ROOT,'smoke-error.txt'),e.stack||e.message);else dialog.showErrorBox(L('desktop.startError'),e.message);app.exit(1);});
 }
 const iconPath=path.join(__dirname,'public','favicon.ico');
@@ -185,6 +201,13 @@ async function start(){
   ipcMain.handle('kvalah:update-install',event=>{checkSender(event);return updates.install();});
   ipcMain.handle('kvalah:update-open',event=>{checkSender(event);const url=updates.getState().url;if(/^https:\/\/github\.com\//.test(url))shell.openExternal(url);return true;});
   ipcMain.handle('kvalah:update-prefs',(event,next)=>{checkSender(event);return next&&typeof next==='object'?updates.setPrefs(next):updates.getPrefs();});
+  ipcMain.handle('kvalah:compute-invite',event=>{
+    checkSender(event);
+    const value=pendingComputeInvite;
+    pendingComputeInvite=null;
+    return value;
+  });
+  if(app.isPackaged&&!TEST_ROOT&&process.platform==='win32')app.setAsDefaultProtocolClient('kvalah-compute');
   installMenu();
   win.once('ready-to-show',()=>{if(process.env.KVALAH_SMOKE_TEST!=='1')win.show();});
   win.on('page-title-updated',event=>{event.preventDefault();win.setTitle('kvalah');});

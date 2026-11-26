@@ -55,7 +55,9 @@ export function createWorker({stateDir,identity,link,governor,runtime,capabiliti
     const b=client.bytes;metrics.bytes_in=b.in;metrics.bytes_out=b.out;
     const caps=capabilities();
     try{
-      const r=await client.post('/v2/devices/heartbeat',{session_id:session.session_id,status:{state,pause_reason:reason},metrics:{...metrics},capabilities:caps,runtime_version:caps.runtime_version},{signal:abort.signal});
+      const admission=governor.decide({phase:'admission'}),network=governor.decide({phase:'network'});
+      const r=await client.post('/v2/devices/heartbeat',{session_id:session.session_id,status:{state,pause_reason:reason,
+        eligible:admission.run&&network.run,blocking_reason:admission.reason||network.reason},metrics:{...metrics},capabilities:caps,runtime_version:caps.runtime_version},{signal:abort.signal});
       session.state=r.state;
     }catch(e){
       if(e.code==='SESSION_SUPERSEDED'||e.code==='REVOKED'){ev('session.'+e.code.toLowerCase(),{message:e.message});await halt(e.code==='REVOKED'?'revoked':'session_superseded');}

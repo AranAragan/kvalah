@@ -5,6 +5,13 @@
   const lang=()=>window.kvI18n?.lang==='ru'?'ru':'en';
   const ct=(k,p)=>{let v=D[lang()][k]??D.en[k]??k;if(p)for(const [a,b] of Object.entries(p))v=v.split('{'+a+'}').join(String(b));return v;};
   const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const X=window.KC_EXPERIENCE;
+  const tx=(key,values={})=>{
+    let value=X[key]?.[lang()==='ru'?0:1]||ct(key);
+    for(const [name, replacement] of Object.entries(values))value=value.replaceAll('{'+name+'}',String(replacement));
+    return value;
+  };
+  const friendly=code=>X[code]?tx(code):code&&D[lang()]['r.'+code]?ct('r.'+code):tx('errorDefault');
   const reason=r=>r?(D[lang()]['r.'+r]?ct('r.'+r):String(r)):'';
   const short=h=>h?String(h).slice(0,12):ct('none');
   const fmtMs=ms=>{if(ms==null)return ct('none');const s=Math.round(ms/1000);return s<60?s+' s':s<3600?Math.floor(s/60)+' min '+(s%60)+' s':Math.floor(s/3600)+' h '+Math.floor(s%3600/60)+' min';};
@@ -13,93 +20,177 @@
   const desktop=()=>window.kvalahDesktop;
   const call=(route,body)=>api('/api/compute/v2/'+route,body);
   let form={},planInput=null;
-  let S=null,tab='participate',open=false,busy=false,timer=null,selExp=null,expData=null,coordEvents=[],plan=null,pairing=null,lastResult={};
+  let S=null,tab='overview',open=false,busy=false,timer=null,selExp=null,expData=null,coordEvents=[],plan=null,pairing=null,lastResult={};
+  let mode=localStorage.getItem('kvalah-compute-mode')==='laboratory'?'laboratory':'contribution';
+  let refreshId=0,stale=false,hardware=null,smoke=null,requestId=null,smokeIds=[],expanded=new Set(),invitationEpoch=0;
+  const presets={gentle:10,balanced:25,productive:50};
   const root=()=>document.getElementById('computeView');
-  const body=()=>document.getElementById('computeBody');
+  const body=()=>document.getElementById('computeContent');
+  const scroll=()=>document.getElementById('computeBody');
+  const dialog=()=>document.getElementById('computeConsent');
   // ---------- shell ----------
   function show(on){
     open=on;document.body.classList.toggle('compute-open',on);root().hidden=!on;
     if(on){refresh(true);clearInterval(timer);timer=setInterval(()=>{if(!document.hidden)refresh(false);},2000);}else clearInterval(timer);
   }
   async function refresh(full){
-    try{S=await call('state');}catch(e){S={feature_enabled:false,error:e.message};}
-    if(S.feature_enabled&&S.lab&&tab==='monitor'){
-      const exps=S.lab.experiments||[];if(!selExp||!exps.find(e=>e.id===selExp))selExp=exps[0]?.id||null;
-      try{expData=selExp?await call('lab/experiment/status',{id:selExp}):null;const ev=await call('lab/events',{tail:true});coordEvents=Array.isArray(ev)?ev.slice(-60):[];}catch{expData=null;}
+    const id=++refreshId;
+    let next;
+    try{next=await call('state');}catch{
+      if(id!==refreshId)return;
+      stale=true;render(full);return;
+    }
+    if(id!==refreshId)return;
+    S=next;stale=false;
+    if(S.feature_enabled&&S.lab&&mode==='laboratory'&&tab==='monitor'){
+      const exps=S.lab.experiments||[];
+      if(!selExp||!exps.some(e=>e.id===selExp))selExp=exps[0]?.id||null;
+      try{
+        const [exp,events]=await Promise.all([selExp?call('lab/experiment/status',{id:selExp}):null,call('lab/events',{tail:true})]);
+        if(id!==refreshId)return;
+        expData=exp;coordEvents=Array.isArray(events)?events.slice(-60):[];
+      }catch{if(id!==refreshId)return;expData=null;}
     }
     render(full);
+    if(dialog().open&&dialog().dataset.kind==='smoke'&&!busy)void refreshSmoke();
   }
   const editing=()=>{const a=document.activeElement;return a&&root()?.contains(a)&&/^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName);};
-  const live={};
-  const L=(id,fn)=>{live[id]=fn;return '<div data-live="'+id+'">'+fn()+'</div>';};
+  const L=(id,fn)=>'<div data-live="'+id+'">'+fn()+'</div>';
+  function setMode(next){
+    mode=next;localStorage.setItem('kvalah-compute-mode',mode);lastResult={};scroll().scrollTop=0;render(true);void refresh(true);
+  }
   function render(full){
     if(!open)return;
-    document.querySelectorAll('#computeTabs [data-tab]').forEach(b=>{b.classList.toggle('active',b.dataset.tab===tab);b.textContent=ct('tab.'+b.dataset.tab);b.hidden=!S?.feature_enabled;});
-    document.getElementById('computeTitle').textContent=ct('title');document.getElementById('computeSub').textContent=ct('subtitle');
-    document.getElementById('computeBadge').textContent=ct('experimental');document.getElementById('computeBack').title=ct('back');document.getElementById('computeBack').setAttribute('aria-label',ct('back'));
-    if(!full&&editing()){for(const el of body().querySelectorAll('[data-live]'))if(live[el.dataset.live]&&!el.contains(document.activeElement))el.innerHTML=live[el.dataset.live]();return;}
-    const y=body().scrollTop;
-    body().innerHTML=!S?'':!S.feature_enabled?featureOff():({participate,devices,lab,monitor,data})[tab]();
-    // Keep what the user typed across re-renders (polling, actions).
-    for(const [id,v] of Object.entries(form)){const el=body().querySelector('#'+CSS.escape(id));if(!el)continue;if(el.type==='checkbox')el.checked=v;else el.value=v;}
-    if(busy)body().querySelectorAll('button,input,select').forEach(el=>{if(!el.closest('#computeTabs'))el.disabled=true;});
-    body().scrollTop=y;
+    const modes=document.getElementById('computeModes');
+    modes.setAttribute('aria-label',tx('mode'));
+    for(const b of modes.querySelectorAll('[data-mode]')){
+      b.textContent=tx(b.dataset.mode);b.setAttribute('aria-pressed',String(b.dataset.mode===mode));
+    }
+    document.getElementById('computeTitle').textContent=ct('title');
+    document.getElementById('computeSub').textContent=tx('volunteer');
+    document.getElementById('computeBack').title=ct('back');
+    document.getElementById('computeBack').setAttribute('aria-label',ct('back'));
+    document.getElementById('computeBadge').innerHTML=stale?pill(tx('stale'),'warn'):
+      mode==='laboratory'&&S?.participation?btn('stop',tx('stop')):'';
+    if(!full&&editing())return;
+    const focus=body().contains(document.activeElement)?document.activeElement:null;
+    const act=focus?.getAttribute('data-act'),arg=focus?.getAttribute('data-arg');
+    const y=scroll().scrollTop;
+    body().innerHTML=S?(mode==='contribution'?participate():laboratory()):'<p class="kc-subtle" role="status">'+esc(stale?tx('stale'):tx('checking'))+'</p>';
+    for(const d of body().querySelectorAll('details[data-expand]'))d.open=expanded.has(d.dataset.expand);
+    for(const [id,value] of Object.entries(form)){
+      const el=body().querySelector('#'+CSS.escape(id));if(!el)continue;
+      if(el.type==='checkbox')el.checked=value;else el.value=value;
+    }
+    if(busy)body().querySelectorAll('button,input,select,textarea').forEach(el=>el.disabled=true);
+    scroll().scrollTop=y;
+    if(act){
+      const replacement=[...body().querySelectorAll('[data-act]')].find(b=>b.dataset.act===act&&b.getAttribute('data-arg')===arg);
+      replacement?.focus({preventScroll:true});
+    }
   }
   const card=(title,inner,extra='')=>'<section class="kc-card'+extra+'">'+(title?'<h3>'+esc(title)+'</h3>':'')+inner+'</section>';
-  const btn=(act,label,o={})=>'<button type="button" class="'+(o.primary?'primary kc-btn':'secondary')+'" data-act="'+act+'"'+(o.arg!=null?' data-arg="'+esc(o.arg)+'"':'')+(o.disabled||busy?' disabled':'')+'>'+esc(label)+'</button>';
+  const btn=(act,label,o={})=>'<button type="button" class="'+(o.primary?'primary kc-btn':'secondary')+'" data-act="'+act+'"'+(o.arg!=null?' data-arg="'+esc(o.arg)+'"':'')+(o.disabled?' disabled':'')+'>'+esc(label)+'</button>';
   const field=(id,label,value,o={})=>'<label class="kc-field'+(o.wide?' wide':'')+'"><span>'+esc(label)+'</span><span class="kc-inline"><input id="'+id+'" value="'+esc(value??'')+'"'+(o.placeholder?' placeholder="'+esc(o.placeholder)+'"':'')+(o.type?' type="'+o.type+'"':'')+'>'+(o.browse?'<button type="button" class="secondary" data-act="browse" data-arg="'+id+'|'+o.browse+'">'+esc(ct('browse'))+'</button>':'')+'</span></label>';
   const msg=k=>lastResult[k]?'<p class="kc-msg'+(lastResult[k].bad?' bad':'')+'">'+esc(lastResult[k].text)+'</p>':'';
   const kv=rows=>'<dl class="kc-kv">'+rows.filter(Boolean).map(([k,v])=>'<dt>'+esc(k)+'</dt><dd>'+v+'</dd>').join('')+'</dl>';
-  function featureOff(){
-    return card('',(S.error?'<p class="kc-msg bad">'+esc(S.error)+'</p>':'')+'<p>'+esc(ct('feature.off'))+'</p><p class="kc-note">'+esc(ct('feature.note'))+'</p>'+btn('feature-on',ct('feature.enable'),{primary:true}));
+  const panel=(title,inside,style='')=>'<section class="kc-panel '+style+'">'+(title?'<h2>'+esc(title)+'</h2>':'')+inside+'</section>';
+  const row=inside=>'<div class="kc-row-actions">'+inside+'</div>';
+  const pill=(title,tone='')=>'<span class="kc-pill '+tone+'">'+esc(title)+'</span>';
+  const h2=label=>'<h2>'+esc(label)+'</h2>';
+  const plain=(value,classes='')=>'<p class="'+classes+'">'+esc(value)+'</p>';
+  const title=(label,tagline,action='')=>'<div class="kc-experience-title"><div><h1>'+esc(label)+'</h1>'+plain(tagline)+'</div>'+action+'</div>';
+  const scores=entries=>'<dl class="kc-score-grid">'+entries.map(([label,value])=>'<div><dt>'+esc(label)+'</dt><dd'+
+    (value==='—'?' title="'+esc(tx('noMeasure'))+'"':'')+'>'+esc(value)+'</dd></div>').join('')+'</dl>';
+  const notice=(message,tone='')=>'<p class="kc-notice" data-tone="'+tone+'">'+esc(message)+'</p>';
+  const meter=ms=>ms==null?'—':Math.floor(ms/60000)+' '+(lang()==='ru'?'мин':'min');
+  const activeProfile=()=>Object.keys(presets).find(key=>{
+    const p=S.policy;return p?p.gpu_target_pct===presets[key]&&p.cpu_target_pct===presets[key]&&p.daily_hours===4:key==='gentle';
+  });
+  const stateText=state=>({
+    CREATED:tx('draft'),RUNNING:tx('inProgress'),PAUSED:tx('paused'),BLOCKED:tx('blocked'),
+    COMPLETED:tx('completion'),CANCELLED:tx('cancelled'),COMMITTED:tx('completion'),
+    OPEN:tx('ready'),COLLECTING:tx('inProgress'),FAILED:tx('blocked'),SEALING:tx('inProgress'),AGGREGATING:tx('inProgress')
+  })[state]||tx('checking');
+  const preparationSteps=['approval','runtime','model','integrity','preflight'];
+  const stepLabels=['stageApproval','stageRuntime','stageModel','stageIntegrity','stagePreflight'];
+  function progressList(p){
+    const index=preparationSteps.indexOf(p.phase);
+    return '<ol class="kc-steps">'+stepLabels.map((key,i)=>{
+      const done=i<index||p.status==='ready',current=i===index&&!done;
+      return '<li'+(done?' class="done"':current?' aria-current="step"':'')+'><span class="kc-step-icon" aria-hidden="true">'+(done?'✓':i+1)+'</span>'+esc(tx(key))+'</li>';
+    }).join('')+'</ol>'+
+      (p.total_bytes?'<progress class="kc-bytes-progress" aria-label="'+esc(tx('stageModel'))+'" max="'+p.total_bytes+'" value="'+(p.bytes||0)+'"></progress>'+plain(fmtB(p.bytes||0)+' / '+fmtB(p.total_bytes),'kc-caption'):'');
   }
-  // ---------- Participation ----------
-  function statusLine(){
-    const st=S.state,w=S.worker;
-    let h='<div class="kc-status"><span class="kc-dot s-'+esc(st)+'"></span><strong>'+esc(ct('state.'+st))+'</strong>'+(S.reason?'<span class="kc-note">'+esc(ct('reason',{r:reason(S.reason)}))+'</span>':'')+'</div>';
-    if(w?.task)h+='<p class="kc-note">'+esc(ct('task',{round:w.task.round??'?',step:w.task.step??0,steps:w.task.steps??'?',tokens:w.task.expected_tokens??'?'}))+'</p>';
-    if(w?.task?.lease)h+='<p class="kc-note">'+esc('Lease · '+fmtMs(w.task.lease.remaining_ms))+'</p>';
-    const rpc=w?.last_rpc_error;
-    if(rpc&&['ERROR_RECOVERABLE','UPLOADING','PAUSED'].includes(w.state))h+='<p class="kc-note">'+esc([rpc.method,rpc.route,rpc.stage,rpc.code,rpc.next_retry_at?new Date(rpc.next_retry_at).toLocaleTimeString(lang()):null].filter(Boolean).join(' · '))+'</p>';
-    if(S.last_error)h+='<p class="kc-msg bad">'+esc((S.last_error.code||'')+': '+(S.last_error.message||''))+'</p>';
-    return h;
+  function participationStatus(){
+    const p=S.preparation||{},active=['running','waiting'].includes(p.status);
+    if(!S.link)return pill(tx('offline'))+h2(tx('joinTitle'))+plain(tx('joinText'))+
+      row(btn('join-wizard',tx('join'),{primary:true})+btn('switch-lab',tx('ownLab')));
+    if(S.link.device_state==='revoked')return pill(tx('revoked'),'bad')+h2(tx('actionNeeded'))+plain(friendly('REVOKED'))+row(btn('join-wizard',tx('join'),{primary:true}));
+    if(S.consent?.required)return pill(tx('checking'))+h2(tx('consentTitle'))+plain(tx('consentText'))+row(btn('review-consent',tx('next'),{primary:true}));
+    if(active||p.status==='blocked'||p.status==='cancelled'){
+      const offer=S.download_offer;
+      const head=active?tx('preparing'):tx('actionNeeded');
+      let action='';
+      if(offer)action=notice(tx('downloadText',{bytes:fmtB(offer.bytes),disk:fmtB(offer.disk_bytes)}),'warn')+
+        row(btn('approve-download',tx('download'),{primary:true})+btn('setup-cancel',tx('cancel')));
+      else if(active)action=(p.reason?notice(friendly(p.reason),'warn'):'')+row(btn('setup-cancel',tx('cancel')));
+      else action=(p.reason?notice(friendly(p.reason),'warn'):'')+
+        row(btn('setup-retry',tx('retry'),{primary:true})+btn('expert-open',tx('expert')));
+      return pill(head,active?'warn':'bad')+h2(head)+plain(tx('preparingText'))+progressList(p)+action;
+    }
+    if(S.missing?.size||S.missing?.length)return pill(tx('temporary'),'warn')+h2(tx('actionNeeded'))+
+      row(btn('review-consent',tx('finishSetup'),{primary:true})+btn('expert-open',tx('expert')));
+    if(!S.participation)return pill(tx('stopped'))+h2(tx('stopped'))+plain(tx('readyText'))+row(btn('start-participation',tx('resume'),{primary:true}));
+    const blocked=stale||['PAUSED','ERROR_RECOVERABLE'].includes(S.state);
+    const moving={TRAINING:'busyTraining',UPLOADING:'busyUpload',PREPARING:'preparing',CONNECTING:'checking',STOPPING:'stopped'}[S.state];
+    const head=blocked?(S.state==='ERROR_RECOVERABLE'||stale?tx('reconnecting'):tx('paused')):tx(moving||'ready');
+    const reasonCode=S.worker?.last_rpc_error?.code&&S.state==='ERROR_RECOVERABLE'?S.worker.last_rpc_error.code:S.reason;
+    return pill(blocked?tx('temporary'):moving?head:tx('connected'),blocked?'warn':'good')+h2(head)+
+      plain(blocked?(stale?tx('stale'):friendly(reasonCode)):tx('readyText'))+
+      (S.worker?.task?plain(ct('task',{round:(S.worker.task.round??0)+1,step:S.worker.task.step,steps:S.worker.task.steps,tokens:S.worker.task.expected_tokens}),'kc-caption'):'')+
+      row((S.manual_pause?btn('resume',tx('resume'),{primary:true}):btn('pause',tx(blocked?'pauseManual':'pause')))+btn('stop',tx('stop')));
+  }
+  function advancedPolicy(){
+    const p=S.policy;
+    if(!p)return '<details class="kc-extra" data-expand="policy"><summary>'+esc(tx('advanced'))+'</summary>'+row(btn('feature-on',ct('feature.enable')))+
+      plain(tx('powerNote'),'kc-caption')+'</details>';
+    const slider=(key,label,max,unit='%')=>'<label class="kc-slider"><span>'+esc(label)+' <b id="v_'+key+'">'+p[key]+esc(unit)+'</b></span><input type="range" min="'+(key==='daily_hours'?1:0)+'" max="'+max+'" step="'+(key==='daily_hours'?1:5)+'" value="'+p[key]+'" data-pol="'+key+'" data-unit="'+esc(unit)+'"></label>';
+    const checkbox=key=>'<label class="kc-check"><input type="checkbox" data-pol="'+key+'"'+(p[key]?' checked':'')+'> '+esc(ct(key))+'</label>';
+    const input=(key,min,max,step=1)=>'<label class="kc-field"><span>'+esc(ct(key))+'</span><input type="number" data-pol="'+key+'" min="'+min+'" max="'+max+'" step="'+step+'" value="'+esc(p[key])+'"></label>';
+    const quiet='<div class="kc-quiet"><label class="kc-check"><input type="checkbox" data-pol="quiet_hours.enabled"'+(p.quiet_hours.enabled?' checked':'')+'> '+esc(ct('quiet'))+'</label>'+
+      ['from','to'].map(k=>'<label>'+esc(ct('quiet.'+k))+' <input type="time" data-pol="quiet_hours.'+k+'" value="'+esc(p.quiet_hours[k])+'"></label>').join('')+'</div>';
+    return '<details class="kc-extra" data-expand="policy"><summary>'+esc(tx('advanced'))+'</summary>'+
+      slider('gpu_target_pct',ct('gpu'),p.profile==='full'?100:50)+slider('cpu_target_pct',ct('cpu'),100)+slider('daily_hours',ct('hours'),p.extended_hours?24:12,lang()==='ru'?' ч':' h')+
+      '<div class="kc-detail-grid">'+['only_idle','only_ac','pause_on_games','pause_on_local_ai','pause_on_fullscreen','allow_metered','extended_hours'].map(checkbox).join('')+'</div>'+
+      '<div class="kc-detail-grid">'+input('idle_minutes',1,120)+input('min_free_ram_gib',0,256,.5)+input('temp_limit_c',50,95)+input('daily_traffic_mb',10,1000000,10)+'</div>'+quiet+
+      plain(tx('powerNote'),'kc-caption')+(S.platform==='darwin'?plain(ct('pause_on_games')+' · '+tx('unsupported'),'kc-caption'):'')+
+      row(btn('full-profile',ct('profile.full'))+btn('diag',tx('diag'))+btn('expert-open',tx('expert'))+(S.link?btn('link-forget',tx('leave'))+btn('consent-revoke',ct('consent.revoke')):''))+
+      '<details data-expand="sensors"><summary>'+esc(tx('technicalDetails'))+'</summary>'+sensorsBlock()+measuredBlock()+'</details>'+msg('policy')+msg('diag')+'</details>';
   }
   function measuredBlock(){
-    const b=S.budget||{},m=S.measured||{},w=S.worker?.metrics||{};
-    return kv([[ct('measured.wall'),esc(fmtMs(b.used_wall_ms))+' / '+esc(fmtMs(b.limit_ms))],[ct('measured.gpu'),esc(fmtMs(b.used_gpu_ms))],[ct('measured.share'),m.active_fraction_60s==null?ct('none'):Math.round(m.active_fraction_60s*100)+'%'],
-      [ct('measured.tasks'),esc(w.tasks_accepted??0)],[ct('measured.tokens'),esc(w.supervised_tokens??0)],[ct('measured.acceptedTokens'),esc(w.accepted_tokens??0)],[ct('measured.bytes'),esc(fmtB(w.bytes_in??null))+' / '+esc(fmtB(w.bytes_out??null))+' · '+esc(fmtB(b.bytes)+' / '+fmtB(S.policy.daily_traffic_mb*1e6))]])
-      +'<p class="kc-note">'+esc(ct('measured.month',{h:((S.month?.wall_ms||0)/3600e3).toFixed(1)}))+'</p>';
+    const w=S.worker?.metrics,b=S.budget;
+    return kv([[ct('measured.tasks'),esc(w?.tasks_accepted??'—')],[ct('measured.tokens'),esc(w?.supervised_tokens??'—')],
+      [ct('measured.acceptedTokens'),esc(w?.accepted_tokens??'—')],[ct('measured.bytes'),esc(fmtB(b?.bytes))]]);
   }
   function sensorsBlock(){
-    const s=S.governor?.sensors||{};
-    return kv([s.gpu?[ct('gpu.info'),esc(s.gpu.name+' · '+(s.gpu.utilization_pct??'?')+'% · '+(s.gpu.temperature_c??'?')+' °C · '+fmtB(s.gpu.memory_used_bytes)+' / '+fmtB(s.gpu.memory_total_bytes))]:null,
-      s.ram_free_bytes!=null?[ct('ram.info'),esc(fmtB(s.ram_free_bytes)+' / '+fmtB(s.ram_total_bytes))]:null]);
-  }
-  function setupList(){
-    const miss=S.missing||[];
-    if(!S.link)miss.includes('link')||miss.unshift('link');
-    if(!miss.length)return '<p class="kc-note ok">'+esc(ct('setup.done'))+'</p>';
-    return '<ul class="kc-setup">'+miss.map(m=>'<li><button type="button" class="kc-link" data-act="goto" data-arg="'+(m==='link'||m==='revoked'?'devices':'data')+'">'+esc(ct('setup.'+m))+'</button></li>').join('')+'</ul>';
+    const s=S.governor?.sensors;
+    return s?kv([[ct('ram.info'),esc(fmtB(s.ram_free_bytes)+' / '+fmtB(s.ram_total_bytes))],[ct('gpu.info'),esc(s.gpu?.name||tx('unsupported'))]]):'';
   }
   function participate(){
-    const p=S.policy,on=S.participation&&!S.consent.required;
-    const slider=(k,label,note,max=100,stepv=5,unit='%')=>'<label class="kc-slider"><span>'+esc(label)+' <b id="v_'+k+'">'+(unit==='h'?esc(ct('hours.unit',{n:p[k]})):p[k]+unit)+'</b></span><input type="range" min="'+(unit==='h'?1:0)+'" max="'+max+'" step="'+stepv+'" value="'+p[k]+'" data-pol="'+k+'" data-unit="'+unit+'"><small class="kc-note">'+esc(note)+'</small></label>';
-    const chk=(k,label,dis)=>'<label class="kc-check"><input type="checkbox" data-pol="'+k+'"'+(p[k]?' checked':'')+(dis?' disabled':'')+'> '+esc(label)+'</label>';
-    const num=(k,label,min,max,stepv=1)=>'<label class="kc-field"><span>'+esc(label)+'</span><input type="number" min="'+min+'" max="'+max+'" step="'+stepv+'" value="'+esc(p[k])+'" data-pol="'+k+'"></label>';
-    let h=card('','<div class="kc-toggle-row"><div><strong>'+esc(ct('toggle'))+'</strong><small class="kc-note">'+esc(ct('card.subtitle'))+' · '+esc(ct('toggle.note'))+'</small></div><label class="kc-switch"><input type="checkbox" id="kcToggle" data-act-change="toggle"'+(on?' checked':'')+(busy?' disabled':'')+'><span></span></label></div>'
-      +L('status',statusLine)+L('setup',setupList)
-      +'<div class="kc-actions">'+btn(S.manual_pause?'resume':'pause',ct(S.manual_pause?'btn.resume':'btn.pause'),{disabled:!S.participation})+btn('stop',ct('btn.stop'),{disabled:!S.link&&!S.participation})+btn('diag',ct('btn.diag'))+'</div>'+msg('diag'));
-    h+='<div class="kc-grid">'+card(ct('limits'),slider('gpu_target_pct',ct('gpu'),ct('gpu.note'))+slider('cpu_target_pct',ct('cpu'),ct('cpu.note'))+slider('daily_hours',ct('hours'),'',p.extended_hours?24:12,1,'h')
-      +chk('only_idle',ct('only_idle'))+chk('only_ac',ct('only_ac'))+chk('pause_on_games',ct('pause_on_games'))+chk('pause_on_local_ai',ct('pause_on_local_ai'))+chk('pause_on_fullscreen',ct('pause_on_fullscreen'))
-      +'<details class="kc-adv"><summary>'+esc(ct('advanced'))+'</summary><label class="kc-field"><span>'+esc(ct('profile'))+'</span><select data-pol="profile">'+['gentle','custom','full'].map(x=>'<option value="'+x+'"'+(p.profile===x?' selected':'')+'>'+esc(ct('profile.'+x))+'</option>').join('')+'</select></label>'
-      +chk('extended_hours',ct('extended_hours'))+num('idle_minutes',ct('idle_minutes'),1,120)+num('min_free_ram_gib',ct('min_free_ram_gib'),0,256,0.5)+num('temp_limit_c',ct('temp_limit_c'),50,95)+num('daily_traffic_mb',ct('daily_traffic_mb'),10,1e6,10)+chk('allow_metered',ct('allow_metered'))
-      +'<div class="kc-quiet"><label class="kc-check"><input type="checkbox" data-pol="quiet_hours.enabled"'+(p.quiet_hours.enabled?' checked':'')+'> '+esc(ct('quiet'))+'</label><label>'+esc(ct('quiet.from'))+' <input type="time" data-pol="quiet_hours.from" value="'+esc(p.quiet_hours.from)+'"></label><label>'+esc(ct('quiet.to'))+' <input type="time" data-pol="quiet_hours.to" value="'+esc(p.quiet_hours.to)+'"></label></div>'
-      +'<label class="kc-check"><input type="checkbox" disabled> '+esc(ct('background'))+'</label><small class="kc-note">'+esc(ct('background.note'))+'</small></details><p class="kc-note">'+esc(ct('sensors.note'))+'</p>'+msg('policy'))
-      +'<div>'+card(ct('nominal'),'<div class="kc-big" id="kcNominal">'+esc(S.nominal_monthly_hours)+' '+esc(lang()==='ru'?'ч':'h')+'</div><p class="kc-note">'+esc(ct('nominal.note'))+'</p>')
-      +card(ct('measured'),L('measured',measuredBlock)+L('sensors',sensorsBlock))
-      +(S.consent.current?card('','<p class="kc-note">'+esc(ct('consent.given',{d:when(S.consent.current.accepted_at),p:S.consent.current.project_id}))+'</p>'+btn('consent-revoke',ct('consent.revoke'))):'')+'</div></div>';
-    h+='<p class="kc-note">'+esc(ct('data.privacy'))+'</p>'+btn('feature-off',ct('feature.disable'));
-    return h;
+    const p=S.policy,w=S.worker?.metrics,l=S.link;
+    const profiles='<div class="kc-profiles">'+Object.entries(presets).map(([id,percent])=>
+      '<button type="button" class="kc-profile" data-act="policy-preset" data-arg="'+id+'" aria-pressed="'+(activeProfile()===id)+'"><strong>'+esc(tx(id))+'</strong>'+
+      esc(percent+'% GPU · '+percent+'% CPU')+'<small>'+esc(tx(id+'Note'))+'</small></button>').join('')+'</div>';
+    const network=l?(S.lab?.info?.project_id===l.project_id?tx('laboratory'):tx('network')):tx('offline');
+    const linkState=l?(stale?tx('stale'):tx(l.device_state==='active'?'authorised':l.device_state==='revoked'?'revoked':'approval')):tx('offlineInfo');
+    return title(tx('contribution'),tx('contributionIntro'))+
+      '<div class="kc-experience-grid"><div class="kc-stack">'+panel('',participationStatus()+msg('join'),'kc-hero')+
+      panel(tx('resources'),plain(tx('resourcesNote'))+profiles+advancedPolicy())+'</div><div class="kc-stack">'+
+      panel(tx('stats'),scores([[tx('accepted'),w?.tasks_accepted??'—'],[tx('included'),'—'],[tx('time'),meter(S.budget?.used_gpu_ms)],[tx('energy'),'—']])+
+      plain(tx('estimate',{h:S.nominal_monthly_hours??12}),'kc-caption'))+
+      panel(tx('network'),'<div class="kc-network-line"><span class="kc-device-icon" aria-hidden="true">◈</span><div><strong>'+esc(network)+'</strong><small>'+esc(linkState)+'</small></div></div>')+
+      '</div></div>';
   }
   function collectPolicy(){
     const p=JSON.parse(JSON.stringify(S.policy));
@@ -111,18 +202,60 @@
     return p;
   }
   // ---------- consent ----------
-  function consentDialog(){
-    const c=S.consent.text,d=document.getElementById('computeConsent');
-    d.innerHTML='<form method="dialog"><h2>'+esc(ct('consent.title'))+'</h2>'+kv([[ct('consent.project'),esc(c.project_id)],[ct('consent.endpoint'),esc(c.endpoint)],[ct('consent.fingerprint'),'<code>'+esc(c.fingerprint)+'</code>']])
-      +'<ul class="kc-facts">'+Object.values(c.facts).map(f=>'<li>'+esc(f)+'</li>').join('')+'<li>'+esc(ct('consent.weights'))+'</li><li>'+esc(ct('consent.autostart'))+'</li></ul>'
-      +(c.remote?'<label class="kc-check warn"><input type="checkbox" id="kcRemote"> '+esc(ct('consent.remote'))+'</label>':'')
-      +'<label class="kc-check"><input type="checkbox" id="kcAgree"> '+esc(ct('consent.agree'))+'</label><p class="kc-note">'+esc(ct('consent.revision',{r:c.text_revision}))+'</p>'
-      +'<div class="dialog-actions"><button class="secondary" value="cancel">'+esc(ct('consent.cancel'))+'</button><button class="primary kc-btn" id="kcAccept" value="ok" disabled>'+esc(ct('consent.accept'))+'</button></div></form>';
-    const upd=()=>{d.querySelector('#kcAccept').disabled=!(d.querySelector('#kcAgree').checked&&(!c.remote||d.querySelector('#kcRemote').checked));};
-    d.querySelectorAll('input').forEach(i=>i.onchange=upd);
-    d.onclose=()=>{if(d.returnValue==='ok')run(()=>call('consent/accept',{text_revision:c.text_revision,project_id:c.project_id,allow_remote:c.remote?true:undefined}));else render(true);};
-    d.returnValue='';d.showModal();
+  function openDialog(kind,heading,markup,actions=''){
+    const el=dialog();
+    el.dataset.kind=kind;
+    el.setAttribute('aria-labelledby','kcDialogTitle');
+    el.innerHTML='<div class="dialog-heading"><h2 id="kcDialogTitle">'+esc(heading)+'</h2>'+
+      '<button type="button" class="icon" data-act="close-dialog" aria-label="'+esc(tx('close'))+'">×</button></div>'+
+      '<div data-dialog-content>'+markup+'</div>'+(actions?row(actions):'');
+    if(!el.open)el.showModal();
   }
+  function clearDialog(){
+    const d=dialog();
+    if(d.open)d.close();
+    d.replaceChildren();d.dataset.kind='';
+    invitationEpoch++;
+    pairing=null;
+  }
+  function consentDialog(){
+    const c=S?.consent?.text;
+    if(!c||!S.link)return;
+    const name=S.lab?.info?.project_id===S.link.project_id?tx('laboratory'):tx('network');
+    const percent=S.policy.gpu_target_pct+'% GPU · '+S.policy.cpu_target_pct+'% CPU · '+ct('hours.unit',{n:S.policy.daily_hours});
+    openDialog('consent',tx('consentTitle'),notice(name)+plain(tx('consentText'))+
+      '<div data-hardware-preview>'+hardwarePreview()+'</div>'+notice(percent)+plain(tx('consentTransfer'))+
+      '<details><summary>'+esc(tx('technicalDetails'))+'</summary>'+kv([[ct('consent.endpoint'),esc(c.endpoint)],[ct('consent.fingerprint'),esc(c.fingerprint)]])+'</details>'+
+      '<label class="kc-check"><input type="checkbox" id="kcAgree" autocomplete="off"> '+esc(tx('consentApprove'))+'</label>',
+      btn('close-dialog',tx('cancel'))+'<button type="button" class="primary" id="kcAccept" data-act="accept-preparation" disabled>'+esc(tx('consentGo'))+'</button>');
+    const agreed=dialog().querySelector('#kcAgree');
+    agreed.onchange=()=>{dialog().querySelector('#kcAccept').disabled=!agreed.checked;};
+    void detectHardware();
+  }
+  function hardwarePreview(){
+    if(!hardware)return plain(tx('hardwareUnknown'),'kc-subtle');
+    const gpu=hardware.gpu?.name||tx('unsupported');
+    return kv([[gpu,esc(tx('ram')+' · '+fmtB(hardware.ram_bytes))],
+      [tx('stageRuntime'),esc(tx(hardware.existing_runtime?'foundRuntime':'missingRuntime'))],
+      [tx('stageModel'),esc(tx(hardware.existing_model?'foundModel':'missingModel'))]]);
+  }
+  async function detectHardware(){
+    try{hardware=await call('onboarding/detect');}
+    catch{return;}
+    const target=dialog().querySelector('[data-hardware-preview]');
+    if(target)target.innerHTML=hardwarePreview();
+  }
+  function inviteDialog(initial=''){
+    openDialog('invitation',tx('invitationTitle'),plain(tx('invitationInfo'))+
+      '<label class="kc-field">'+esc(tx('invitationLabel'))+'<textarea id="kcInvitation" rows="3" autocomplete="off" spellcheck="false" placeholder="kvalah-compute://pair?…">'+esc(initial)+'</textarea></label>'+
+      (S.link?'<label class="kc-check"><input type="checkbox" id="kcReplace"> '+esc(tx('replace'))+'</label>':'')+
+      '<p data-dialog-error role="alert"></p>',btn('close-dialog',tx('cancel'))+btn('submit-invitation',tx('next'),{primary:true}));
+    dialog().querySelector('#kcInvitation').focus();
+  }
+  const dialogError=message=>{
+    const error=dialog().querySelector('[data-dialog-error]');
+    if(error)error.textContent=message;
+  };
   // ---------- Devices ----------
   function linkBlock(){
     const l=S.link;
@@ -145,7 +278,7 @@
     if(!i?.running)return '<p class="kc-note">'+esc(ct('lab.stopped'))+'</p>';
     return '<p><span class="badge ok">'+esc(ct('lab.running',{e:i.endpoint}))+'</span></p>'+kv([[ct('consent.fingerprint'),'<code>'+esc(i.fingerprint)+'</code>'],[ct('consent.project'),esc(i.project_id||'')]]);
   }
-  function devices(){
+  function expertDevices(){
     const addrs=(S.lab_addresses||[]).map(a=>a.address||a).concat(['127.0.0.1']),bind=S.lab?.info?.bind_ip||addrs[0];
     const id=S.identity;
     let h='<div class="kc-grid">'+card(ct('devices.connect'),L('link',linkBlock)+(S.link?'<div class="kc-actions">'+btn('link-refresh',ct('devices.refresh'))+btn('link-forget',ct('devices.forget'))+'</div>':
@@ -160,7 +293,7 @@
     return h;
   }
   // ---------- Lab ----------
-  function lab(){
+  function expertExperiment(){
     if(!S.lab?.info?.running&&!S.lab?.experiments?.length)return card('','<p>'+esc(ct('lab.need'))+'</p>'+btn('goto',ct('tab.devices'),{arg:'devices'}));
     const l=S.lab,prof=S.profile.id;
     const variants=l.variants.filter(v=>v.profile_id===prof);
@@ -178,7 +311,7 @@
       +'<fieldset class="kc-field wide"><legend>'+esc(ct('lab.variants'))+'</legend>'+vlist.map(v=>'<label class="kc-check"><input type="checkbox" class="kcVar" id="kcVar_'+esc(v)+'" value="'+esc(v)+'"'+(variants.find(x=>x.variant_id===v)?' checked':'')+'> '+esc(v)+'</label>').join('')+'</fieldset>'
       +field('kcRounds',ct('lab.rounds'),'',{type:'number',placeholder:'2'})+field('kcSteps',ct('lab.steps'),'',{type:'number',placeholder:'3'})
       +'<label class="kc-field"><span>'+esc(ct('lab.optimizer'))+'</span><select id="kcOpt"><option>sgd</option><option>adamw</option></select></label>'+field('kcLr',ct('lab.lr'),'',{placeholder:'0.001'})
-      +'<label class="kc-field"><span>'+esc(ct('lab.maxlen'))+'</span><select id="kcMaxLen"><option>256</option><option disabled>'+esc(ct('lab.ctx512'))+'</option></select></label>'
+      +'<label class="kc-field"><span>'+esc(ct('lab.maxlen'))+'</span><select id="kcMaxLen"><option>256</option><option value="512"'+(S.preflight?.max_length!==512?' disabled':'')+'>512</option></select></label>'
       +'<label class="kc-field"><span>'+esc(ct('lab.quorum'))+'</span><select id="kcQMode"><option value="">'+esc(ct('lab.preset'))+'</option><option value="all">'+esc(ct('quorum.all'))+'</option><option value="fault_tolerant">'+esc(ct('quorum.ft'))+'</option></select></label>'
       +field('kcQMin',ct('lab.qmin'),'',{type:'number'})+field('kcQTarget',ct('lab.qtarget'),'',{type:'number',placeholder:'3'})+field('kcDeadline',ct('lab.deadline'),'',{type:'number',placeholder:'600'})+field('kcSeed',ct('lab.seed'),'',{type:'number',placeholder:'20261126'})+field('kcEvalEvery',ct('lab.evalEvery'),'',{type:'number'})
       +'<label class="kc-check wide"><input type="checkbox" id="kcResearch"> '+esc(ct('lab.research'))+'</label></div>'
@@ -208,7 +341,7 @@
       if(['PAUSED','BLOCKED'].includes(e.state))a.push(btn('exp-resume',ct('exp.resume'),{arg:e.id}));
       if(!['COMPLETED','CANCELLED'].includes(e.state))a.push(btn('exp-cancel',ct('exp.cancel'),{arg:e.id}));
       a.push(btn('exp-report',ct('exp.report'),{arg:e.id}),btn('exp-peft',ct('exp.peft'),{arg:e.id,disabled:!e.committed_rounds}),btn('exp-monitor',ct('tab.monitor'),{arg:e.id}));
-      return '<li><span><strong>'+esc(e.name)+'</strong> <span class="badge'+(e.state==='COMPLETED'?' ok':'')+'">'+esc(e.state)+'</span><small>'+esc(e.run_id)+' · '+esc(e.config.preset)+' · '+esc(e.committed_rounds)+'/'+esc(e.target_rounds)+' · '+esc(when(e.created_at))+'</small></span><span class="kc-actions">'+a.join('')+'</span></li>';
+      return '<li><span><strong>'+esc(e.name)+'</strong> <span class="badge'+(e.state==='COMPLETED'?' ok':'')+'">'+esc(stateText(e.state))+'</span><small>'+esc(e.run_id)+' · '+esc(e.config.preset==='smoke'?tx('smoke'):ct('preset.'+e.config.preset))+' · '+esc(e.committed_rounds)+'/'+esc(e.target_rounds)+' · '+esc(when(e.created_at))+'</small></span><span class="kc-actions">'+a.join('')+'</span></li>';
     }).join('')+'</ul><label class="kc-check"><input type="checkbox" id="kcWeights"> '+esc(ct('exp.weights'))+'</label>'+msg('exp');
   }
   // ---------- Monitoring ----------
@@ -223,16 +356,16 @@
   function monitorLive(){
     if(!expData)return '<p class="kc-note">'+esc(ct('mon.none'))+'</p>';
     const e=expData.status,r=e.round,rounds=expData.rounds||[];
-    let h=kv([[ct('mon.rounds'),esc(e.committed_rounds+' / '+e.target_rounds)],[ct('col.state'),'<span class="badge">'+esc(e.state)+'</span>'],
-      r?[ct('mon.round'),esc('#'+r.idx+' · attempt '+r.attempt+' · '+r.state+' · base '+short(r.parent_hash))]:null,r?[ct('mon.accepted'),esc(r.accepted+' / '+r.min_quorum+'–'+r.target+' (leased '+r.leased+')')]:null,
+    let h=kv([[ct('mon.rounds'),esc(e.committed_rounds+' / '+e.target_rounds)],[ct('col.state'),'<span class="badge">'+esc(stateText(e.state))+'</span>'],
+      r?[ct('mon.round'),esc('#'+r.idx+' · attempt '+r.attempt+' · '+stateText(r.state))]:null,r?[ct('mon.accepted'),esc(r.accepted+' / '+r.min_quorum+'–'+r.target+' (leased '+r.leased+')')]:null,
       r&&e.state==='RUNNING'?[ct('mon.deadline'),esc(fmtMs(r.remaining_ms))]:null,['config','<code>'+esc(short(e.config_hash))+'</code> · frozen A <code>'+esc(short(e.frozen_a_hash))+'</code>']]);
-    const bl=e.blocker||r?.blocker;if(bl)h+='<p class="kc-msg bad">'+esc(ct('mon.blocker',{r:bl.reason||bl.code||JSON.stringify(bl),a:r?.accepted??0,m:r?.min_quorum??'?'}))+'</p>';
-    if(r?.slots?.length)h+='<h4>'+esc(ct('mon.slots'))+'</h4><ul class="dev-list">'+r.slots.map(s=>{const dev=(S.lab?.devices||[]).find(d=>d.id===s.device_id);const pr=s.progress||{};return '<li><span>slot '+s.slot+' · <strong>'+esc(dev?.alias||s.device_id||ct('none'))+'</strong><small>'+esc(s.state+(s.task_state?' / '+s.task_state:'')+' · '+s.expected_tokens+' tok'+(pr.step!=null?' · step '+pr.step+'/'+(pr.steps??'?'):''))+'</small></span>'+(pr.step!=null&&pr.steps?'<progress max="'+pr.steps+'" value="'+pr.step+'"></progress>':'')+'</li>';}).join('')+'</ul>';
+    const bl=e.blocker||r?.blocker;if(bl)h+='<p class="kc-msg bad">'+esc(ct('mon.blocker',{r:friendly(bl.reason||bl.code),a:r?.accepted??0,m:r?.min_quorum??'?'}))+'</p>';
+    if(r?.slots?.length)h+='<h4>'+esc(ct('mon.slots'))+'</h4><ul class="dev-list">'+r.slots.map(s=>{const dev=(S.lab?.devices||[]).find(d=>d.id===s.device_id);const pr=s.progress||{};return '<li><span>slot '+s.slot+' · <strong>'+esc(dev?.alias||s.device_id||ct('none'))+'</strong><small>'+esc(({open:tx('checking'),leased:tx('inProgress'),accepted:tx('accepted'),void:tx('cancelled')})[s.state]||tx('checking'))+(pr.step!=null?' · '+pr.step+'/'+(pr.steps??'?'):'')+'</small></span>'+(pr.step!=null&&pr.steps?'<progress max="'+pr.steps+'" value="'+pr.step+'"></progress>':'')+'</li>';}).join('')+'</ul>';
     const ev=e.eval||{},pts=Object.entries(ev.rounds||{}).filter(([,v])=>Number.isFinite(v.nll)).map(([k,v])=>[Number(k),v.nll]).sort((a,b)=>a[0]-b[0]);
     h+='<h4>'+esc(ct('mon.eval'))+'</h4>'+(pts.length?chart(pts)+'<table class="kc-table"><tr><th>'+esc(ct('col.round'))+'</th><th>NLL</th><th>PPL</th><th>tokens</th><th>acc</th></tr>'+Object.entries(ev.rounds).map(([k,v])=>'<tr><td>'+esc(k)+'</td><td>'+esc(v.nll!=null?v.nll.toFixed(6):v.status)+'</td><td>'+esc(v.perplexity!=null?v.perplexity.toFixed(3):'')+'</td><td>'+esc(v.tokens??'')+'</td><td>'+esc(v.token_accuracy!=null?(v.token_accuracy*100).toFixed(1)+'%':'')+'</td></tr>').join('')+'</table>':'<p class="kc-note">'+esc(ev.status||ct('mon.noEval'))+'</p>')
       +(ev.gate?'<p class="kc-msg'+(ev.gate.passed?'':' bad')+'">'+esc(ct('mon.gate',{r:ct(ev.gate.passed?'gate.pass':'gate.fail')+' ('+(ev.gate.rel_change*100).toFixed(2)+'%)'}))+'</p>':'');
     h+='<h4>'+esc(ct('mon.table'))+'</h4><div class="kc-scroll"><table class="kc-table"><tr><th>'+['col.round','col.state','col.base','col.updates','col.tokens','col.excluded','col.duration','col.ckpt'].map(k=>esc(ct(k))).join('</th><th>')+'</th></tr>'
-      +rounds.map(x=>{const acc=x.accepted||[],exc=x.excluded||[];return '<tr><td>'+x.idx+'.'+x.attempt+'</td><td>'+esc(x.state)+'</td><td><code>'+esc(short(x.parent_hash))+'</code></td><td>'+acc.length+'</td><td>'+esc(acc.map(a=>a.weight??a.tokens).join(' + '))+'</td><td>'+esc(exc.map(a=>'slot '+a.slot+': '+a.reason).join('; '))+'</td><td>'+esc(fmtMs(x.duration_ms))+(x.aggregation_ms!=null?' (agg '+x.aggregation_ms+' ms)':'')+'</td><td><code>'+esc(short(x.checkpoint_hash))+'</code></td></tr>';}).join('')+'</table></div>';
+      +rounds.map(x=>{const acc=x.accepted||[],exc=x.excluded||[];return '<tr><td>'+x.idx+'.'+x.attempt+'</td><td>'+esc(stateText(x.state))+'</td><td><code>'+esc(short(x.parent_hash))+'</code></td><td>'+acc.length+'</td><td>'+esc(acc.map(a=>a.weight??a.tokens).join(' + '))+'</td><td>'+esc(exc.map(a=>'slot '+a.slot+': '+a.reason).join('; '))+'</td><td>'+esc(fmtMs(x.duration_ms))+(x.aggregation_ms!=null?' (agg '+x.aggregation_ms+' ms)':'')+'</td><td><code>'+esc(short(x.checkpoint_hash))+'</code></td></tr>';}).join('')+'</table></div>';
     return h;
   }
   function eventsBlock(){
@@ -242,12 +375,41 @@
   }
   function monitor(){
     const ex=S.lab?.experiments||[];
-    let h=card('',(ex.length?'<label class="kc-field"><span>'+esc(ct('mon.choose'))+'</span><select id="kcExpSel" data-act-change="select-exp">'+ex.map(e=>'<option value="'+esc(e.id)+'"'+(e.id===selExp?' selected':'')+'>'+esc(e.name+' · '+e.run_id+' · '+e.state)+'</option>').join('')+'</select></label>'+btn('rounds-json',ct('mon.exportJson'),{disabled:!expData}):'')+L('mon',monitorLive));
-    h+=card(ct('mon.events'),L('events',eventsBlock));
-    return h;
+    if(!expData)return panel(tx('experiments'),plain(tx('checking')),'kc-hero');
+    const e=expData.status,r=e.round,failed=expData.rounds.filter(x=>['FAILED','BLOCKED'].includes(x.state));
+    const committed=expData.rounds.filter(x=>x.state==='COMMITTED');
+    const finished=e.state==='COMPLETED';
+    const picker=ex.length>1?'<label class="kc-field"><span>'+esc(ct('mon.choose'))+'</span><select id="kcExpSel" data-act-change="select-exp">'+
+      ex.map(x=>'<option value="'+esc(x.id)+'"'+(x.id===selExp?' selected':'')+'>'+esc(x.name+' · '+stateText(x.state))+'</option>').join('')+'</select></label>':'';
+    const evals=Object.entries(e.eval?.rounds||{});
+    const summary=evals.map(([round,v])=>'<div class="kc-device-row"><div class="kc-device-summary"><strong>'+esc(ct('col.round')+' '+round)+'</strong>'+
+      '<small>'+esc(v.backend||'—')+' · '+esc(v.provenance==='verified'?tx('trustReady'):tx('trustUnknown'))+'</small></div>'+
+      (v.status==='DONE'?'<strong>'+esc('NLL '+v.nll.toFixed(4)+' · PPL '+v.perplexity.toFixed(2)+' · '+(v.token_accuracy*100).toFixed(1)+'% · '+v.tokens)+'</strong>':pill(tx('noMeasure'),'warn'))+'</div>').join('');
+    const participants=finished?(committed.at(-1)?.accepted||[]).map(item=>({device_id:item.device_id,state:'accepted'})):(r?.slots||[]);
+    const slots=participants.map(item=>{
+      const device=S.lab?.devices.find(d=>d.id===item.device_id);
+      const label=item.state==='accepted'?tx('accepted'):item.progress?.step!=null?item.progress.step+' / '+item.progress.steps:tx('checking');
+      return '<div class="kc-device-row"><span class="kc-device-icon" aria-hidden="true">▣</span><div class="kc-device-summary"><strong>'+esc(device?.alias||ct('none'))+'</strong></div>'+
+        pill(label,item.state==='accepted'?'good':'warn')+'</div>';
+    }).join('');
+    const progress=finished?[[tx('acceptedUpdates'),committed.reduce((n,x)=>n+(x.accepted?.length||0),0)]]:
+      [[ct('mon.accepted'),r?r.accepted+' / '+r.target:'—'],[ct('mon.round'),r?(r.idx+1)+' / '+e.target_rounds:'—'],[ct('mon.deadline'),e.state==='RUNNING'?fmtMs(r?.remaining_ms):'—']];
+    return '<div class="kc-stack">'+panel('',picker+pill(stateText(e.state),finished?'good':e.state==='BLOCKED'?'warn':'')+
+      h2(e.name)+plain(e.run_id,'kc-caption')+scores([[tx('completedRounds'),e.committed_rounds+' / '+e.target_rounds],...progress])+
+      '<progress class="kc-monitor-progress" aria-label="'+esc(tx('completedRounds'))+'" max="'+e.target_rounds+'" value="'+e.committed_rounds+'"></progress>'+
+      (e.blocker?.reason?notice(friendly(e.blocker.reason),'warn'):'')+
+      row(btn('lab-nav',tx('experiments'),{arg:'experiments'})+btn('rounds-json',ct('mon.exportJson'))+
+        (e.state==='RUNNING'?btn('exp-pause',ct('exp.pause'),{arg:e.id})+btn('exp-finish',ct('exp.finish'),{arg:e.id})+btn('exp-cancel',ct('exp.cancel'),{arg:e.id}):'')+
+        (['PAUSED','BLOCKED'].includes(e.state)?btn('exp-resume',ct('exp.resume'),{arg:e.id,primary:true}):'')+
+        (e.state==='COMPLETED'?btn('exp-report',ct('exp.report'),{arg:e.id,primary:true})+btn('exp-peft',ct('exp.peft'),{arg:e.id}):''))+
+      (e.state==='COMPLETED'?'<label class="kc-check"><input id="kcWeights" type="checkbox">'+esc(ct('exp.weights'))+'</label>':'')+msg('exp'),'kc-hero')+
+      '<div class="kc-experience-grid">'+panel(tx(finished?'lastRoundDevices':'devices'),slots||plain(tx('noAssignments')))+panel(tx('evaluation'),summary||plain(tx('noMeasure')))+'</div>'+
+      (failed.length?panel(tx('blocked'),failed.map(f=>plain(ct('col.round')+' '+(f.idx+1)+' · '+friendly(f.blocker?.reason))).join('')):'')+
+      panel(tx('technicalDetails'),'<details data-expand="round-ledger"><summary>'+esc(ct('mon.table'))+'</summary>'+monitorLive()+'</details>'+
+        '<details data-expand="round-events"><summary>'+esc(ct('mon.events'))+'</summary>'+eventsBlock()+'</details>')+'</div>';
   }
   // ---------- Models & data ----------
-  function data(){
+  function expertData(){
     const rt=S.runtime,m=S.model,pf=S.preflight,pr=rt?.probe;
     const backends=S.test_mode?['cuda','mlx','torch-cpu-test','mock']:['cuda','mlx'];
     const defB=rt?.backend||(S.platform==='darwin'?'mlx':'cuda');
@@ -269,20 +431,144 @@
     h+='<p class="kc-note">'+esc(ct('data.privacy'))+'</p>';
     return h;
   }
+  function readyPill(reason){
+    if(!reason)return pill(tx('deviceReady'),'good');
+    return pill(reason==='pending_approval'?tx('approval'):reason==='revoked'?tx('revoked'):
+      reason==='device_offline'?tx('deviceOffline'):tx('temporary'),reason==='revoked'?'bad':'warn');
+  }
+  function labDevices(){
+    const devices=S.lab?.devices||[],readiness=S.lab?.smoke?.devices||[];
+    return panel(tx('devices'),(!devices.length?plain(tx('deviceEmpty')):devices.map(d=>{
+      const ready=readiness.find(x=>x.id===d.id),c=d.capabilities||{};
+      return '<article class="kc-device-row"><span class="kc-device-icon" aria-hidden="true">▣</span><div class="kc-device-summary"><strong>'+esc(d.alias)+'</strong>'+
+        '<small>'+esc([d.id===S.lab.self_device?ct('dev.self'):tx('workerRole'),c.device_name,d.online?tx('connected'):tx('deviceOffline')].filter(Boolean).join(' · '))+'</small>'+
+        (ready?.reason?'<small>'+esc(friendly(ready.reason))+'</small>':'')+'</div>'+
+        readyPill(ready?.reason||(!d.online?'device_offline':d.state==='pending'?'pending_approval':null))+
+        (d.state==='pending'?btn('show-approval',ct('dev.approve'),{arg:d.id,primary:true}):'')+
+        '<details data-expand="device-'+esc(d.id)+'"><summary>'+esc(tx('deviceDetails'))+'</summary>'+
+        kv([[tx('deviceDetails'),esc(d.key_fingerprint)],[tx('stageRuntime'),esc(c.backend||tx('noMeasure'))],[tx('stageModel'),esc(c.variants?.[0]?.variant_id||tx('noMeasure'))]])+
+        (d.state!=='revoked'?row(btn('dev-rename',ct('dev.rename'),{arg:d.id})+btn('dev-drain',ct(d.status?.drain?'dev.undrain':'dev.drain'),{arg:d.id+'|'+!d.status?.drain})+
+           btn('dev-revoke',ct('dev.revoke'),{arg:d.id})):'')+'</details></article>';
+    }).join(''))+msg('lab'));
+  }
+  function laboratory(){
+    const l=S.lab,ready=l?.smoke,online=l?.info?.running&&!stale;
+    const n=stale?0:ready?.devices?.filter(d=>!d.reason).length||0;
+    const nav='<nav class="kc-lab-tabs" aria-label="'+esc(tx('nav'))+'">'+[['overview','overview'],['devices','devices'],['experiments','experiments'],['data','models']].map(([id,key])=>{
+      const selected=tab===id||(tab==='monitor'&&id==='experiments');
+      return '<button type="button" data-act="lab-nav" data-arg="'+id+'"'+(selected?' aria-current="page"':'')+'>'+esc(tx(key))+'</button>';
+    }).join('')+'</nav>';
+    const top=title(tx('laboratory'),tx('labIntro'),online?btn('new-experiment',tx('newExperiment'),{primary:true}):btn('auto-lab',tx('createNetwork'),{primary:true}))+nav;
+    const networkControls=row(btn('lab-pairing',tx('inviteDevice'),{primary:tab==='devices'})+
+      (!S.link?btn('lab-join-ux',tx('joinSelf')):'')+btn('lab-stop',ct('lab.stop')));
+    if(tab==='devices')return top+panel(tx('network'),pill(online?tx('networkOn'):tx('networkStopped'),online?'good':'')+
+      (online?networkControls:row(btn('auto-lab',tx('createNetwork'),{primary:true})))+'<details data-expand="network"><summary>'+esc(tx('technicalDetails'))+'</summary>'+
+      (S.feature_enabled?expertDevices():'')+'</details>')+labDevices();
+    if(tab==='data')return top+labModels();
+    if(tab==='monitor')return top+monitor();
+    if(tab==='experiments')return top+panel(tx('experiments'),(l?.experiments?.length?expList():plain(tx('emptyExperiments')))+msg('exp'));
+    if(!online)return top+panel('',h2(tx('createNetworkTitle'))+plain(tx('createNetworkInfo'))+
+      row(btn('auto-lab',tx('createNetwork'),{primary:true}))+msg('lab'),'kc-hero');
+    return top+'<div class="kc-experience-grid"><div class="kc-stack">'+panel('',pill(tx('networkOn'),'good')+
+      h2(tx(ready?.ready?'labReady':'labNotReady'))+plain(tx('labReadiness',{ready:n,target:3}))+
+      row(btn('show-smoke',tx('smoke'),{primary:true})+btn('lab-pairing',tx('inviteDevice'))+(!S.link?btn('lab-join-ux',tx('joinSelf')):''))+
+      (ready?.reason?plain(friendly(ready.reason),'kc-caption'):'')+msg('lab'),'kc-hero')+labDevices()+'</div><div class="kc-stack">'+
+      panel(tx('networkStats'),scores([[tx('deviceReady'),n+' / 3'],[tx('experiments'),l.experiments.length],
+      [tx('completedRounds'),l.experiments.reduce((a,r)=>a+r.committed_rounds,0)],[tx('devices'),l.devices.length]]))+'</div></div>';
+  }
+  function labModels(){
+    const l=S.lab,variants=l?.variants||[];
+    return '<div class="kc-experience-grid"><div class="kc-stack">'+panel(tx('runtimeModels'),(variants.length?variants.map(v=>
+      '<div class="kc-device-row"><span class="kc-device-icon" aria-hidden="true">◈</span><div class="kc-device-summary"><strong>'+esc(v.variant_id)+'</strong></div>'+
+      pill(tx(v.provenance==='verified'?'trustReady':'trustUnknown'),v.provenance==='verified'?'good':'warn')+'</div>').join(''):plain(tx('autoModels')))+
+      (S.feature_enabled?row(btn('expert-open',tx('expert'))):'')+msg('model'))+
+      panel(tx('bundleData'),plain(tx('autoModels'))+(l?.datasets||[]).map(d=>'<div class="kc-device-row"><strong>'+esc(d.id)+'</strong></div>').join(''))+
+      '</div><div class="kc-stack">'+(onlineOptions(l))+'</div></div>';
+  }
+  function onlineOptions(l){
+    if(!l?.info?.running)return '';
+    return panel(tx('expert'),'<details data-expand="lab-assets"><summary>'+esc(tx('technicalDetails'))+'</summary>'+
+      row(btn('register-model',ct('lab.registerModel'),{disabled:!S.model?.architecture_ok})+btn('import-fixture',ct('lab.importFixture')))+
+      reportedVariants(l.variants)+field('kcDsFile',ct('lab.file'),'',{browse:'file',wide:true})+
+      '<div class="kc-row">'+field('kcDsId',ct('lab.dsid'),'')+field('kcDsRev',ct('lab.rev'),'1')+'</div>'+
+      row(btn('import-dataset',ct('lab.import')))+msg('dataset')+'</details>');
+  }
+  async function rememberFeature(){
+    if(!S?.feature_enabled){
+      await api('/api/compute/v2/feature',{enabled:true});
+      S=await call('state');render(true);
+    }
+  }
+  function showSmoke(){
+    smoke=S.lab?.smoke||null;
+    smokeIds=smoke?.ids||[];
+    requestId=crypto.randomUUID();
+    openDialog('smoke',tx('smokeTitle'),plain(tx('smokeDescription'))+
+      '<div data-smoke-devices></div><label class="kc-check" data-smoke-warning><input id="kcSmokeUnverified" type="checkbox">'+esc(tx('smokeUnverified'))+'</label>'+
+      '<p data-dialog-error role="alert"></p>',btn('close-dialog',tx('cancel'))+btn('smoke-start',tx('smokeRun'),{primary:true,disabled:true}));
+    updateSmoke();
+    void refreshSmoke();
+  }
+  function updateSmoke(){
+    if(!dialog().open||dialog().dataset.kind!=='smoke')return;
+    const block=dialog().querySelector('[data-smoke-devices]');
+    const existing=block.querySelector('input:focus');
+    if(!existing)block.innerHTML=(smoke?.devices||[]).map(d=>'<label class="kc-check kc-device-row"><input type="checkbox" data-smoke-id="'+esc(d.id)+'"'+
+      (smokeIds.includes(d.id)?' checked':'')+'><span class="kc-device-summary"><strong>'+esc(d.alias)+'</strong>'+
+      (d.reason?'<small>'+esc(friendly(d.reason))+'</small>':'')+'</span>'+readyPill(d.reason)+'</label>').join('')+
+      (smoke?.reason?notice(friendly(smoke.reason),'warn'):'');
+    dialog().querySelector('[data-smoke-warning]').hidden=!smoke?.unverified;
+    dialog().querySelector('[data-act=smoke-start]').disabled=busy||stale||!smoke?.ready||smokeIds.length!==3||
+      (smoke.unverified&&!dialog().querySelector('#kcSmokeUnverified').checked);
+  }
+  async function refreshSmoke(){
+    const id=requestId,ids=smokeIds.slice();
+    if(dialog().dataset.kind!=='smoke')return;
+    try{
+      const result=await call('lab/smoke-readiness',{ids});
+      if(requestId===id&&smokeIds.join()===ids.join()){smoke=result;updateSmoke();}
+    }catch(error){if(requestId===id)dialogError(friendly(error.code));}
+  }
+  function showExpert(){
+    openDialog('expert',tx('expert'),expertData()+row(btn('feature-off',ct('feature.disable'))));
+  }
+  function showExperiment(){
+    tab='experiments';render(true);
+    openDialog('new-experiment',tx('newExperiment'),plain(tx('smokeDescription'))+row(btn('show-smoke',tx('smoke'),{primary:true})));
+    dialog().querySelector('[data-dialog-content]').insertAdjacentHTML('beforeend','<details><summary>'+esc(tx('customExperiment'))+'</summary>'+
+      expertExperiment()+'</details>');
+  }
   // ---------- actions ----------
-  const val=id=>body().querySelector('#'+id)?.value?.trim()||'';
+  const fieldElement=id=>(dialog().open?dialog().querySelector('#'+id):null)||body().querySelector('#'+id);
+  const val=id=>fieldElement(id)?.value?.trim()||'';
   const numv=id=>{const v=val(id);return v===''?undefined:Number(v);};
   const note=(k,text,bad)=>{lastResult[k]={text,bad};};
   async function run(fn,key){
     if(busy)return;busy=true;body().querySelectorAll('button,input,select').forEach(el=>el.disabled=true);
     try{const r=await fn();if(r&&typeof r==='object'&&'state' in r&&'policy' in r)S={feature_enabled:true,...r};return r;}
-    catch(e){if(key)note(key,e.message,true);else toast(e.message);}
-    finally{busy=false;await refresh(true);}
+    catch(e){
+      if(dialog().open&&dialog().querySelector('[data-dialog-error]'))dialogError(friendly(e.code));
+      else if(key)note(key,friendly(e.code),true);else toast(friendly(e.code));
+    }
+    finally{
+      busy=false;await refresh(true);
+      if(dialog().dataset.kind==='expert'&&dialog().open){
+        const d=dialog(),y=d.scrollTop;
+        d.querySelector('[data-dialog-content]').innerHTML=expertData()+row(btn('feature-off',ct('feature.disable')));
+        d.scrollTop=y;
+      }
+      if(dialog().dataset.kind==='new-experiment'&&dialog().open){
+        const submit=dialog().querySelector('[data-act=create]');
+        if(submit)submit.disabled=!plan;
+        const target=dialog().querySelector('[data-plan-summary]');
+        if(target)target.innerHTML=plan?notice(ct('lab.plan',{tasks:plan.tasks,rows:plan.rows_per_task,tokens:plan.supervised_tokens_total,params:plan.trainable_params,targets:plan.targets,r:plan.rank,a:plan.alpha})):msg('plan');
+      }
+    }
   }
   async function pickDir(){if(!desktop())return null;return desktop().chooseFolder('other');}
   function experimentConfig(){
-    const qm=val('kcQMode'),cfg={name:val('kcName'),preset:val('kcPreset'),dataset_id:val('kcDataset'),variants:[...body().querySelectorAll('.kcVar:checked')].map(i=>i.value),
-      rounds:numv('kcRounds'),local_steps:numv('kcSteps'),seed:numv('kcSeed'),round_deadline_s:numv('kcDeadline'),max_length:256,research_confirmed:body().querySelector('#kcResearch')?.checked===true};
+    const qm=val('kcQMode'),cfg={name:val('kcName'),preset:val('kcPreset'),dataset_id:val('kcDataset'),variants:[...(dialog().open?dialog():body()).querySelectorAll('.kcVar:checked')].map(i=>i.value),
+      rounds:numv('kcRounds'),local_steps:numv('kcSteps'),seed:numv('kcSeed'),round_deadline_s:numv('kcDeadline'),max_length:numv('kcMaxLen')||256,memory_checked:S.preflight?.max_length===512,research_confirmed:fieldElement('kcResearch')?.checked===true};
     const lr=val('kcLr');cfg.optimizer={name:val('kcOpt')||'sgd',...(lr?{lr:Number(lr)}:{})};
     if(qm)cfg.quorum={mode:qm,target:numv('kcQTarget')??3,min:numv('kcQMin')};
     const ee=numv('kcEvalEvery');if(ee!==undefined)cfg.eval={every:ee};
@@ -290,18 +576,51 @@
   }
   const acts={
     'feature-on':()=>run(async()=>{await api('/api/compute/v2/feature',{enabled:true});}),
-    'feature-off':()=>run(async()=>{await api('/api/compute/v2/feature',{enabled:false});tab='participate';}),
-    goto:el=>{tab=el.dataset.arg;render(true);},
-    toggle:el=>{
-      if(el.checked){
-        el.checked=false;
-        if(!S.link){tab='devices';toast(ct('setup.link'));render(true);return;}
-        if(S.consent.required)return consentDialog();
-        run(()=>call('participation',{enabled:true}));
-      }else run(()=>call('participation',{enabled:false}));
-    },
+    'feature-off':()=>run(async()=>{clearDialog();await api('/api/compute/v2/feature',{enabled:false});setMode('contribution');}),
+    goto:el=>{tab=el.dataset.arg==='devices'?'devices':'data';setMode('laboratory');},
+    'switch-lab':()=>{tab='overview';setMode('laboratory');},
+    'lab-nav':el=>{tab=el.dataset.arg;lastResult={};scroll().scrollTop=0;render(true);void refresh(true);},
+    'join-wizard':()=>run(async()=>{await rememberFeature();inviteDialog();},'join'),
+    'close-dialog':clearDialog,
+    'submit-invitation':()=>run(async()=>{
+      const invite=val('kcInvitation'),replace=dialog().querySelector('#kcReplace')?.checked===true;
+      if(!invite){dialogError(friendly('INVALID_SCHEMA'));return;}
+      const attempt=invitationEpoch;
+      S=await call('onboarding/join',{invitation:invite,replace});
+      if(attempt!==invitationEpoch)return;
+      hardware=null;
+      if(S.consent.required||!S.consent.current?.scopes?.automatic_setup)consentDialog();
+      else{
+        clearDialog();
+        if(S.missing?.length)await call('onboarding/retry',{});
+        else await call('participation',{enabled:true});
+      }
+    },'join'),
+    'review-consent':consentDialog,
+    'accept-preparation':()=>run(async()=>{
+      const c=S.consent.text;
+      await call('consent/accept',{text_revision:c.text_revision,project_id:c.project_id,prepare:true});
+      clearDialog();setMode('contribution');
+    },'join'),
+    'setup-retry':()=>run(()=>call('onboarding/retry',{}),'join'),
+    'setup-cancel':()=>run(()=>call('onboarding/cancel',{}),'join'),
+    'approve-download':()=>run(()=>call('onboarding/download',{id:S.download_offer?.id,bytes:S.download_offer?.bytes}),'join'),
+    'policy-preset':el=>run(async()=>{const id=el.dataset.arg;await rememberFeature();return call('policy/preset',{id,revision:S.policy.revision});},'policy'),
+    'full-profile':()=>openDialog('full',ct('profile.full'),plain(tx('resourcesNote'))+notice('GPU 100% · CPU 50%'),
+      btn('close-dialog',tx('cancel'))+btn('confirm-full',ct('profile.full'),{primary:true})),
+    'confirm-full':()=>run(async()=>{const s=await call('policy',{policy:{profile:'full',gpu_target_pct:100,cpu_target_pct:50,daily_hours:4},revision:S.policy.revision});clearDialog();return s;},'policy'),
+    'start-participation':()=>run(()=>call('participation',{enabled:true}),'join'),
     pause:()=>run(()=>call('pause',{})),resume:()=>run(()=>call('resume',{})),
-    stop:()=>{if(confirm(ct('confirm.stop')))run(async()=>{await call('participation',{enabled:false});return call('link/forget',{});});},
+    stop:()=>{if(confirm(tx('confirmStop')))run(()=>call('participation',{enabled:false}));},
+    'expert-open':showExpert,
+    'auto-lab':()=>run(async()=>{await rememberFeature();return call('lab/auto-start',{});},'lab'),
+    'new-experiment':showExperiment,
+    'show-smoke':showSmoke,
+    'smoke-start':()=>run(async()=>{
+      const id=requestId,accept=dialog().querySelector('#kcSmokeUnverified').checked;
+      const e=await call('lab/smoke-start',{device_ids:smokeIds,accept_unverified:accept,request_id:id});
+      clearDialog();selExp=e.id;tab='monitor';
+    },'exp'),
     diag:()=>run(async()=>{
       const report=await call('diagnostics');
       const url=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:'application/json'}));
@@ -314,10 +633,23 @@
     'link-forget':()=>{if(confirm(ct('confirm.stop')))run(()=>call('link/forget',{}));},
     'lab-start':()=>run(()=>call('lab/start',{bind_ip:val('kcBind'),port:numv('kcPort')}),'lab'),
     'lab-stop':()=>run(()=>{pairing=null;return call('lab/stop',{});},'lab'),
-    'lab-pairing':()=>run(async()=>{pairing=await call('lab/pairing',{});},'lab'),
+    'lab-pairing':()=>run(async()=>{
+      pairing=await call('lab/pairing',{});
+      openDialog('issued',tx('inviteDevice'),plain(tx('inviteInfo'))+
+        '<label class="kc-field">'+esc(tx('inviteField'))+'<textarea rows="3" readonly id="kcIssuedCode" spellcheck="false">'+esc(pairing.pairing)+'</textarea></label>'+
+        plain(tx('inviteExpiry',{time:when(pairing.expires_at)}),'kc-caption'),btn('close-dialog',tx('close'))+btn('copy-code',ct('copy'),{primary:true}));
+    },'lab'),
     'lab-join':()=>run(()=>call('lab/join-self',{}),'lab'),
+    'lab-join-ux':()=>run(async()=>{S=await call('lab/join-self',{});consentDialog();},'lab'),
+    'show-approval':el=>{
+      const d=S.lab?.devices.find(x=>x.id===el.dataset.arg);
+      if(!d)return;
+      openDialog('approve',ct('dev.approve'),notice(d.alias)+kv([[ct('dev.key'),esc(d.key_fingerprint)],[tx('stageRuntime'),esc(d.capabilities?.backend||tx('noMeasure'))],
+        [tx('stageModel'),esc(d.capabilities?.variants?.[0]?.variant_id||tx('noMeasure'))]]),
+        btn('close-dialog',tx('cancel'))+btn('dev-approve',ct('dev.approve'),{arg:d.id,primary:true}));
+    },
     'copy-code':()=>{navigator.clipboard?.writeText(pairing?.pairing||'').then(()=>toast(ct('copied')),()=>{});},
-    'dev-approve':el=>run(()=>call('lab/approve',{id:el.dataset.arg}),'lab'),
+    'dev-approve':el=>run(async()=>{await call('lab/approve',{id:el.dataset.arg});if(dialog().dataset.kind==='approve')clearDialog();},'lab'),
     'dev-revoke':el=>{if(confirm(ct('dev.confirmRevoke')))run(()=>call('lab/revoke',{id:el.dataset.arg}),'lab');},
     'dev-drain':el=>{const [id,on]=el.dataset.arg.split('|');run(()=>call('lab/drain',{id,on:on==='true'}),'lab');},
     'dev-rename':el=>{const a=prompt(ct('dev.renamePrompt'));if(a)run(()=>call('lab/rename',{id:el.dataset.arg,alias:a}),'lab');},
@@ -327,7 +659,7 @@
     'import-dataset':()=>run(async()=>{const r=await call('lab/import-dataset',{file:val('kcDsFile'),dataset_id:val('kcDsId'),revision:val('kcDsRev')||'1'});note('dataset',ct('saved')+': '+(r.id||r.dataset_id||''));},'dataset'),
     'dry-run':()=>run(async()=>{plan=null;lastResult.plan=null;const cfg=experimentConfig();plan=await call('lab/dry-run',{config:cfg});planInput=cfg;},'plan'),
     create:()=>{if(!plan||!planInput)return;if(!confirm(ct('lab.confirmStart',{n:plan.config.name,t:plan.tasks})))return;
-      run(async()=>{const e=await call('lab/create',{config:planInput});for(const k of Object.keys(form))if(/^kc(Name|Rounds|Steps|Lr|Q|Deadline|Seed|EvalEvery|Research|Var_)/.test(k))delete form[k];planInput=null;await call('lab/experiment/start',{id:e.id});selExp=e.id;plan=null;tab='monitor';},'plan');},
+      run(async()=>{const e=await call('lab/create',{config:planInput});for(const k of Object.keys(form))if(/^kc(Name|Rounds|Steps|Lr|Q|Deadline|Seed|EvalEvery|Research|Var_)/.test(k))delete form[k];planInput=null;await call('lab/experiment/start',{id:e.id});clearDialog();selExp=e.id;plan=null;tab='monitor';},'plan');},
     'exp-start':el=>run(()=>call('lab/experiment/start',{id:el.dataset.arg}),'exp'),'exp-pause':el=>run(()=>call('lab/experiment/pause',{id:el.dataset.arg}),'exp'),
     'exp-resume':el=>run(()=>call('lab/experiment/resume',{id:el.dataset.arg}),'exp'),'exp-finish':el=>run(()=>call('lab/experiment/finish',{id:el.dataset.arg}),'exp'),
     'exp-cancel':el=>{if(confirm(ct('exp.confirmCancel')))run(()=>call('lab/experiment/cancel',{id:el.dataset.arg}),'exp');},
@@ -343,23 +675,40 @@
     preflight:()=>run(()=>call('preflight',{max_length:Number(val('kcPreflightLength'))||256}),'model'),
     legacy:()=>run(async()=>{await call('legacy/import',{file:val('kcLegacy')});},'legacy'),
     'verify-report':()=>run(async()=>{const r=await call('verify-report',{file:val('kcReport')});note('verify',(r.ok?'OK':'FAIL')+' · '+(r.run_id||'')+' · rounds '+(r.committed_rounds??'?')+(r.problems?.length?' · '+r.problems.slice(0,5).join('; '):''),!r.ok);},'verify'),
-    browse:async el=>{const [id,kind]=el.dataset.arg.split('|');if(!desktop())return;try{const f=kind==='folder'?await desktop().chooseFolder('other'):await desktop().chooseFile('any');if(f){body().querySelector('#'+id).value=f;form[id]=f;}}catch(e){toast(e.message);}}
+    browse:async el=>{const [id,kind]=el.dataset.arg.split('|');if(!desktop())return;try{const f=kind==='folder'?await desktop().chooseFolder('other'):await desktop().chooseFile('any');if(f){fieldElement(id).value=f;form[id]=f;}}catch(e){toast(friendly(e.code));}}
   };
   // ---------- wiring ----------
   function init(){
     const nav=document.getElementById('openCompute');if(!nav||!root())return;
     nav.addEventListener('click',()=>show(true));
     document.getElementById('computeBack').addEventListener('click',()=>show(false));
-    document.getElementById('computeTabs').addEventListener('click',e=>{const b=e.target.closest('[data-tab]');if(b){tab=b.dataset.tab;lastResult={};refresh(true);}});
-    root().addEventListener('click',e=>{const b=e.target.closest('[data-act]');if(b&&!b.disabled&&acts[b.dataset.act]){e.preventDefault();acts[b.dataset.act](b);}});
-    root().addEventListener('change',e=>{
+    document.getElementById('computeModes').addEventListener('click',e=>{const b=e.target.closest('[data-mode]');if(b)setMode(b.dataset.mode);});
+    const click=e=>{const b=e.target.closest('[data-act]');if(b&&!b.disabled&&acts[b.dataset.act]){e.preventDefault();acts[b.dataset.act](b);}};
+    root().addEventListener('click',click);dialog().addEventListener('click',click);
+    dialog().addEventListener('cancel',e=>{e.preventDefault();clearDialog();});
+    root().addEventListener('toggle',e=>{const key=e.target.dataset.expand;if(key){if(e.target.open)expanded.add(key);else expanded.delete(key);}},true);
+    const change=e=>{
       const t=e.target;
-      if(t.id&&t.dataset.pol===undefined&&!t.dataset.actChange){form[t.id]=t.type==='checkbox'?t.checked:t.value;if(t.closest('.kc-form'))plan=null;}
+      if(t.dataset.smokeId){smokeIds=t.checked?[...new Set([...smokeIds,t.dataset.smokeId])]:smokeIds.filter(v=>v!==t.dataset.smokeId);updateSmoke();void refreshSmoke();return;}
+      if(t.id==='kcSmokeUnverified'){updateSmoke();return;}
+      if(t.id&&t.dataset.pol===undefined&&!t.dataset.actChange&&!['kcInvitation','kcAgree','kcReplace','kcIssuedCode','kcPairing'].includes(t.id)){
+        form[t.id]=t.type==='checkbox'?t.checked:t.value;if(t.closest('.kc-form')){plan=null;const start=dialog().querySelector('[data-act=create]');if(start)start.disabled=true;}
+      }
       if(t.dataset.actChange&&acts[t.dataset.actChange])return acts[t.dataset.actChange](t);
       if(t.dataset.pol!==undefined){const p=collectPolicy();run(async()=>{lastResult.policy=null;await call('policy',{policy:p,revision:S.policy.revision});},'policy');}
+    };
+    root().addEventListener('change',change);dialog().addEventListener('change',change);
+    root().addEventListener('input',e=>{const t=e.target;if(t.id&&t.dataset.pol===undefined&&t.type!=='checkbox'&&t.id!=='kcPairing')form[t.id]=t.value;
+      if(t.type==='range'&&t.dataset.pol){const n=document.getElementById('v_'+t.dataset.pol);if(n)n.textContent=t.value+t.dataset.unit;}});
+    dialog().addEventListener('input',e=>{
+      if(!e.target.closest('.kc-form'))return;
+      plan=null;const b=dialog().querySelector('[data-act=create]');if(b)b.disabled=true;
     });
-    root().addEventListener('input',e=>{const t=e.target;if(t.id&&t.dataset.pol===undefined&&t.type!=='checkbox'&&!t.dataset.actChange){form[t.id]=t.value;if(t.closest('.kc-form')&&plan){plan=null;const cb=body().querySelector('[data-act=create]');if(cb)cb.disabled=true;}}if(t.type==='range'&&t.dataset.pol){const o=document.getElementById('v_'+t.dataset.pol);if(o)o.textContent=t.dataset.unit==='h'?ct('hours.unit',{n:t.value}):t.value+t.dataset.unit;
-      if(t.dataset.pol==='gpu_target_pct'||t.dataset.pol==='daily_hours'){const g=Number(body().querySelector('[data-pol=gpu_target_pct]').value),hh=Number(body().querySelector('[data-pol=daily_hours]').value);const n=document.getElementById('kcNominal');if(n)n.textContent=(Math.round(g/100*hh*30*10)/10)+' '+(lang()==='ru'?'ч':'h');}}});
+    desktop()?.onComputeInvitation?.(value=>{
+      if(typeof value!=='string'||value.length>4096)return;
+      show(true);setMode('contribution');
+      void run(async()=>{await rememberFeature();inviteDialog(value);},'join');
+    });
     document.addEventListener('keydown',e=>{if(e.key==='Escape'&&open&&!document.querySelector('dialog[open]'))show(false);});
     const ic=document.getElementById('computeIcon');if(ic)ic.innerHTML='<svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg>';
   }
