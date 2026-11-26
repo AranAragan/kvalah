@@ -19,7 +19,7 @@ export function exportReport(coord,{experiment_id,out,include_weights=false,incl
   add('experiment.json',{id:st.id,run_id:st.run_id,name:st.name,state:st.state,config:st.config,config_hash:st.config_hash,initial_hash:st.initial_hash,frozen_a_hash:st.frozen_a_hash,
     committed_rounds:st.committed_rounds,target_rounds:st.target_rounds,created_at:st.created_at,started_at:st.started_at,finished_at:st.finished_at,blocker:st.blocker,project_id:coord.projectId,app_version});
   add('dataset-manifest.json',ds);
-  add('model-variants.json',coord.variants().map(v=>({profile_id:v.profile_id,variant_id:v.variant_id,files_digest:v.files_digest,provenance:v.provenance,manifest:v.manifest})));
+  add('model-variants.json',(st.model_snapshot||[]).map(v=>({profile_id:st.config.profile_id,...v})));
   add('devices.json',devices.map(d=>({label:label.get(d.id),device_id:d.id,state:d.state,key_fingerprint:d.key_fingerprint,backend:d.capabilities?.backend||null,precision:d.capabilities?.precision||null,
     memory_total_bytes:d.capabilities?.memory_total_bytes||null,unified_memory:!!d.capabilities?.unified_memory,runtime_version:d.runtime_version,accepted_count:d.accepted_count,metrics:d.metrics})));
   add('rounds.json',rounds.map(r=>({...r,accepted:(r.accepted||[]).map(a=>({update_id:a.update_id,task_id:a.task_id,payload_sha:a.payload_sha,weight:a.weight,device:label.get(a.device_id)||'unknown'})),updates:r.updates.map(u=>({update_id:u.update_id,task_id:u.task_id,device:label.get(u.device_id)||'unknown',state:u.state,reason:u.reason,payload_sha256:u.payload_sha,norm:u.norm,delta_norm:u.delta_norm,meta:u.meta}))})));

@@ -21,31 +21,56 @@ import {decode} from '../compute/protocol/safetensors.mjs';
 import {frozenAHash,getProfile} from '../compute/protocol/schema.mjs';
 const PROFILE='tiny-test-ffa-r4';
 const waitFor=async(fn,ms=60000,step=100)=>{const t=Date.now();for(;;){const v=await fn();if(v)return v;if(Date.now()-t>ms)throw Error('timeout waiting');await new Promise(r=>setTimeout(r,step));}};
-async function makeWorker(svc,{name,backend,model_dir='',wrapSidecar,files_digest=null}){
+async function makeWorker(svc,{name,backend,model_dir='',wrapSidecar,files_digest=null,wrapClient}){
   const dir=tmp('kc-w-'+name+'-'),identity=await createIdentity(path.join(dir,'id'),fileSecretBox);
   const link=await pairWithCoordinator({pairing:svc.createPairing().pairing,identity,alias:name});
   assert.equal(link.device_state,'pending');
   svc.coord.approveDevice(identity.device_id);
   const g=createGovernor({stateDir:dir,policy:{...DEFAULT_POLICY,profile:'full',gpu_target_pct:100,cpu_target_pct:50,only_idle:false,only_ac:false,pause_on_games:false}});
   g.setEnabled(true);g.setSensors({on_battery:false,game:false});
+  // Logical devices share the same host. Give their governor a deterministic RAM sample.
+  g.setSensors({ram_free_bytes:8*2**30});
+  const ram=setInterval(()=>g.setSensors({ram_free_bytes:8*2**30}),5000);ram.unref();
   const states=[];
-  const w=createWorker({stateDir:dir,identity,link,governor:g,pauseHoldMs:3000,
+  const newWorker=()=>createWorker({stateDir:dir,identity,link,governor:g,pauseHoldMs:3000,
     runtime:{python:python(),backend,model_dir,profile_id:PROFILE,variant_id:backend==='mock'?'mock':'cpu-test'},
     capabilities:()=>({backend,preflight_ok:true,runtime_version:'test',variants:[{profile_id:PROFILE,variant_id:backend==='mock'?'mock':'cpu-test',files_digest}]}),
+    makeClient:wrapClient?opts=>wrapClient(createClient(opts)):createClient,
     startSidecar:wrapSidecar?o=>wrapSidecar(startSidecar(o)):startSidecar,onState:s=>states.push(s.state+(s.reason?':'+s.reason:''))});
-  return {w,g,identity,link,states,dir};
+  return {w:newWorker(),newWorker,g,identity,link,states,dir,async stop(){clearInterval(ram);await this.w.stop();}};
 }
-test('E2E mock: 3 workers × Smoke 2 rounds over HTTPS; manual pause; outbox survives a coordinator outage',{skip:skipNoPy(),timeout:180000},async()=>{
+test('E2E mock: 3 workers × Smoke 2 rounds over HTTPS; manual pause; outbox survives worker restart and coordinator outage',{skip:skipNoPy(),timeout:180000},async()=>{
   const svc=createCoordinatorService({dir:tmp('kc-svc-'),evaluator:()=>({python:python(),backend:'mock'})});
   const info=await svc.start({bindIp:'127.0.0.1',port:0});
   assert.match(info.endpoint,/^https:\/\/127\.0\.0\.1:\d+$/);assert.match(info.fingerprint,/^[0-9A-F:]{95}$/);
   const {rows}=parseJSONL(fs.readFileSync(FIXTURE,'utf8'));
   const ds=await buildDataset({rows,datasetId:'smoke',revision:'1',profileId:PROFILE,maxLength:256,tokenizer:jsTokenizer});
   svc.coord.registerDataset(ds.manifest,ds.shards);
-  let outage=null;
-  const A=await makeWorker(svc,{name:'a',backend:'mock'}),B=await makeWorker(svc,{name:'b',backend:'mock'});
+  let outage=null,trained=0;
+  const dropped=new Set(),puts=new Map();
+  function dropOnce(stage){
+    return client=>Object.create(client,{
+      post:{value:async (route,...args)=>{
+        const result=await client.post(route,...args);
+        const target=route==='/v2/updates'?'declare':route.endsWith('/commit')?'commit':null;
+        if(stage===target&&!dropped.has(stage)){dropped.add(stage);throw Object.assign(Error('simulated lost reply'),{code:'UNAVAILABLE'});}
+        return result;
+      }},
+      put:{value:async (route,...args)=>{
+        const result=await client.put(route,...args);
+        if(stage==='put'){
+          puts.set(route,(puts.get(route)||0)+1);
+          if(!dropped.has(stage)){dropped.add(stage);throw Object.assign(Error('simulated lost reply'),{code:'UNAVAILABLE'});}
+        }
+        return result;
+      }}
+    });
+  }
+  const A=await makeWorker(svc,{name:'a',backend:'mock',wrapClient:dropOnce('declare')});
+  const B=await makeWorker(svc,{name:'b',backend:'mock',wrapClient:dropOnce('put')});
   // Worker C: when its first training finishes, the coordinator goes away before the upload.
-  const C=await makeWorker(svc,{name:'c',backend:'mock',wrapSidecar:sc=>({...sc,call(cmd,a){const c=sc.call(cmd,a);if(cmd!=='train'||outage)return c;
+  const C=await makeWorker(svc,{name:'c',backend:'mock',wrapClient:dropOnce('commit'),wrapSidecar:sc=>({...sc,call(cmd,a){const c=sc.call(cmd,a);if(cmd!=='train')return c;
+    trained++;if(outage)return c;
     return {...c,promise:c.promise.then(async r=>{outage=svc.stop();await outage;return r;})};}})});
   // Wrong fingerprint is refused before any request is sent.
   const bad=createClient({endpoint:info.endpoint,fingerprint:'AA:'.repeat(31)+'AA',identity:A.identity});
@@ -56,15 +81,22 @@ test('E2E mock: 3 workers × Smoke 2 rounds over HTTPS; manual pause; outbox sur
   await waitFor(()=>outage);await outage;
   await waitFor(()=>C.w.state.outbox===1,30000);
   assert.equal(C.w.state.outbox,1,'finished update waits in the durable outbox');
+  await C.w.stop();
+  C.w=C.newWorker();
   await svc.start({bindIp:'127.0.0.1',port:Number(new URL(info.endpoint).port)});
+  C.w.start();
   // Manual pause on A for a while: it must report PAUSED:manual_pause and do no work.
   A.g.setManualPause(true);await waitFor(()=>A.states.includes('PAUSED:manual_pause'),30000);A.g.setManualPause(false);
   await waitFor(()=>svc.coord.status(e.id).state==='COMPLETED',150000,250);
   const st=svc.coord.status(e.id);assert.equal(st.committed_rounds,2);
+  await waitFor(()=>C.w.state.outbox===0,20000);
   assert.equal(C.w.state.outbox,0);
+  assert.deepEqual([...dropped].sort(),['commit','declare','put']);
+  assert.deepEqual([...puts.values()],[1,1],'an uploaded payload is not transmitted again after its reply is lost');
+  assert.equal(trained,2,'worker restarted from the saved update without training it again');
   const rounds=svc.coord.rounds(e.id);for(const r of rounds.filter(x=>x.state==='COMMITTED'))assert.equal(new Set(r.accepted.map(a=>a.device_id)).size,3);
   assert.equal(frozenAHash(decode(svc.coord.checkpoint(svc.coord.latestCheckpoint(e.id).hash)).tensors),st.frozen_a_hash);
-  for(const x of [A,B,C])await x.w.stop();
+  for(const x of [A,B,C])await x.stop();
   // Revocation: a revoked device's next request is refused.
   svc.coord.revokeDevice(A.identity.device_id);
   const cl=createClient({endpoint:A.link.endpoint,fingerprint:A.link.fingerprint,identity:A.identity});
@@ -88,7 +120,7 @@ test('E2E torch-cpu-test: tiny model, central tokenization, 3 workers, trusted e
   for(const x of ws)x.w.start();
   const evs=[];svc.coord.onEvent(ev=>evs.push(ev.code));
   await waitFor(()=>svc.coord.status(e.id).state==='COMPLETED',300000,500).catch(err=>{throw Error(err.message+' events='+evs.slice(-30).join(',')+' states='+ws.map(x=>x.states.slice(-5).join('>')).join(' | '));});
-  for(const x of ws)await x.w.stop();
+  for(const x of ws)await x.stop();
   const st=await waitFor(()=>{const s=svc.coord.status(e.id);return s.eval?.rounds?.[2]&&s.eval?.rounds?.[0]?s:null;},120000,500);
   assert.equal(st.eval.rounds[0].status,'DONE');assert.ok(Number.isFinite(st.eval.rounds[0].nll)&&Number.isFinite(st.eval.rounds[2].nll));
   assert.ok(st.eval.gate&&typeof st.eval.gate.passed==='boolean','gate computed (pass or fail is a measurement, not asserted)');

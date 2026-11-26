@@ -43,7 +43,14 @@ export function createController({dir,secretBox=fileSecretBox,startSidecar=rawSi
     const release=()=>{if(released)return;released=true;releaseP?.then(r=>r());};
     inner.exit?.then(release);
     return {...inner,
-      call(cmd,args){releaseP??=lock();const p=releaseP.then(()=>inner.call(cmd,args).promise);return {promise:p};},
+      call(cmd,args){
+        releaseP??=lock();
+        const p=releaseP.then(()=>{
+          if(released)throw Object.assign(Error('sidecar operation cancelled while waiting for the resource lock'),{code:'STOPPED'});
+          return inner.call(cmd,args).promise;
+        });
+        return {promise:p};
+      },
       async stop(ms){try{return await inner.stop(ms);}finally{release();}},
       kill(){inner.kill();release();},send:m=>inner.send(m),get running(){return inner.running;}};
   }
@@ -91,7 +98,8 @@ export function createController({dir,secretBox=fileSecretBox,startSidecar=rawSi
     if(!st.runtime?.probe?.backend_ok)missing.push('runtime');
     if(!st.model?.files_digest)missing.push('model');
     else if(!st.model.architecture_ok)missing.push('model_architecture');
-    if(!st.preflight?.ok||st.preflight.files_digest!==st.model?.files_digest)missing.push('preflight');
+    else if(profile().variants[st.model.variant_id]?.backend!==st.runtime?.backend)missing.push('model_variant');
+    if(!st.preflight?.ok||st.preflight.files_digest!==st.model?.files_digest||st.preflight.backend!==st.runtime?.backend)missing.push('preflight');
     return missing;
   }
   function derived(){
@@ -109,7 +117,7 @@ export function createController({dir,secretBox=fileSecretBox,startSidecar=rawSi
     const p=st.runtime?.probe||{};
     return {backend:st.runtime?.backend,device_name:p.gpu||(platform==='darwin'?'Apple '+(p.machine||''):p.machine||''),precision:p.precision||null,
       memory_total_bytes:p.memory_total_bytes??(platform==='darwin'?os.totalmem():null),memory_free_bytes:p.memory_free_bytes??null,unified_memory:platform==='darwin',
-      preflight_ok:!!st.preflight?.ok,variants:st.model?[{profile_id:st.profile_id,variant_id:st.model.variant_id,files_digest:st.model.files_digest}]:[],
+      preflight_ok:!!st.preflight?.ok,preflight_max_length:st.preflight?.max_length,variants:st.model?[{profile_id:st.profile_id,variant_id:st.model.variant_id,files_digest:st.model.files_digest}]:[],
       runtime_version:`kvalah-compute/${VERSION} python/${p.python||'?'} ${p.torch?'torch/'+p.torch:''}${p.mlx?'mlx/'+p.mlx:''}`.trim()};
   }
   async function startWorker(){
@@ -118,7 +126,7 @@ export function createController({dir,secretBox=fileSecretBox,startSidecar=rawSi
     gov.setEnabled(true);sensorsOn();
     const extraEnv=testMode()?{KVALAH_COMPUTE_TEST:'1'}:{};
     worker=createWorker({stateDir:path.join(dir,'worker'),identity:id,link:st.link,governor:gov,
-      runtime:{python:st.runtime.python,backend:st.runtime.backend,model_dir:st.model.model_dir,profile_id:st.profile_id,variant_id:st.model.variant_id,extraEnv},
+      runtime:{python:st.runtime.python,backend:st.runtime.backend,model_dir:st.model.model_dir,files_digest:st.model.files_digest,profile_id:st.profile_id,variant_id:st.model.variant_id,extraEnv},
       capabilities,startSidecar:lockedSidecar,
       onState:s=>{workerState=s;const ds=worker?.state?.session?.state;if(ds&&st.link&&ds!==st.link.device_state){st.link={...st.link,device_state:ds};save();ev('info','link.state',{state:ds});}},
       onEvent:e=>{if(e.code==='sidecar.log')return;ev(/error|failed|rejected|lost/.test(e.code)?'warn':'info',e.code,e.details||{});
@@ -163,7 +171,7 @@ export function createController({dir,secretBox=fileSecretBox,startSidecar=rawSi
     if(!st.runtime?.python)fail('RUNTIME_REQUIRED','check the compute runtime first');
     if(typeof model_dir!=='string'||!path.isAbsolute(model_dir)||!fs.existsSync(path.join(model_dir,'config.json')))fail('NOT_FOUND','choose a model folder that contains config.json');
     const p=profile();const vid=variant_id||(st.runtime.backend==='mlx'?'mlx-4bit':st.runtime.backend==='cuda'?'cuda-nf4':Object.keys(p.variants)[0]);
-    if(!p.variants[vid])fail('INVALID_SCHEMA','unknown model variant '+vid);
+    if(p.variants[vid]?.backend!==st.runtime.backend)fail('INVALID_SCHEMA','model variant is incompatible with the selected backend');
     if(worker)await stopWorker();
     ev('info','model.verifying',{model_dir:path.basename(model_dir)});
     const sc=lockedSidecar({python:st.runtime.python,threads:1,extraEnv:testMode()?{KVALAH_COMPUTE_TEST:'1'}:{}});
@@ -184,19 +192,27 @@ export function createController({dir,secretBox=fileSecretBox,startSidecar=rawSi
     save();
     ev(r.verified?'info':'warn','model.provenance',{verified:r.verified});return snapshot();
   }
-  async function runPreflight(){
+  async function runPreflight({max_length=256}={}){
     if(!st.model?.files_digest||!st.model.architecture_ok)fail('MODEL_REQUIRED','verify a compatible model first');
+    if(![256,512].includes(max_length))fail('INVALID_SCHEMA','preflight context must be 256 or 512');
+    if(profile().variants[st.model.variant_id]?.backend!==st.runtime?.backend)fail('INVALID_SCHEMA','model variant is incompatible with the selected backend');
+    if(st.link&&!consentFor(st.link))fail('CONSENT_REQUIRED','accept the active project consent before running preflight');
+    sensorsOn();
     if(worker)await stopWorker();
-    const p=profile(),d=gov.decide({phase:'preflight'});
-    if(!gov.manualPause&&d.reason!=='disabled'&&!d.run)fail('PAUSED','the resource policy does not allow work now: '+d.reason);
+    const decision=()=>gov.decide({phase:'preflight',localAction:true});
+    const p=profile(),d=decision();
+    if(!d.run){await reconcile();fail('PAUSED','the resource policy does not allow work now: '+d.reason);}
     ev('info','preflight.started',{});
     const sc=lockedSidecar({python:st.runtime.python,threads:Math.max(1,gov.cpuThreads(os.availableParallelism?.()||2)),extraEnv:testMode()?{KVALAH_COMPUTE_TEST:'1'}:{},
-      onEvent:e=>{if(e.type==='permit_request')sc.send({cmd:'permit',id:e.id});}});
+      onEvent:e=>{if(e.type==='permit_request'){
+        const g=decision();
+        sc.send({cmd:g.run?'permit':'stop',id:e.id,reason:g.reason});
+      }}});
     let r;
-    try{r=await sc.call('preflight',{model_dir:st.model.model_dir,backend:st.runtime.backend,vocab_hint:st.model.architecture?.vocab_size,task:{layers:p.layers,targets:p.targets,rank:p.rank,alpha:p.alpha,max_length:256}}).promise;}
+    try{r=await sc.call('preflight',{model_dir:st.model.model_dir,model_files_digest:st.model.files_digest,backend:st.runtime.backend,vocab_hint:st.model.architecture?.vocab_size,task:{layers:p.layers,targets:p.targets,rank:p.rank,alpha:p.alpha,max_length}}).promise;}
     catch(e){st.preflight={ok:false,error:{code:e.code,message:e.message},files_digest:st.model.files_digest,at:now()};save();ev('error','preflight.failed',st.preflight.error);return reconcile();}
     finally{await sc.stop(10000).catch(()=>sc.kill());}
-    st.preflight={...r,files_digest:st.model.files_digest,at:now()};save();ev(r.ok?'info':'error','preflight.done',{ok:r.ok,step_s:r.step_s,model_load_s:r.model_load_s});
+    st.preflight={...r,backend:st.runtime.backend,files_digest:st.model.files_digest,at:now()};save();ev(r.ok?'info':'error','preflight.done',{ok:r.ok,step_s:r.step_s,model_load_s:r.model_load_s});
     return reconcile();
   }
   async function pair({pairing,alias}){
@@ -210,8 +226,9 @@ export function createController({dir,secretBox=fileSecretBox,startSidecar=rawSi
     if(!st.link)return snapshot();
     const {createClient}=await import('./worker/client.mjs');
     const c=createClient({endpoint:st.link.endpoint,fingerprint:st.link.fingerprint,identity:await getIdentity()});
-    try{await c.syncTime();const s=await c.post('/v2/devices/session',{});st.link={...st.link,device_state:s.state};save();}
+    try{await c.syncTime();const s=await c.get('/v2/devices/state');st.link={...st.link,device_state:s.state};save();}
     catch(e){if(e.code==='REVOKED'){st.link={...st.link,device_state:'revoked'};save();}else throw e;}
+    finally{c.close();}
     return reconcile();
   }
   async function forgetLink(){if(worker)await stopWorker();st.link=null;st.participation=false;save();ev('info','link.forgotten',{});return reconcile();}
@@ -228,8 +245,9 @@ export function createController({dir,secretBox=fileSecretBox,startSidecar=rawSi
   // ---------- Training Lab (local coordinator) ----------
   function svc(){
     service??=createCoordinatorService({dir:path.join(dir,'coordinator'),startSidecar:lockedSidecar,log:m=>log('[coordinator] '+m),
-      evaluator:()=>st.runtime?.probe?.backend_ok&&st.model?.architecture_ok?{python:st.runtime.python,backend:st.runtime.backend,model_dir:st.model.model_dir,variant_id:st.model.variant_id,extraEnv:testMode()?{KVALAH_COMPUTE_TEST:'1'}:{}}:null,
-      canRunHeavy:()=>gov.manualPause?{run:false,reason:'manual_pause'}:gov.brokerBusy.length?{run:false,reason:'local_ai'}:{run:true}});
+      evaluator:()=>st.runtime?.probe?.backend_ok&&st.model?.architecture_ok?{python:st.runtime.python,backend:st.runtime.backend,model_dir:st.model.model_dir,variant_id:st.model.variant_id,files_digest:st.model.files_digest,
+        threads:gov.cpuThreads(os.availableParallelism?.()||2),extraEnv:testMode()?{KVALAH_COMPUTE_TEST:'1'}:{}}:null,
+      canRunHeavy:()=>gov.decide({phase:'preflight',localAction:true})});
     return service;
   }
   const hasLab=()=>!!service||fs.existsSync(path.join(dir,'coordinator','db','coordinator.sqlite'));
@@ -283,7 +301,7 @@ export function createController({dir,secretBox=fileSecretBox,startSidecar=rawSi
       case 'experiment/cancel':return c.cancelExperiment(String(b.id));
       case 'experiment/finish':return c.finishAfterRound(String(b.id));
       case 'experiment/status':return {status:c.status(String(b.id)),rounds:c.rounds(String(b.id))};
-      case 'events':return c.events(Number(b.after)||0,200);
+      case 'events':return b.tail===true?c.latestEvents(200):c.events(Number(b.after)||0,200);
       case 'report':{
         if(!b.dir||!path.isAbsolute(b.dir)||!fs.statSync(b.dir).isDirectory())fail('INVALID_SCHEMA','choose an existing folder for the report');
         const e=c.status(String(b.experiment_id));
@@ -322,14 +340,34 @@ export function createController({dir,secretBox=fileSecretBox,startSidecar=rawSi
       consent:{required:!!st.link&&!consentFor(st.link),current:consentFor(st.link)||null,text:consentText(),history:st.consents.slice(-10)},
       policy:gov.policy,nominal_monthly_hours:nominalMonthlyHours(gov.policy),budget:gov.budget(),month:gov.month(),measured:gov.measured(),
       governor:{decision,broker:gov.brokerBusy,sensors:redactSensors(gov.sensors)},
-      profile:{id:st.profile_id,available:listProfiles().map(p=>p.id),variants:Object.keys(profile().variants)},runtime:st.runtime,model:st.model?(({file_list,...m})=>m)(st.model):null,preflight:st.preflight,
+      profile:{id:st.profile_id,available:listProfiles().map(p=>p.id),variants:Object.keys(profile().variants),
+        runtime_variants:Object.entries(profile().variants).filter(([,v])=>v.backend===st.runtime?.backend).map(([id])=>id)},
+      runtime:st.runtime,model:st.model?(({file_list,...m})=>m)(st.model):null,preflight:st.preflight,
       link:st.link,identity:identity?{device_id:identity.device_id,key_fingerprint:identity.key_fingerprint,secret_store:identity.secret_store}:null,
-      worker:w?{state:w.state,reason:w.reason,task:w.task,metrics:w.metrics,last_accepted:w.last_accepted,outbox:w.outbox,session:w.session}:null,
+      worker:w?{state:w.state,reason:w.reason,task:w.task,metrics:w.metrics,last_accepted:w.last_accepted,outbox:w.outbox,last_rpc_error:w.last_rpc_error,session:w.session}:null,
       last_error:lastError,lab:labView(),lab_addresses:lanAddresses(),legacy:legacyView(),events:events.slice(-80)};
   }
   const redactSensors=s=>({on_battery:s.on_battery??null,idle_s:s.idle_s??null,thermal_state:s.thermal_state??null,game:s.game??null,fullscreen:s.fullscreen??null,
     gpu:s.gpu?{name:s.gpu.name,utilization_pct:s.gpu.utilization_pct,memory_used_bytes:s.gpu.memory_used_bytes,memory_total_bytes:s.gpu.memory_total_bytes,temperature_c:s.gpu.temperature_c,power_w:s.gpu.power_w}:null,
     ram_free_bytes:s.ram_free_bytes??null,ram_total_bytes:s.ram_total_bytes??null,at:s.at??null});
+  function diagnostics(){
+    const status=derived(),w=worker?.state,s=gov.sensors;
+    const safeId=v=>typeof v==='string'&&/^[a-z0-9_.:-]{1,80}$/i.test(v)?v:null;
+    const eventDetails=details=>Object.fromEntries(Object.entries(details||{}).flatMap(([key,value])=>{
+      if(['duration_ms','status','attempt','bytes','next_retry_at','round'].includes(key)&&Number.isFinite(value))return [[key,value]];
+      if(['code','method','stage','correlation_id','errno'].includes(key)&&safeId(value))return [[key,value]];
+      if(key==='route'&&typeof value==='string'&&/^\/v2\/[a-z_/:]+$/.test(value))return [[key,value]];
+      return [];
+    }));
+    return {schema_version:1,created_at:now(),version:VERSION,platform,state:status.state,reason:safeId(status.reason),missing:setup(),
+      model:st.model?{variant_id:st.model.variant_id,files_digest:st.model.files_digest,provenance:st.model.provenance}:null,
+      runtime:st.runtime?{backend:st.runtime.backend,python_version:st.runtime.probe?.python??null}:null,
+      preflight:st.preflight?{ok:!!st.preflight.ok,max_length:st.preflight.max_length??null,step_s:st.preflight.step_s??null,model_load_s:st.preflight.model_load_s??null}:null,
+      decision:{run:gov.decide().run,reason:gov.decide().reason},budget:gov.budget(),
+      sensors:{ram_free_bytes:s.ram_free_bytes??null,ram_total_bytes:s.ram_total_bytes??null,memory_pressure:s.memory_pressure??null,at:s.at??null},
+      worker:w?{state:w.state,reason:safeId(w.reason),outbox:w.outbox,task:w.task,metrics:w.metrics,last_rpc_error:w.last_rpc_error?eventDetails(w.last_rpc_error):null}:null,
+      events:events.slice().reverse().map(e=>({seq:e.seq,ts:e.ts,severity:e.severity,code:e.code,details:eventDetails(e.details)}))};
+  }
   async function boot(){
     await getIdentity().catch(e=>ev('error','identity.unreadable',{message:e.message}));
     if(st.lab?.was_running&&st.lab.bind_ip)await labStart({bind_ip:st.lab.bind_ip,port:st.lab.port}).catch(e=>ev('warn','lab.autostart_failed',{message:e.message}));
@@ -343,6 +381,7 @@ export function createController({dir,secretBox=fileSecretBox,startSidecar=rawSi
     const r=route.replace(/^\/+/,'');
     if(method==='GET'&&r==='state')return snapshot();
     if(method==='GET'&&r==='events')return events.filter(e=>e.seq>(Number(b.after)||0));
+    if(method==='GET'&&r==='diagnostics')return diagnostics();
     if(method!=='POST')fail('NOT_FOUND','not found');
     switch(r){
       case 'consent/accept':return acceptConsent(b);
@@ -354,7 +393,7 @@ export function createController({dir,secretBox=fileSecretBox,startSidecar=rawSi
       case 'runtime':return setRuntime(b);
       case 'model':return setModel(b);
       case 'model/provenance':return checkProvenance();
-      case 'preflight':return runPreflight();
+      case 'preflight':return runPreflight(b);
       case 'link/pair':return pair(b);
       case 'link/refresh':return refreshLink();
       case 'link/forget':return forgetLink();

@@ -14,12 +14,13 @@ const PROTOCOL=1;
 // Must match servicePaths() in kvalah-offload compute/service.mjs.
 export function computeServicePaths(dataDir,env=process.env,platform=process.platform){
   const id=crypto.createHash('sha256').update((os.userInfo?.().username||'')+'|'+dataDir).digest('hex').slice(0,16);
+  const paths=platform==='win32'?path.win32:path.posix;
   let socket=env.KVALAH_SERVICE_SOCKET;
   if(!socket){
     if(platform==='win32')socket=`\\\\.\\pipe\\kvalah-offload-${id}`;
-    else{socket=path.join(dataDir,'service.sock');if(Buffer.byteLength(socket)>100)socket=path.join(os.tmpdir(),`kvalah-${process.getuid?.()??'u'}-${id}`,'service.sock');}
+    else{socket=paths.join(dataDir,'service.sock');if(Buffer.byteLength(socket)>100)socket=paths.join(os.tmpdir(),`kvalah-${process.getuid?.()??'u'}-${id}`,'service.sock');}
   }
-  return {socket,tokenFile:env.KVALAH_SERVICE_TOKEN_FILE||path.join(dataDir,'service.token')};
+  return {socket,tokenFile:env.KVALAH_SERVICE_TOKEN_FILE||paths.join(dataDir,'service.token')};
 }
 const named=(name,message)=>Object.assign(new Error(message),{name});
 const isObj=v=>v&&typeof v==='object'&&!Array.isArray(v);

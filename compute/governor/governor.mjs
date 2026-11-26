@@ -31,9 +31,9 @@ export function createGovernor({stateDir,now=Date.now,mono=()=>performance.now()
   }
   const budgetMs=()=>pol.daily_hours*3600e3;
   // Decision in the spec's priority order. Returns {run, reason, resume}.
-  function decide({phase='compute'}={}){
+  function decide({phase='compute',localAction=false}={}){
     const s=sensors,t=now();
-    if(disabled)return {run:false,reason:'disabled',resume:'enable participation'};
+    if(disabled&&!localAction)return {run:false,reason:'disabled',resume:'enable participation'};
     if(manualPause)return {run:false,reason:'manual_pause',resume:'press Resume'};
     // Safety: temperature (with hysteresis + sustained cool-down), thermal state, power, memory.
     const temp=s.gpu?.temperature_c;
@@ -47,7 +47,11 @@ export function createGovernor({stateDir,now=Date.now,mono=()=>performance.now()
       if(s.on_battery===true)return {run:false,reason:'on_battery',resume:'connect to mains power'};
       if(s.on_battery==null)return {run:false,reason:'sensor_unavailable_power',resume:'power state unknown; untick "only on mains power" to allow'};
     }else if(s.on_battery===true&&Number.isFinite(s.battery_pct)&&s.battery_pct<pol.battery_floor_pct)return {run:false,reason:'battery_floor',resume:`battery above ${pol.battery_floor_pct}%`};
-    if(Number.isFinite(s.ram_free_bytes)&&s.ram_free_bytes<pol.min_free_ram_gib*2**30&&phase==='preflight')return {run:false,reason:'low_memory',resume:`at least ${pol.min_free_ram_gib} GiB free RAM`};
+    if(pol.min_free_ram_gib>0&&['preflight','admission'].includes(phase)){
+      const ram=s.ram_available_bytes??s.ram_free_bytes;
+      if(!Number.isFinite(ram)||!Number.isFinite(s.ram_observed_at)||t-s.ram_observed_at>20000)return {run:false,reason:'sensor_unavailable_memory',resume:'wait for a fresh RAM sample'};
+      if(ram<pol.min_free_ram_gib*2**30)return {run:false,reason:'low_memory',resume:`at least ${pol.min_free_ram_gib} GiB available RAM`};
+    }
     if(s.memory_pressure==='critical')return {run:false,reason:'memory_pressure',resume:'memory pressure back to normal'};
     // Resource broker: Kvalah's own agent/chat and the Offload service have priority.
     if(pol.pause_on_local_ai&&[...broker.values()].some(Boolean))return {run:false,reason:'local_ai',resume:'local AI request finished'};
@@ -66,6 +70,7 @@ export function createGovernor({stateDir,now=Date.now,mono=()=>performance.now()
     if(!pol.allow_metered&&s.metered===true&&phase==='network')return {run:false,reason:'metered_network',resume:'unmetered network'};
     if(day().bytes>=pol.daily_traffic_mb*1e6&&phase==='network')return {run:false,reason:'traffic_cap',resume:'next day'};
     if(pol.gpu_target_pct===0)return {run:false,reason:'gpu_zero',resume:'raise the GPU time share above 0%'};
+    if(pol.cpu_target_pct===0)return {run:false,reason:'cpu_zero',resume:'raise the CPU thread allowance above 0%'};
     return {run:true,reason:null};
   }
   function prune(m){while(window.length&&window[0].end<m-5*MIN)window.shift();}
@@ -87,15 +92,21 @@ export function createGovernor({stateDir,now=Date.now,mono=()=>performance.now()
     return Math.max(0,Math.min(Math.max(base,corr),activeMs*(1-f)/f*3+1000));
   }
   function account({wallMs=0,gpuMs=0,cpuMs=0,bytes=0}){const d=day();d.wall_ms+=wallMs;d.gpu_ms+=gpuMs;d.cpu_ms+=cpuMs;d.bytes+=bytes;dirty=true;save(false);}
+  function trafficRemaining(){return Math.max(0,Math.floor(pol.daily_traffic_mb*1e6-day().bytes));}
+  function accountTraffic(bytes){day().bytes+=bytes;dirty=true;save(true);}
   return {
-    decide,afterStep,account,save:()=>save(true),
+    decide,afterStep,account,trafficRemaining,accountTraffic,save:()=>save(true),
     get policy(){return pol;},
     setPolicy(input,expectedRevision){
       if(expectedRevision!==undefined&&expectedRevision!==pol.revision){const e=Error('policy changed elsewhere; reload');e.code='CONFLICT';throw e;}
       const next=validatePolicy(input,pol);next.revision=pol.revision+1;pol=next;return pol;
     },
     restorePolicy(p){pol=validatePolicy(p,{...DEFAULT_POLICY,revision:p.revision||0});pol.revision=p.revision||0;},
-    setSensors(s){sensors={...sensors,...s,at:now()};},get sensors(){return sensors;},
+    setSensors(s){
+      const at=now();
+      sensors={...sensors,...s,at};
+      if('ram_free_bytes' in s||'ram_available_bytes' in s)sensors.ram_observed_at=s.ram_observed_at??at;
+    },get sensors(){return sensors;},
     setBroker(id,busy){if(busy)broker.set(id,true);else broker.delete(id);},
     get brokerBusy(){return [...broker.keys()];},
     setManualPause(v){manualPause=!!v;},get manualPause(){return manualPause;},

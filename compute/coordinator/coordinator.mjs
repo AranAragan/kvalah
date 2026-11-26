@@ -145,7 +145,7 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
     const variants=(Array.isArray(c.variants)?c.variants:[]).slice(0,8).map(v=>({profile_id:String(v.profile_id||'').slice(0,60),variant_id:String(v.variant_id||'').slice(0,40),files_digest:isHex64(v.files_digest)?v.files_digest:null}));
     return {backend:String(c.backend||'').slice(0,20),device_name:String(c.device_name||'').slice(0,60),precision:String(c.precision||'').slice(0,12),
       memory_total_bytes:Number.isFinite(c.memory_total_bytes)?c.memory_total_bytes:null,memory_free_bytes:Number.isFinite(c.memory_free_bytes)?c.memory_free_bytes:null,
-      unified_memory:!!c.unified_memory,preflight_ok:c.preflight_ok===true,variants};
+      unified_memory:!!c.unified_memory,preflight_ok:c.preflight_ok===true,preflight_max_length:[256,512].includes(c.preflight_max_length)?c.preflight_max_length:null,variants};
   }
   function listDevices(){
     return db.prepare('select * from devices order by created_at').all().map(d=>{
@@ -219,7 +219,12 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
   }
   function createExperiment(input){
     const plan=dryRun(input),cfg=plan.config,id='exp-'+randomBytes(6).toString('hex'),run=(cfg.preset+'-'+randomBytes(3).toString('hex'));
-    db.prepare("insert into experiments(id,run_id,name,config,config_hash,state,created_at) values(?,?,?,?,?,'CREATED',?)").run(id,run,cfg.name,canonicalJSON(cfg),plan.config_hash,now());
+    const profile=getProfile(cfg.profile_id);
+    const modelSnapshot=variants().filter(v=>v.profile_id===cfg.profile_id&&cfg.variants.includes(v.variant_id))
+      .map(({variant_id,files_digest,provenance,manifest})=>({variant_id,files_digest,provenance,manifest}));
+    if(!profile.test_only&&cfg.variants.some(id=>!modelSnapshot.find(v=>v.variant_id===id&&v.files_digest)))fail('MODEL_UNVERIFIED','register a model digest for every selected variant first');
+    if(!profile.test_only&&cfg.preset==='research'&&modelSnapshot.some(v=>v.provenance!=='verified'))fail('MODEL_UNVERIFIED','research requires verified provenance for all variants');
+    db.prepare("insert into experiments(id,run_id,name,config,config_hash,state,created_at,model_snapshot) values(?,?,?,?,?,'CREATED',?,?)").run(id,run,cfg.name,canonicalJSON(cfg),plan.config_hash,now(),canonicalJSON(modelSnapshot));
     audit('admin','experiment.create',{id,config_hash:plan.config_hash});event('info','experiment.created',{experiment:id},{run_id:run,preset:cfg.preset});
     return {id,run_id:run,...plan};
   }
@@ -245,6 +250,7 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
   function startExperiment(id){
     const e=experiment(id);if(e.state!=='CREATED')fail('INVALID_TRANSITION','experiment already started; create a new run to change settings');
     const cfg=JSON.parse(e.config),p=getProfile(cfg.profile_id);
+    if(!p.test_only&&!e.model_snapshot)fail('MODEL_UNVERIFIED','this experiment predates model snapshots; create a new experiment with verified model digests');
     const init=canonicalAdapter(p,cfg.seed),bytes=encode(init,{kind:'kvalah-ffa-adapter',profile:p.id,round:'0'}),h=cas.put(bytes);
     tx(db,()=>{
       db.prepare('insert or ignore into artifacts(sha256,kind,bytes,created_at) values(?,?,?,?)').run(h,'checkpoint',bytes.length,now());
@@ -260,7 +266,8 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
   function resumeExperiment(id){
     const e=experiment(id);if(!['PAUSED','BLOCKED'].includes(e.state))fail('INVALID_TRANSITION','experiment is not paused');
     const cfg=JSON.parse(e.config),r=currentRound(e);
-    if(e.state==='BLOCKED'||r.state==='BLOCKED'){
+    if(!getProfile(cfg.profile_id).test_only&&!e.model_snapshot)fail('MODEL_UNVERIFIED','this experiment predates model snapshots; create a new experiment with verified model digests');
+    if(e.state==='BLOCKED'||r.state==='BLOCKED'||r.deadline_at<=now()){
       // Retry: new attempt from the same parent checkpoint, same planned rows; nothing partial is committed.
       tx(db,()=>{db.prepare("update rounds set state='FAILED' where experiment_id=? and idx=? and attempt=?").run(e.id,r.idx,r.attempt);
         db.prepare("update assignments set state='void' where experiment_id=? and round_idx=? and round_attempt=? and state<>'accepted'").run(e.id,r.idx,r.attempt);
@@ -269,7 +276,6 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
       event('info','round.retry',{experiment:id},{round:r.idx,attempt:r.attempt+1});
     }else{
       db.prepare("update experiments set state='RUNNING' where id=?").run(id);
-      if(r.deadline_at<now())db.prepare('update rounds set deadline_at=? where experiment_id=? and idx=? and attempt=?').run(now()+cfg.round_deadline_s*1000,e.id,r.idx,r.attempt);
       event('info','experiment.resumed',{experiment:id});
     }
     return status(id);
@@ -297,12 +303,18 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
     for(const e of exps){
       const cfg=JSON.parse(e.config),r=currentRound(e);
       if(!r||!['OPEN','COLLECTING'].includes(r.state))continue;
-      const variant=(caps.variants||[]).find(v=>v.profile_id===cfg.profile_id&&cfg.variants.includes(v.variant_id));
+      const profile=getProfile(cfg.profile_id);
+      if(!profile.test_only&&caps.preflight_max_length!==cfg.max_length)continue;
+      const variant=(caps.variants||[]).find(v=>v.profile_id===cfg.profile_id&&cfg.variants.includes(v.variant_id)&&profile.variants[v.variant_id]?.backend===caps.backend);
       if(!variant)continue;
-      const reg=db.prepare('select * from model_variants where profile_id=? and variant_id=?').get(cfg.profile_id,variant.variant_id);
-      if(reg?.files_digest&&variant.files_digest!==reg.files_digest){event('warn','task.model_mismatch',{experiment:e.id,device:deviceId},{variant:variant.variant_id});continue;}
+      const reg=P(e.model_snapshot)?.find(v=>v.variant_id===variant.variant_id);
+      if((!profile.test_only&&!reg?.files_digest)||(reg?.files_digest&&variant.files_digest!==reg.files_digest)){event('warn','task.model_mismatch',{experiment:e.id,device:deviceId},{variant:variant.variant_id});continue;}
       const mine=db.prepare("select t.* from tasks t join assignments a on a.id=t.assignment_id where t.device_id=? and a.experiment_id=? and a.round_idx=? and a.round_attempt=? and t.state in ('leased','accepted')").get(deviceId,e.id,r.idx,r.attempt);
-      if(mine?.state==='leased')return {task:P(mine.manifest),signature:signJSON(key.privateKey,P(mine.manifest)),resumed:true};
+      if(mine?.state==='leased'){
+        if(mine.lease_expires_at<=now())return {task:null,reason:'lease_expiring',retry_after_s:2};
+        const task={...P(mine.manifest),lease_expires_at:mine.lease_expires_at};
+        return {task,signature:signJSON(key.privateKey,task),resumed:true};
+      }
       if(mine?.state==='accepted')return {task:null,reason:'waiting_round',retry_after_s:5};
       const remaining=(r.deadline_at-now())/1000;
       if(remaining<cfg.lease_ttl_s/2)return {task:null,reason:'round_closing',retry_after_s:5};
@@ -314,7 +326,10 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
         const p=getProfile(cfg.profile_id);
         const manifest={protocol_version:PROTOCOL_VERSION,task_type:'ffa_lora_sft',task_id:taskId,lease_id:leaseId,attempt,project_id:projectId,
           experiment_id:e.id,run_id:e.run_id,round:r.idx,round_attempt:r.attempt,device_id:deviceId,model_profile:p.id,model_variant_id:variant.variant_id,
+          model_files_digest:reg?.files_digest??null,
           base_adapter_hash:r.parent_hash,frozen_A_hash:e.frozen_a_hash,schema_hash:schemaHash(p),dataset_shard_hash:a.rows_sha,row_ids:P(a.row_ids),
+          base_adapter_bytes:db.prepare('select bytes from artifacts where sha256=?').get(r.parent_hash)?.bytes??null,
+          dataset_shard_bytes:db.prepare('select bytes from artifacts where sha256=?').get(a.rows_sha)?.bytes??null,
           expected_supervised_tokens:a.expected_tokens,mask_checksum:a.mask_checksum,config_hash:e.config_hash,optimizer_hash:optimizerHash(cfg),
           local_steps:cfg.local_steps,batch_size:cfg.batch_size,grad_accum:cfg.grad_accum,max_length:cfg.max_length,optimizer:cfg.optimizer,
           rank:p.rank,alpha:p.alpha,update_kind:'absolute_b',lease_ttl_seconds:cfg.lease_ttl_s,lease_expires_at:exp,round_deadline_at:r.deadline_at,issued_at:now()};
@@ -337,10 +352,12 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
   }
   function renew(deviceId,taskId,{lease_id,session_id}){
     const d=authDevice(deviceId);checkSession(d,session_id);const t=ownTask(deviceId,taskId,lease_id);
-    if(t.state!=='leased'||t.lease_expires_at<now())fail('LEASE_EXPIRED','lease expired');
-    const m=P(t.manifest),exp=Math.min(now()+m.lease_ttl_seconds*1000,m.round_deadline_at);
-    db.prepare('update tasks set lease_expires_at=?,renewed_at=? where task_id=?').run(exp,now(),taskId);
-    return {lease_expires_at:exp,round_deadline_at:m.round_deadline_at};
+    const server_time=now();
+    if(t.state!=='leased'||t.lease_expires_at<=server_time)fail('LEASE_EXPIRED','lease expired');
+    const m=P(t.manifest),exp=Math.min(server_time+m.lease_ttl_seconds*1000,m.round_deadline_at);
+    if(exp<=server_time)fail('LEASE_EXPIRED','round deadline reached');
+    db.prepare('update tasks set lease_expires_at=?,renewed_at=? where task_id=?').run(exp,server_time,taskId);
+    return {lease_expires_at:exp,round_deadline_at:m.round_deadline_at,server_time};
   }
   function progress(deviceId,taskId,{lease_id,session_id,step,steps,supervised_tokens,loss,state}){
     const d=authDevice(deviceId);checkSession(d,session_id);const t=ownTask(deviceId,taskId,lease_id);
@@ -396,14 +413,15 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
     db.prepare("insert into updates(update_id,idempotency_key,task_id,device_id,payload_sha,bytes,state,meta,created_at) values(?,?,?,?,?,?,'declared',?,?)").run(id,key,t.task_id,deviceId,meta.payload_sha256,meta.bytes,J(clean),now());
     return updateStatus(deviceId,id);
   }
-  function putContent(deviceId,updateId,bytes){
-    authDevice(deviceId);
+  function putContent(deviceId,updateId,bytes,sessionId){
+    const device=authDevice(deviceId);
     const u=db.prepare('select * from updates where update_id=?').get(String(updateId));if(!u)fail('NOT_FOUND','update not found');
     if(u.device_id!==deviceId)fail('NOT_OWNER','update belongs to another device');
     if(bytes.length>MAX_UPDATE_BYTES)fail('TOO_LARGE','update too large');
     if(bytes.length!==u.bytes||sha256(bytes)!==u.payload_sha)fail('HASH_MISMATCH','content does not match the declared digest');
-    if(u.state!=='declared')return updateStatus(deviceId,updateId);
     const t=db.prepare('select * from tasks where task_id=?').get(u.task_id),m=P(t.manifest),p=getProfile(m.model_profile);
+    if(sessionId||m.model_files_digest)checkSession(device,sessionId);
+    if(u.state!=='declared')return updateStatus(deviceId,updateId);
     try{verifyTensors(decode(bytes,{maxBytes:MAX_UPDATE_BYTES}).tensors,p,false);}
     catch(e){db.prepare("update updates set state='rejected',reason=? where update_id=?").run(e.code||'INVALID_TENSOR',updateId);event('warn','update.rejected',{device:deviceId,task:u.task_id},{reason:e.code,message:e.message});throw e;}
     const h=cas.put(bytes);db.prepare('insert or ignore into artifacts(sha256,kind,bytes,created_at) values(?,?,?,?)').run(h,'update',bytes.length,now());
@@ -420,7 +438,7 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
     const t=db.prepare('select * from tasks where task_id=?').get(u.task_id),m=P(t.manifest),a=db.prepare('select * from assignments where id=?').get(t.assignment_id);
     const e=experiment(m.experiment_id),r=db.prepare('select * from rounds where experiment_id=? and idx=? and attempt=?').get(e.id,a.round_idx,a.round_attempt);
     const reject=(code,msg,state='rejected')=>{db.prepare('update updates set state=?,reason=? where update_id=?').run(state,code,updateId);event('warn','update.'+state,{experiment:e.id,device:deviceId,task:t.task_id},{reason:code,message:msg});fail(code,msg);};
-    if(t.state!=='leased'||t.lease_expires_at<now())reject('LEASE_EXPIRED','late update: lease expired, quarantined and not applied','quarantined');
+    if(t.state!=='leased'||t.lease_expires_at<=now()||r.deadline_at<=now())reject('LEASE_EXPIRED','late update: lease expired, quarantined and not applied','quarantined');
     if(!['OPEN','COLLECTING'].includes(r.state)||e.state==='CANCELLED')reject('STALE','round is '+r.state,'quarantined');
     const meta=P(u.meta);
     // Weight is the coordinator's own count from the immutable assignment; the worker's figure must agree.
@@ -500,17 +518,27 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
   let closed=false;
   function runEval(expId,round,hash){
     if(!evaluate){db.prepare('update experiments set eval=? where id=?').run(J({...(P(experiment(expId).eval)||{}),status:'NOT RUN: no trusted evaluator configured on this coordinator'}),expId);return;}
-    Promise.resolve().then(()=>evaluate({experiment:P(experiment(expId).config),checkpoint:cas.get(hash),round,hash})).then(res=>{
+    Promise.resolve().then(()=>{
+      const e=experiment(expId);
+      return evaluate({experiment:P(e.config),modelSnapshot:P(e.model_snapshot),checkpoint:cas.get(hash),round,hash});
+    }).then(res=>{
       if(closed)return; // coordinator closed while the evaluator was running: drop the late result
       const e=experiment(expId),ev=P(e.eval)||{};ev.rounds=ev.rounds||{};ev.rounds[round]={...res,checkpoint:hash,at:now()};
       const r0=ev.rounds[0]?.nll,rf=ev.rounds[round]?.nll;
       if(e.state==='COMPLETED'&&Number.isFinite(r0)&&Number.isFinite(rf)&&round>0)ev.gate={rel_change:(rf-r0)/r0,passed:(r0-rf)/r0>=0.01,rule:'validation NLL reduction >= 1% vs r0 (engineering research target, not a guarantee)'};
       db.prepare('update experiments set eval=? where id=?').run(J(ev),expId);event('info','eval.done',{experiment:expId},{round,nll:res.nll});
-    }).catch(err=>{if(closed)return;event('error','eval.failed',{experiment:expId},{round,message:String(err.message).slice(0,200)});});
+    }).catch(err=>{
+      if(closed)return;
+      const e=experiment(expId),ev=P(e.eval)||{};
+      ev.rounds??={};
+      ev.rounds[round]={status:'NOT RUN',reason:err.code||'EVALUATION_FAILED',checkpoint:hash,at:now()};
+      db.prepare('update experiments set eval=? where id=?').run(J(ev),expId);
+      event('error','eval.failed',{experiment:expId},{round,code:err.code||'EVALUATION_FAILED'});
+    });
   }
   function tick(){
     // Expire leases (assignment returns to open → replacement possible, no double counting).
-    for(const t of db.prepare("select * from tasks where state='leased' and lease_expires_at<?").all(now())){
+    for(const t of db.prepare("select * from tasks where state='leased' and lease_expires_at<=?").all(now())){
       tx(db,()=>{db.prepare("update tasks set state='expired',reason='lease expired' where task_id=? and state='leased'").run(t.task_id);db.prepare("update assignments set state='open' where id=? and state='leased'").run(t.assignment_id);});
       event('warn','task.expired',{device:t.device_id,task:t.task_id},{note:'assignment reopened for an eligible device'});
     }
@@ -546,7 +574,7 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
     const e=experiment(id),cfg=JSON.parse(e.config),r=currentRound(e);
     const asg=r?db.prepare('select a.*,(select device_id from tasks t where t.assignment_id=a.id order by attempt desc limit 1) dev,(select progress from tasks t where t.assignment_id=a.id order by attempt desc limit 1) prog,(select state from tasks t where t.assignment_id=a.id order by attempt desc limit 1) tstate from assignments a where experiment_id=? and round_idx=? and round_attempt=? order by slot').all(e.id,r.idx,r.attempt):[];
     const committed=db.prepare("select count(*) n from rounds where experiment_id=? and state='COMMITTED'").get(e.id).n;
-    return {id:e.id,run_id:e.run_id,name:e.name,state:e.state,config:cfg,config_hash:e.config_hash,created_at:e.created_at,started_at:e.started_at,finished_at:e.finished_at,
+    return {id:e.id,run_id:e.run_id,name:e.name,state:e.state,config:cfg,config_hash:e.config_hash,model_snapshot:P(e.model_snapshot),created_at:e.created_at,started_at:e.started_at,finished_at:e.finished_at,
       initial_hash:e.initial_hash,frozen_a_hash:e.frozen_a_hash,committed_rounds:committed,target_rounds:cfg.rounds,blocker:P(e.blocker),eval:P(e.eval),
       round:r?{idx:r.idx,attempt:r.attempt,state:r.state,parent_hash:r.parent_hash,opened_at:r.opened_at,deadline_at:r.deadline_at,remaining_ms:Math.max(0,r.deadline_at-now()),blocker:P(r.blocker),
         accepted:asg.filter(a=>a.state==='accepted').length,leased:asg.filter(a=>a.state==='leased').length,min_quorum:cfg.quorum.min,target:cfg.quorum.target,
@@ -561,10 +589,11 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
   }
   const listExperiments=()=>db.prepare('select id from experiments order by created_at desc').all().map(x=>status(x.id));
   const events=(after=0,limit=200)=>db.prepare('select * from events where seq>? order by seq limit ?').all(Number(after)||0,Math.min(1000,limit)).map(e=>({...e,details:P(e.details)}));
+  const latestEvents=(limit=200)=>db.prepare('select * from events order by seq desc limit ?').all(Math.min(1000,limit)).reverse().map(e=>({...e,details:P(e.details)}));
   const checkpoint=hash=>cas.get(hash);
   const latestCheckpoint=id=>{const e=experiment(id);return db.prepare('select * from checkpoints where experiment_id=? order by round_idx desc limit 1').get(e.id);};
   return {db,cas,projectId,coordinatorKey:key.publicKey,createPairing,pairStart,pairComplete,approveDevice,revokeDevice,drainDevice,renameDevice,authDevice,useNonce,startSession,heartbeat,listDevices,
     registerVariant,variants,registerDataset,datasetManifest,listDatasets,dryRun,createExperiment,startExperiment,pauseExperiment,resumeExperiment,cancelExperiment,finishAfterRound,
-    claim,renew,progress,abandon,artifactFor,declareUpdate,putContent,commitUpdate,updateStatus,tick,recover,status,rounds,listExperiments,events,checkpoint,latestCheckpoint,
+    claim,renew,progress,abandon,artifactFor,declareUpdate,putContent,commitUpdate,updateStatus,tick,recover,status,rounds,listExperiments,events,latestEvents,checkpoint,latestCheckpoint,
     onEvent:fn=>{listeners.add(fn);return ()=>listeners.delete(fn);},close:()=>{closed=true;db.close();}};
 }

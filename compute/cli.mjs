@@ -56,12 +56,14 @@ try{
   await ctl.boot();
   switch(cmd){
     case 'doctor':{
+      if(flag('preflight'))await policyFromFlags();
       const s=await setup({preflight:flag('preflight')});
       out({runtime:s.runtime.probe,model:s.model&&{files_digest:s.model.files_digest,architecture_ok:s.model.architecture_ok,pinned:s.model.pinned,provenance:s.model.provenance},preflight:s.preflight,sensors:s.governor.sensors,decision:s.governor.decision});
       break;
     }
     case 'coordinator':case 'run':{
       await setup({preflight:false});
+      await policyFromFlags();
       let s=await h('lab/start',{bind_ip:need('bind'),port:Number(opt('port',8765))});
       out({endpoint:s.lab.info.endpoint,fingerprint:s.lab.info.fingerprint,project_id:s.lab.info.project_id});
       await h('lab/register-model',{});
@@ -74,12 +76,13 @@ try{
             if(flag('approve-all')){await h('lab/approve',{id:d.id});console.log('approved',d.id,d.alias);}else console.log('pending device',d.id,d.alias,d.key_fingerprint,'(re-run with --approve-all or approve in the app)');}}
       }
       const cfg=JSON.parse(fs.readFileSync(need('config'),'utf8'));
-      const ds=await h('lab/import-dataset',flag('fixture')||!opt('dataset')?{fixture:true}:{file:abs(opt('dataset')),dataset_id:opt('dataset-id'),revision:opt('dataset-rev','1')});
-      cfg.dataset_id=ds.id;
       if(flag('join-self')){await h('lab/join-self',{alias:opt('alias',os.hostname())});const st=await h('state',{},'GET');
         if(!flag('i-consent')){console.log(JSON.stringify(st.consent.text,null,1));throw Error('--join-self also runs a worker here: read the consent text above and add --i-consent');}
-        await h('consent/accept',{text_revision:st.consent.text.text_revision,project_id:st.consent.text.project_id});await policyFromFlags();
-        if(opt('model-dir')){const p=await h('preflight');if(!p.preflight?.ok)throw Error('preflight failed');}}
+        await h('consent/accept',{text_revision:st.consent.text.text_revision,project_id:st.consent.text.project_id});
+        if(opt('model-dir')){const p=await h('preflight',{max_length:cfg.max_length??256});if(!p.preflight?.ok)throw Error('preflight failed');}}
+      const dataset=flag('fixture')||!opt('dataset')?{fixture:true}:{file:abs(opt('dataset')),dataset_id:opt('dataset-id'),revision:opt('dataset-rev','1')};
+      const ds=await h('lab/import-dataset',{...dataset,max_length:cfg.max_length??256});
+      cfg.dataset_id=ds.id;
       const plan=await h('lab/dry-run',{config:cfg});
       out({tasks:plan.tasks,rows_per_task:plan.rows_per_task,supervised_tokens:plan.supervised_tokens_total,config_hash:plan.config_hash,frozen_a_hash:plan.frozen_a_hash,research_pass_possible:plan.research_pass_possible});
       const want=Number(opt('expect-devices',cfg.quorum?.target||1));

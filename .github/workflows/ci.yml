@@ -36,7 +36,7 @@ jobs:
   package:
     name: Packaging smoke build (Linux, unpacked)
     runs-on: ubuntu-latest
-    needs: test
+    needs: [test, compute-cpu]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -56,7 +56,7 @@ jobs:
   mac-update:
     name: macOS self-update smoke (unsigned build)
     runs-on: macos-latest
-    needs: test
+    needs: [test, compute-cpu]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -65,9 +65,48 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test -- test/mac-updater.test.mjs
-      - name: Build zip (ad-hoc signed)
+      - name: Build ARM64 DMG and ZIP (ad-hoc signed)
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npx electron-builder --mac zip --arm64 --publish never
+        run: npx electron-builder --mac dmg zip --arm64 --publish never
       - name: Update an installed copy with the real helper, open and codesign
         run: node scripts/mac-update-smoke.mjs release
+      - name: Upload ARM64 test packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: compute-macos-arm64
+          path: |
+            release/*-mac-arm64.dmg
+            release/*-mac-arm64.zip
+          if-no-files-found: error
+
+  compute-cpu:
+    name: Compute CPU integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: actions/setup-python@v7
+        id: python
+        with:
+          python-version: '3.12'
+      - name: Install pinned CPU dependencies
+        run: |
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.11.0
+          python -m pip install numpy==2.3.5 transformers==5.24.1 tokenizers==0.23.3 safetensors==0.8.0 peft==0.22.0 Jinja2==3.1.6
+          python -c "import torch, numpy, transformers, tokenizers, safetensors, peft; assert torch.version.cuda is None"
+      - name: Run real Python and HTTPS tests
+        env:
+          KVALAH_COMPUTE_PYTHON: ${{ steps.python.outputs.python-path }}
+        run: |
+          set -o pipefail
+          node --test --test-concurrency=1 test/compute2-stability.test.mjs test/compute2-e2e.test.mjs test/compute2-python.test.mjs | tee compute-cpu-test.log
+          ! grep -Ei '^.*# skip .* (not available|runtime)' compute-cpu-test.log | grep -vi 'mlx'
+      - name: Upload CPU test log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: compute-cpu-test-log
+          path: compute-cpu-test.log

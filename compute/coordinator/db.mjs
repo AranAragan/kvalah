@@ -3,7 +3,7 @@
 import {DatabaseSync} from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
-export const SCHEMA_VERSION=1;
+export const SCHEMA_VERSION=2;
 const MIGRATIONS=[
 `create table meta(key text primary key, value text not null);
 create table devices(id text primary key, public_key text not null unique, alias text not null, state text not null,
@@ -37,7 +37,19 @@ create unique index one_accepted_update_per_task on updates(task_id) where state
 create table checkpoints(hash text primary key, experiment_id text not null, round_idx integer not null, created_at integer not null, lineage text not null);
 create table events(seq integer primary key autoincrement, ts integer not null, severity text not null, code text not null,
   experiment_id text, device_id text, task_id text, details text);
-create table audit_log(id integer primary key autoincrement, ts integer not null, actor text not null, action text not null, details text);`
+create table audit_log(id integer primary key autoincrement, ts integer not null, actor text not null, action text not null, details text);`,
+`alter table experiments add column model_snapshot text;
+alter table checkpoints rename to checkpoints_v1;
+create table checkpoints(hash text not null, experiment_id text not null, round_idx integer not null, created_at integer not null, lineage text not null,
+  primary key(experiment_id,round_idx));
+insert into checkpoints select hash,experiment_id,round_idx,created_at,lineage from checkpoints_v1;
+insert or ignore into checkpoints
+  select initial_hash,id,0,coalesce(started_at,created_at),json_object('parent',null,'kind','canonical_init','seed',json_extract(config,'$.seed'))
+  from experiments where initial_hash is not null;
+insert or ignore into checkpoints
+  select checkpoint_hash,experiment_id,idx+1,coalesce(committed_at,opened_at),json_object('parent',parent_hash,'round',idx,'attempt',attempt)
+  from rounds where state='COMMITTED' and checkpoint_hash is not null;
+drop table checkpoints_v1;`
 ];
 export function openDB(file){
   fs.mkdirSync(path.dirname(file),{recursive:true});

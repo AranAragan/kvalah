@@ -35,7 +35,13 @@ test('app routes: feature flag off by default, full lab run through server → h
     s=await c('profile',{profile_id:'tiny-test-ffa-r4'});
     s=await c('runtime',{python:py,backend:'torch-cpu-test'});assert.equal(s.runtime.probe.backend_ok,true,JSON.stringify(s.runtime.probe));
     s=await c('model',{model_dir:model,variant_id:'cpu-test'});assert.equal(s.model.architecture_ok,true);
+    await assert.rejects(c('preflight',{}),/the resource policy does not allow work/);
+    s=await c('policy',{policy:{only_idle:false,only_ac:false,pause_on_games:false},revision:s.policy.revision});
     s=await c('preflight',{});assert.equal(s.preflight.ok,true,JSON.stringify(s.preflight));
+    const diagnostics=await c('diagnostics');
+    assert.equal(diagnostics.schema_version,1);
+    assert.equal(diagnostics.runtime.backend,'torch-cpu-test');
+    assert.ok(!JSON.stringify(diagnostics).includes(JSON.stringify(model).slice(1,-1)));
     const lp=await freePort();
     s=await c('lab/start',{bind_ip:'127.0.0.1',port:lp});assert.equal(s.lab.info.running,true);assert.match(s.lab.info.endpoint,/^https:\/\/127\.0\.0\.1:/);
     s=await c('lab/join-self',{alias:'app-test'});assert.equal(s.link.device_state,'active');assert.equal(s.consent.required,true,'consent is required before any work');assert.equal(s.participation,false);
@@ -72,7 +78,12 @@ test('app routes: feature flag off by default, full lab run through server → h
 });
 
 // ---------- UI in headless Chrome (real DOM, real API) ----------
-const CHROME=['/usr/bin/google-chrome','/usr/bin/chromium','/usr/bin/chromium-browser'].find(f=>fs.existsSync(f));
+const CHROME=[
+  process.env.KVALAH_TEST_CHROME,
+  '/usr/bin/google-chrome','/usr/bin/chromium','/usr/bin/chromium-browser',
+  ...(process.platform==='win32'?[path.join(process.env.ProgramFiles||'C:/Program Files','Google','Chrome','Application','chrome.exe')]:[]),
+  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+].find(f=>f&&fs.existsSync(f));
 async function cdp(url,{width=1024,height=768}={}){
   const port=await freePort(),prof=tmp('kc-chrome-');
   const ch=spawn(CHROME,['--headless=new','--no-sandbox','--disable-gpu','--remote-debugging-port='+port,'--user-data-dir='+prof,'--window-size='+width+','+height,'about:blank'],{stdio:'ignore'});
@@ -135,19 +146,15 @@ test('UI: Compute view is wired to the real API (enable, tabs, policy, lab), no 
     if(shots)await b.shot(path.join(shots,'01-participation.png'));
     await b.ev("click:[data-act=pause]");await until(async()=>(await c('state')).manual_pause===true,5000,'pause via UI');
     await b.ev("click:[data-act=resume]");await until(async()=>(await c('state')).manual_pause===false,5000,'resume via UI');
-    // Preflight from the Models & data tab.
-    await b.ev("click:[data-tab=data]");await b.ev("click:[data-act=preflight]");
-    await until(async()=>(await c('state')).preflight?.ok===true,60000,'preflight via UI');
-    await until(async()=>/Preflight OK/.test(await b.ev("document.getElementById('computeBody').textContent")),10000,'preflight result shown');
-    // Sensors are unavailable outside Electron → the governor pauses with a reason; untick the limits in the UI.
-    await until(async()=>(await c('state')).reason?.startsWith('sensor_unavailable'),20000,'paused for a missing sensor');
-    await b.ev("click:[data-tab=participate]");await until(()=>b.ev("!!document.getElementById('kcToggle')"),5000,'participate');
-    await until(async()=>/sensor unavailable/.test(await b.ev("document.getElementById('computeBody').textContent")),5000,'reason shown');
+    // This headless host has no Electron sensor bridge. Set its fixture policy before running preflight.
     for(const k of ['only_ac','only_idle','pause_on_games']){
       await until(()=>b.ev("!document.querySelector('[data-pol="+k+"]').disabled"),10000,'idle');
       await b.ev("(()=>{const x=document.querySelector('[data-pol="+k+"]');x.checked=false;x.dispatchEvent(new Event('change',{bubbles:true}));})()");
       await until(async()=>(await c('state')).policy[k]===false,10000,k+' saved');
     }
+    await b.ev("click:[data-tab=data]");await b.ev("click:[data-act=preflight]");
+    await until(async()=>(await c('state')).preflight?.ok===true,60000,'preflight via UI');
+    await until(async()=>/Preflight (OK|пройден)/.test(await b.ev("document.getElementById('computeBody').textContent")),10000,'preflight result shown');
     // Lab: fixture import + dry run from the UI.
     await b.ev("click:[data-tab=lab]");await until(()=>b.ev("!!document.querySelector('[data-act=import-fixture]')"),5000,'lab');
     await b.ev("click:[data-act=import-fixture]");

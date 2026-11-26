@@ -1,5 +1,13 @@
 # Kvalah Compute protocol v2.0 (as implemented in v0.2)
 
+## Stability development build
+
+- The worker schedules a single outstanding renewal per task from the last coordinator-confirmed expiry. The signed task starts the lease before artifact transfer. The manager lives through sidecar shutdown, local result validation and delivery. It stops at a terminal disposition or the elapsed deadline. A same-device session can renew an existing live lease. A resumed claim comes with an updated signed expiry.
+- Updates retain immutable bytes, a signed task, a project/endpoint/certificate/device scope and an idempotency key. An uncertain declare is repeated with the same key. Once the update ID is known, the worker queries status before resending content or commit. A durable ACK closes the outbox entry. A new session supersedes the old one, and the signed PUT query binds the content operation to that session for new production tasks.
+- The client uses separate pinned control and payload pools. Heartbeat and renew use control slots. Large responses and attempted outbound bodies count toward the local persistent payload ledger. TLS/HTTP headers and streams outside these operations are outside this ledger.
+- The coordinator snapshots registered model variants before new experiments. A new production worker requires the signed digest and the corresponding verified local model. Backend/variant and context length must match. For LAN trials, use the same development build on all devices. Earlier production experiments without snapshots remain available in history.
+- SQLite records checkpoint ownership by experiment and round. The CAS can share identical bytes between experiments. Local worker checkpoints promote a single generation pointer after writing the adapter, optimizer and their metadata and hashes.
+
 Transport: HTTPS with a self-signed certificate generated per coordinator; the client pins its SHA-256
 fingerprint (from the pairing string). No CA fallback, no plain HTTP. Bodies: JSON (≤ 64 KiB) or
 `application/octet-stream` safetensors (≤ 8 MiB). Chunked bodies are refused (Content-Length required).

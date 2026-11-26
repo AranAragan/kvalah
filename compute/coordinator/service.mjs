@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {createCoordinator} from './coordinator.mjs';
 import {createApi} from './api.mjs';
 import {coordinatorCertificate} from './tls.mjs';
@@ -15,7 +16,7 @@ import {fail} from '../protocol/errors.mjs';
 import {exportReport} from '../report.mjs';
 import {PINNED,verifyAgainstHub} from '../registry.mjs';
 export const DEFAULT_PORT=8765;
-export const FIXTURE=path.join(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/,'$1')),'..','fixtures','smoke-sft-v1.jsonl');
+export const FIXTURE=fileURLToPath(new URL('../fixtures/smoke-sft-v1.jsonl',import.meta.url));
 const isPrivateV4=ip=>/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|127\.|169\.254\.)/.test(ip);
 export function lanAddresses(){
   const out=[];
@@ -24,23 +25,33 @@ export function lanAddresses(){
 }
 export function createCoordinatorService({dir,startSidecar=defaultSidecar,evaluator=()=>null,canRunHeavy=()=>({run:true}),log=()=>{},now=Date.now,tickMs=1000}){
   fs.mkdirSync(dir,{recursive:true});
-  let server=null,timer=null,bind=null,cert=null,evalBusy=false;
+  let server=null,timer=null,bind=null,cert=null,evalBusy=false,closed=false;
   const work=path.join(dir,'work');fs.mkdirSync(work,{recursive:true});
-  async function withSidecar(rt,fn){
+  async function withSidecar(rt,fn,{heavy=false}={}){
     if(!rt?.python)fail('RUNTIME_REQUIRED','configure a Python compute runtime on this coordinator first');
-    const sc=startSidecar({python:rt.python,threads:Math.max(1,Math.floor((os.availableParallelism?.()||2)/4)),extraEnv:rt.extraEnv,onLog:l=>log('[sidecar] '+l)});
+    const sc=startSidecar({python:rt.python,threads:rt.threads??Math.max(1,Math.floor((os.availableParallelism?.()||2)/4)),extraEnv:rt.extraEnv,onLog:l=>log('[sidecar] '+l),
+      onEvent:event=>{
+        if(event.type!=='permit_request')return;
+        const g=heavy?canRunHeavy():{run:true};
+        sc.send({cmd:g.run&&!closed?'permit':'stop',id:event.id,reason:closed?'coordinator stopped':g.reason});
+      }});
     try{return await fn(sc);}finally{await sc.stop(10000).catch(()=>sc.kill());}
   }
   // Trusted evaluation on the coordinator's own runtime (spec §7.2). Waits for the governor (never competes
   // with the local AI or a game), and is NOT RUN when no runtime/model is configured.
-  async function evaluate({experiment,checkpoint,round,hash}){
+  async function evaluate({experiment,checkpoint,modelSnapshot}){
     const rt=evaluator();
     if(!rt?.python||(!rt.model_dir&&rt.backend!=='mock'))return {status:'NOT RUN',reason:'no trusted evaluator runtime/model configured'};
-    while(evalBusy)await new Promise(r=>setTimeout(r,1000));
+    const p=getProfile(experiment.profile_id);
+    const variant=modelSnapshot?.find(v=>v.variant_id===rt.variant_id);
+    if(!p.test_only&&(!variant?.files_digest||variant.files_digest!==rt.files_digest))return {status:'NOT RUN',reason:'trusted evaluator model does not match the experiment snapshot'};
+    for(let waited=0;evalBusy&&!closed&&waited<30;waited++)await new Promise(r=>setTimeout(r,1000));
+    if(closed||evalBusy)return {status:'NOT RUN',reason:'evaluator is unavailable'};
+    const decision=canRunHeavy();
+    if(!decision.run)return {status:'NOT RUN',reason:'governor paused evaluation: '+decision.reason};
     evalBusy=true;
     try{
-      for(let waited=0;;waited+=5000){const g=canRunHeavy();if(g.run)break;if(waited>3600e3)return {status:'NOT RUN',reason:'governor kept evaluation paused: '+g.reason};await new Promise(r=>setTimeout(r,5000));}
-      const m=coord.datasetManifest(experiment.dataset_id),p=getProfile(experiment.profile_id);
+      const m=coord.datasetManifest(experiment.dataset_id);
       const rows=[];for(const s of m.shards.validation||[])rows.push(...JSON.parse(coord.cas.get(s.sha256).toString('utf8')).rows);
       if(!rows.length)return {status:'NOT RUN',reason:'dataset has no validation rows'};
       const d=fs.mkdtempSync(path.join(work,'eval-'));
@@ -48,8 +59,8 @@ export function createCoordinatorService({dir,startSidecar=defaultSidecar,evalua
         fs.writeFileSync(path.join(d,'adapter.safetensors'),checkpoint);fs.writeFileSync(path.join(d,'rows.json'),JSON.stringify({rows}));
         const t0=now();
         const r=await withSidecar(rt,sc=>sc.call('evaluate',{adapter_path:path.join(d,'adapter.safetensors'),rows_path:path.join(d,'rows.json'),model_dir:rt.model_dir||'',backend:rt.backend,
-          task:{layers:p.layers,targets:p.targets,rank:p.rank,alpha:p.alpha,profile:p.id,max_length:experiment.max_length}}).promise);
-        return {...r,status:'DONE',split:'validation',backend:rt.backend,variant_id:rt.variant_id||null,eval_ms:now()-t0};
+          model_files_digest:variant?.files_digest,task:{layers:p.layers,targets:p.targets,rank:p.rank,alpha:p.alpha,profile:p.id,max_length:experiment.max_length}}).promise,{heavy:true});
+        return {...r,status:'DONE',split:'validation',backend:rt.backend,variant_id:rt.variant_id||null,provenance:variant?.provenance||null,eval_ms:now()-t0};
       }finally{fs.rmSync(d,{recursive:true,force:true});}
     }finally{evalBusy=false;}
   }
@@ -68,7 +79,15 @@ export function createCoordinatorService({dir,startSidecar=defaultSidecar,evalua
     coord.db.prepare('insert into audit_log(ts,actor,action,details) values(?,?,?,?)').run(now(),'admin','coordinator.start',JSON.stringify(bind));
     return info();
   }
-  async function stop(){clearInterval(timer);timer=null;if(server){await new Promise(r=>server.close(()=>r()));server.closeAllConnections?.();server=null;}return info();}
+  async function stop(){
+    clearInterval(timer);timer=null;
+    if(server){
+      const active=server;
+      await new Promise(resolve=>{active.close(resolve);active.closeAllConnections();});
+      if(server===active)server=null;
+    }
+    return info();
+  }
   const endpoint=()=>bind?`https://${bind.ip}:${bind.port}`:null;
   function info(){return {running:!!server,endpoint:endpoint(),fingerprint:cert?.fingerprint||null,project_id:coord.projectId,addresses:lanAddresses(),bind_ip:bind?.ip||null,port:bind?.port||DEFAULT_PORT};}
   function createPairing(o={}){
@@ -92,6 +111,8 @@ export function createCoordinatorService({dir,startSidecar=defaultSidecar,evalua
   // Dataset import: validation → dedup → PII/secret/licence filters → group-aware split → tokenization with
   // the coordinator's pinned tokenizer → mask validation → immutable shards + manifest.
   async function importDataset({file,fixture=false,dataset_id,revision='1',profile_id,max_length=256,seed=1,source,provenance,runtime}){
+    const g=canRunHeavy();
+    if(!g.run)fail('PAUSED','the resource policy does not allow tokenization now: '+g.reason);
     if(!fixture&&(typeof file!=='string'||!path.isAbsolute(file)||!fs.existsSync(file)))fail('NOT_FOUND','choose an existing JSONL file');
     // Default id: the fixture name, or the file name reduced to the allowed alphabet.
     dataset_id=String(dataset_id||(fixture?'smoke-sft-v1':path.basename(file).replace(/\.jsonl?$/i,'').toLowerCase().replace(/[^a-z0-9._-]+/g,'-').replace(/^[^a-z0-9]+/,'').slice(0,64)||'dataset'));
@@ -105,11 +126,11 @@ export function createCoordinatorService({dir,startSidecar=defaultSidecar,evalua
     try{
       const built=await withSidecar(rt,async sc=>buildDataset({rows,datasetId:dataset_id,revision,profileId:p.id,maxLength:max_length,seed,source:fixture?'Kvalah synthetic smoke fixture (CC0-1.0)':source,provenance:fixture?'bundled synthetic fixture compute/fixtures/smoke-sft-v1.jsonl':provenance,
         tokenizer:async(list,ml)=>{const inp=path.join(d,'in.json'),out=path.join(d,'out.json');fs.writeFileSync(inp,JSON.stringify({rows:list}));
-          await sc.call('tokenize',{rows_path:inp,out_path:out,model_dir:rt.model_dir,max_length:ml}).promise;return JSON.parse(fs.readFileSync(out,'utf8'));}}));
+          await sc.call('tokenize',{rows_path:inp,out_path:out,model_dir:rt.model_dir,max_length:ml}).promise;return JSON.parse(fs.readFileSync(out,'utf8'));}}),{heavy:true});
       const reg=coord.registerDataset(built.manifest,built.shards);
       return {id:reg.id,manifest:built.manifest,rejected_lines:rejected,excluded:built.excluded.slice(0,200)};
     }finally{fs.rmSync(d,{recursive:true,force:true});}
   }
   return {coord,start,stop,info,createPairing,verifyModel,registerModel,checkProvenance,importDataset,evaluate,
-    exportReport:o=>exportReport(coord,o),close:async()=>{await stop();coord.close();}};
+    exportReport:o=>exportReport(coord,o),close:async()=>{closed=true;await stop();coord.close();}};
 }

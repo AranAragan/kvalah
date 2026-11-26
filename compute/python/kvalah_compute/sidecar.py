@@ -2,7 +2,7 @@
   probe, verify_model, tokenize, train, evaluate, export_peft, shutdown
 and, during train, the supervisor answers each permit_request with {"cmd":"permit"} or {"cmd":"stop"}.
 Every reply is one JSON line on stdout; diagnostics go to stderr. The process never opens a network socket."""
-import json, os, sys, time, platform, hashlib, traceback
+import json, os, sys, time, platform, hashlib, traceback, re, shutil, uuid
 import numpy as np
 from . import __version__
 from .errors import SidecarError
@@ -16,8 +16,8 @@ def emit(obj):
     OUT.write(json.dumps(obj, separators=(",", ":")) + "\n")
     OUT.flush()
 
-def read_cmd():
-    if _pending:
+def read_cmd(use_pending=True):
+    if use_pending and _pending:
         return _pending.pop(0)
     line = sys.stdin.readline()
     if not line:
@@ -37,7 +37,7 @@ class Stopped(Exception):
 def wait_permit(cid, step):
     emit({"type": "permit_request", "id": cid, "step": step})
     while True:
-        m = read_cmd()
+        m = read_cmd(use_pending=False)
         if m is None:
             continue
         c = m.get("cmd")
@@ -88,10 +88,12 @@ def verify_model(msg):
     total = 0
     for dp, dn, fn in os.walk(root):
         dn[:] = sorted(d for d in dn if not d.startswith("."))
+        if any(os.path.islink(os.path.join(dp, child)) for child in dn):
+            raise SidecarError("MODEL_INVALID", "linked model directories are not supported")
         for n in sorted(fn):
             p = os.path.join(dp, n)
-            if os.path.islink(p) and not os.path.realpath(p).startswith(root + os.sep):
-                raise SidecarError("MODEL_INVALID", "symlink outside the model directory: " + n)
+            if os.path.islink(p):
+                raise SidecarError("MODEL_INVALID", "linked model files are not supported")
             if n.endswith((".bin", ".pt", ".pth", ".pkl", ".ckpt")):
                 raise SidecarError("MODEL_INVALID", "pickle-based weight file refused: " + n)
             if n.startswith("."):
@@ -127,39 +129,100 @@ def _load_task(msg):
         raise SidecarError("TOKEN_MISMATCH", "supervised token count differs from the task")
     return task, d, base, rows, k
 
-def _ckpt_paths(d):
-    c = os.path.join(d, "checkpoint")
-    return c, os.path.join(c, "state.json"), os.path.join(c, "B.safetensors"), os.path.join(c, "opt.safetensors")
+def _sync_dir(directory):
+    if os.name == "nt":
+        return
+    fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _checkpoint_names(directory):
+    try:
+        with open(os.path.join(directory, "CURRENT"), encoding="utf8") as f:
+            names = json.load(f)
+        if not isinstance(names, list):
+            return []
+        return [n for n in names[:2] if isinstance(n, str) and re.fullmatch(r"generation-[0-9a-f]{32}", n)]
+    except (FileNotFoundError, ValueError):
+        return []
+
+
+def _save_checkpoint(directory, previous, task, backend, step, adapter, arrays, opt_meta):
+    from safetensors.numpy import save
+    os.makedirs(directory, exist_ok=True)
+    generation = "generation-" + uuid.uuid4().hex
+    folder = os.path.join(directory, generation)
+    os.mkdir(folder)
+    adapter_bytes = encode(adapter)
+    optimizer_bytes = save({name: np.ascontiguousarray(value) for name, value in arrays.items()})
+    _atomic(os.path.join(folder, "B.safetensors"), adapter_bytes)
+    _atomic(os.path.join(folder, "opt.safetensors"), optimizer_bytes)
+    state = {"task": task, "backend": backend, "step": step, "opt_meta": opt_meta,
+             "adapter_hash": hashlib.sha256(adapter_bytes).hexdigest(), "optimizer_hash": hashlib.sha256(optimizer_bytes).hexdigest()}
+    _atomic(os.path.join(folder, "state.json"), json.dumps(state).encode())
+    _sync_dir(folder)
+    _atomic(os.path.join(directory, "CURRENT"), json.dumps([generation] + ([previous] if previous else [])).encode())
+    _sync_dir(directory)
+    for name in os.listdir(directory):
+        if name not in (generation, previous) and re.fullmatch(r"generation-[0-9a-f]{32}", name):
+            shutil.rmtree(os.path.join(directory, name), ignore_errors=True)
+    return generation
+
+
+def _restore_checkpoint(directory, task, backend, base, model, cid):
+    from safetensors.numpy import load
+    for generation in _checkpoint_names(directory):
+        folder = os.path.join(directory, generation)
+        try:
+            with open(os.path.join(folder, "state.json"), encoding="utf8") as f:
+                state = json.load(f)
+            step = state["step"]
+            if state["task"] != task or state["backend"] != backend or type(step) is not int or not 1 <= step <= task["local_steps"]:
+                raise ValueError("checkpoint belongs to a different assignment")
+            with open(os.path.join(folder, "B.safetensors"), "rb") as f:
+                adapter_bytes = f.read()
+            with open(os.path.join(folder, "opt.safetensors"), "rb") as f:
+                optimizer_bytes = f.read()
+            if hashlib.sha256(adapter_bytes).hexdigest() != state["adapter_hash"] or hashlib.sha256(optimizer_bytes).hexdigest() != state["optimizer_hash"]:
+                raise ValueError("checkpoint hash mismatch")
+            bb = verify(decode(adapter_bytes), task["layers"], task["targets"], task["rank"], False)
+            arrays = load(optimizer_bytes)
+            if any(a.dtype.kind not in "fiu" or not np.isfinite(a).all() for a in arrays.values()):
+                raise ValueError("invalid optimizer state")
+            model.set_adapter({**base, **bb})
+            model.make_optimizer(task["optimizer"])
+            model.load_optimizer_state(arrays, state["opt_meta"])
+        except Exception as error:
+            emit({"type": "checkpoint_rejected", "id": cid, "reason": type(error).__name__})
+            continue
+        emit({"type": "resumed", "id": cid, "step": step})
+        return step, generation
+    model.set_adapter(base)
+    model.make_optimizer(task["optimizer"])
+    return 0, None
+
 
 def train(msg):
     from .backends import make_backend
     task, d, base, rows, k = _load_task(msg)
     cid = msg.get("id")
+    wait_permit(cid, 0)
+    model_dir = msg["paths"].get("model_dir")
+    if task.get("model_files_digest"):
+        verified = verify_model({"model_dir": model_dir})
+        if verified["files_digest"] != task["model_files_digest"]:
+            raise SidecarError("HASH_MISMATCH", "model files differ from the signed task")
+        wait_permit(cid, 0)
     b = make_backend(msg["backend"])
     t0 = time.perf_counter()
-    info = b.load(_safe_dir(msg["paths"]["model_dir"]) if msg["paths"].get("model_dir") else "", task)
+    info = b.load(_safe_dir(model_dir) if model_dir else "", task)
     load_s = time.perf_counter() - t0
-    b.set_adapter(base)
-    b.make_optimizer(task["optimizer"])
     emit({"type": "loaded", "id": cid, "model_load_s": round(load_s, 3), "info": info, **b.metrics()})
-    start = 0
-    cdir, cstate, cb, copt = _ckpt_paths(d)
-    opt_sig = hashlib.sha256(json.dumps(task["optimizer"], sort_keys=True).encode()).hexdigest()
-    if os.path.isfile(cstate):
-        with open(cstate, encoding="utf8") as f:
-            st = json.load(f)
-        if st.get("task_id") == task["task_id"] and st.get("base") == task["base_adapter_hash"] and st.get("opt") == opt_sig:
-            with open(cb, "rb") as f:
-                bb = verify(decode(f.read()), task["layers"], task["targets"], task["rank"], False)
-            merged = dict(base); merged.update(bb)
-            b.set_adapter(merged)
-            arrays = {}
-            if os.path.isfile(copt):
-                from safetensors.numpy import load_file
-                arrays = load_file(copt)
-            b.load_optimizer_state(arrays, st.get("opt_meta", {}))
-            start = int(st["step"])
-            emit({"type": "resumed", "id": cid, "step": start})
+    cdir = os.path.join(d, "checkpoint")
+    start, generation = _restore_checkpoint(cdir, task, msg["backend"], base, b, cid)
     tokens_total = sum(sum(1 for m in r["target_mask"][1:] if m) for r in rows[:start * k])
     compute_total = 0.0
     for step in range(start, task["local_steps"]):
@@ -170,13 +233,8 @@ def train(msg):
         cm = (time.perf_counter() - w0) * 1000
         compute_total += cm
         tokens_total += n
-        os.makedirs(cdir, exist_ok=True)
-        _atomic(cb, encode(b.get_B()))
         arrays, meta = b.optimizer_state()
-        if arrays:
-            from safetensors.numpy import save
-            _atomic(copt, save({kk: np.ascontiguousarray(v) for kk, v in arrays.items()}))
-        _atomic(cstate, json.dumps({"task_id": task["task_id"], "base": task["base_adapter_hash"], "opt": opt_sig, "step": step + 1, "opt_meta": meta}).encode())
+        generation = _save_checkpoint(cdir, generation, task, msg["backend"], step + 1, b.get_B(), arrays, meta)
         emit({"type": "step", "id": cid, "step": step + 1, "loss": loss_sum / n, "supervised_tokens": n, "supervised_tokens_total": tokens_total,
               "grad_norm": gnorm, "compute_ms": round(cm, 3), "cpu_ms": round((time.process_time() - c0) * 1000, 3), "wall_ms": round((time.perf_counter() - w0) * 1000, 3), **b.metrics()})
     A_after = b.get_A()
@@ -194,13 +252,19 @@ def train(msg):
 def evaluate(msg):
     from .backends import make_backend
     t = msg["task"]
+    cid = msg.get("id")
+    wait_permit(cid, 0)
+    if msg.get("model_files_digest") and verify_model(msg)["files_digest"] != msg["model_files_digest"]:
+        raise SidecarError("HASH_MISMATCH", "evaluator files differ from the experiment snapshot")
     with open(_safe_dir(msg["adapter_path"]), "rb") as f:
         ad = verify(decode(f.read()), t["layers"], t["targets"], t["rank"], True)
     with open(_safe_dir(msg["rows_path"]), encoding="utf8") as f:
         rows = json.load(f)["rows"]
     b = make_backend(msg["backend"])
+    wait_permit(cid, 0)
     b.load(_safe_dir(msg["model_dir"]) if msg.get("model_dir") else "", t)
     b.set_adapter(ad)
+    wait_permit(cid, 1)
     r = b.evaluate(rows)
     b.release()
     n = max(1, r["tokens"])
@@ -213,6 +277,10 @@ def preflight(msg):
     from .backends import make_backend
     t = msg["task"]
     cid = msg.get("id")
+    wait_permit(cid, 0)
+    if msg.get("model_files_digest") and verify_model(msg)["files_digest"] != msg["model_files_digest"]:
+        raise SidecarError("HASH_MISMATCH", "model files changed since verification")
+    wait_permit(cid, 0)
     b = make_backend(msg["backend"])
     t0 = time.perf_counter()
     info = b.load(_safe_dir(msg["model_dir"]) if msg.get("model_dir") else "", t)
@@ -240,6 +308,7 @@ def preflight(msg):
     return {"ok": bool(np.isfinite(loss_sum)), "model_load_s": round(load_s, 3), "step_s": round(step_s, 3), "max_length": n, "info": info, **m}
 
 def tokenize(msg):
+    wait_permit(msg.get("id"), 0)
     from .tokenize_rows import run
     with open(_safe_dir(msg["rows_path"]), encoding="utf8") as f:
         rows = json.load(f)["rows"]

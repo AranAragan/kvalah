@@ -1,5 +1,30 @@
 # Requirements traceability — Kvalah Compute v0.2
 
+## Stability & Experience Update
+
+This table tracks the development build against baseline `d642625`. The tables below retain the original v0.2 evidence. See [STABILITY-REVIEW.md](STABILITY-REVIEW.md) and [TEST-REPORT.md](TEST-REPORT.md) for the new test results and residual risks.
+
+| Requirement | Implementation and evidence | Status |
+|---|---|---|
+| STAB-01 | `worker/lease.mjs`, `worker/worker.mjs`, coordinator expiry and reissue. Fake-clock T05/T06. | PARTIAL — duration prediction and all cancellation/clock-skew combinations remain. |
+| STAB-02 | `worker/outbox.mjs`, signed task scope and status-first delivery. HTTPS E2E drops declare, PUT and commit replies and checks PUT counts. | PARTIAL — full restart/corruption matrix remains. Legacy unsigned entries are retained for review. |
+| STAB-03 | Admission before claim, again before each artifact and before load. T01. | PARTIAL — workload estimates, distributed eligibility and recovery hysteresis remain. |
+| STAB-04 | `worker/artifacts.mjs`, hash verification, persistent reuse, quota and atomic writes. T03/T04. | PARTIAL — full retention and concurrent-process matrix remains. |
+| STAB-05 | CPU/GPU zero gates, stale RAM gate, initial and step permits. T01/T19. | PARTIAL — OS-specific available RAM and VRAM/process enforcement remain. |
+| STAB-06 | `worker/client.mjs` and Governor persistent payload ledger. T20. | PARTIAL — download accounting settles at request end. NIC measurement and metered sensor implementation remain. |
+| STAB-07 | Separate pinned HTTPS pools, aborts and deadlines, session-safe approval refresh. HTTPS E2E and existing signature/TLS checks. | PARTIAL — full fault, timeout and saturation matrix remains. |
+| STAB-08 | Structured RPC errors, current event tail and safe local JSON export. T23 and app API regression. | PARTIAL — signed network probe and advanced event filtering remain. |
+| STAB-09 | Per-run checkpoint lineage, lease expiry at deadline, new attempt after an expired pause. N05–N10 and T12. | PARTIAL — full process-crash/corruption matrix remains. |
+| STAB-10 | Generation pointer, component hashes and rollback in the sidecar. T13. | PARTIAL — physical forced termination and optimizer-resume parity remain. |
+| STAB-11 | Registered digests in immutable experiment snapshots, backend compatibility and pre-load rehash. T16 and CPU report. | PARTIAL — immutable staging and official MLX conversion remain. |
+| STAB-12 | Context-specific preflight and Governor gates for training, load, preflight, evaluation and tokenization. | PARTIAL — full exact-config fingerprint and interruption during evaluation remain. |
+| STAB-13 | Existing safe tensor, ownership/hash and token-count checks. N02–N07. | PARTIAL — calibrated anomaly thresholds and public-mode threat model remain. |
+| STAB-14 | Scoped consent and key storage, session-bound content PUTs for new production tasks, read-only enrollment refresh. | PARTIAL — complete revocation and migration fault matrices remain. |
+| UX-01, UX-05, UX-09 | Existing views show lease/retry, accepted tokens, payload budget and safe diagnostic export. | PARTIAL — role navigation, push state and accessibility matrix remain. |
+| UX-02, UX-03, UX-04 | Existing enrollment and local runtime/model verification, backend-filtered variants and context selection. | PARTIAL — invitation deep links, automatic preparation and complete onboarding remain. |
+| UX-06, UX-07, UX-08 | Existing local lab and monitoring, updated event tail and immutable model snapshot. | PARTIAL — automatic lab and Smoke wizard, pre-start readiness and full acceptance remain. |
+| HW-A–D | [Hardware validation runbook](HW-TEST.md). | HW NOT RUN |
+
 Legend: **DONE** implemented and covered by an automated CPU test on the build box · **DONE (HW NOT RUN)**
 implemented, needs the physical GPU/Mac check in HW-TEST.md · **PARTIAL** · **NOT DONE** (with reason).
 Priority from the spec (P0 = release blocker for the LAN release).

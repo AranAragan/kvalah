@@ -1,5 +1,20 @@
 # Kvalah Compute v0.2 — hardware test instructions (ENVERDASH · ROG · MacBook M1 Pro)
 
+## Stability build acceptance
+
+**HW-A–D · NOT RUN for `0.10.0-compute.2.dev.1`.** Keep `smoke-61ec92` as evidence from the previous build. Use the same new build on all three machines, verify the existing local model folders and rerun preflight at 256 with each device's normal resource policy. Prefer the existing runtime and model files. See [Migration](MIGRATION.md).
+
+| Test | Run and evidence |
+|---|---|
+| HW-A | Run three fresh Smoke experiments with all 3 distinct devices, 2 rounds × 3 local steps, SGD 0.001, context 256, batch 1, accumulation 1, seed 20261126, 600 s deadline and 120 s lease. Include cold/warm cache. Each run needs 2 committed checkpoints, 6 accepted updates, 18 accepted optimizer steps, initial/final validation, offline report verification and PEFT load on the official MSI base. Record immutable dataset hash and planned tokens. |
+| HW-B | Use an elevated local RAM threshold or a test sensor on the Mac to reproduce a memory block safely. Verify no new claims/downloads during the block and measure the cache hit/byte counters after recovery. Record macOS's own memory figures alongside app readings. |
+| HW-C | Interrupt a ROG update under controlled conditions. In one run restore connectivity before confirmed expiry and check that the same result is delivered once. In a separate run carry the interruption past expiry and confirm the result is excluded. Capture the signed operation's phase and correlation ID from **Export diagnostics** on the worker and coordinator. |
+| HW-D | Exercise pause/resume, worker/coordinator restart, stop/revoke, traffic cap and local AI priority. Run separate 2/3 fault-tolerant and 10% duty-cycle experiments. Keep the HW-A settings fixed. |
+
+Save the diagnostic JSON, round JSON and weighted report from each run. Keep raw pairing codes and model folders out of shared evidence. Community MLX provenance remains unverified, so record this as engineering Smoke.
+
+## Original compute.1 setup reference
+
 **Status of everything below: NOT RUN.** The build box has no GPU and no Mac. Only CPU tests passed there
 (tiny random models, `torch-cpu-test` and CPU-MLX). Record every result honestly as PASS / FAIL / BLOCKED.
 Save the outputs (JSON, screenshots, report zip) in one folder per machine.

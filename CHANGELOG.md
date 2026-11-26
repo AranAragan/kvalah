@@ -5,6 +5,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.10.0-compute.2.dev.1] - 2026-11-26
+
+Development build for local verification. GPU and hardware acceptance are pending.
+
+- Keep task leases alive during artifact downloads, training, sealing the local result and delivering it to the coordinator. Reconcile lost upload replies against server status.
+- Check the memory policy before task claim, reuse verified artifacts by hash and persist the payload traffic budget.
+- Persist atomic local checkpoint generations and track run-specific checkpoint lineage even when two runs produce identical bytes.
+- Bind new experiments to registered model digests, check the model before loading and export structured diagnostics from the Compute tab.
+
 ## [0.10.0-compute.1] - 2026-11-26
 
 > **Pre-release — NOT tested on real GPUs or Apple Silicon Metal.**

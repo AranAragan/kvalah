@@ -25,7 +25,7 @@
     try{S=await call('state');}catch(e){S={feature_enabled:false,error:e.message};}
     if(S.feature_enabled&&S.lab&&tab==='monitor'){
       const exps=S.lab.experiments||[];if(!selExp||!exps.find(e=>e.id===selExp))selExp=exps[0]?.id||null;
-      try{expData=selExp?await call('lab/experiment/status',{id:selExp}):null;const ev=await call('lab/events',{after:0});coordEvents=Array.isArray(ev)?ev.slice(-60):[];}catch{expData=null;}
+      try{expData=selExp?await call('lab/experiment/status',{id:selExp}):null;const ev=await call('lab/events',{tail:true});coordEvents=Array.isArray(ev)?ev.slice(-60):[];}catch{expData=null;}
     }
     render(full);
   }
@@ -58,13 +58,16 @@
     const st=S.state,w=S.worker;
     let h='<div class="kc-status"><span class="kc-dot s-'+esc(st)+'"></span><strong>'+esc(ct('state.'+st))+'</strong>'+(S.reason?'<span class="kc-note">'+esc(ct('reason',{r:reason(S.reason)}))+'</span>':'')+'</div>';
     if(w?.task)h+='<p class="kc-note">'+esc(ct('task',{round:w.task.round??'?',step:w.task.step??0,steps:w.task.steps??'?',tokens:w.task.expected_tokens??'?'}))+'</p>';
+    if(w?.task?.lease)h+='<p class="kc-note">'+esc('Lease · '+fmtMs(w.task.lease.remaining_ms))+'</p>';
+    const rpc=w?.last_rpc_error;
+    if(rpc&&['ERROR_RECOVERABLE','UPLOADING','PAUSED'].includes(w.state))h+='<p class="kc-note">'+esc([rpc.method,rpc.route,rpc.stage,rpc.code,rpc.next_retry_at?new Date(rpc.next_retry_at).toLocaleTimeString(lang()):null].filter(Boolean).join(' · '))+'</p>';
     if(S.last_error)h+='<p class="kc-msg bad">'+esc((S.last_error.code||'')+': '+(S.last_error.message||''))+'</p>';
     return h;
   }
   function measuredBlock(){
     const b=S.budget||{},m=S.measured||{},w=S.worker?.metrics||{};
     return kv([[ct('measured.wall'),esc(fmtMs(b.used_wall_ms))+' / '+esc(fmtMs(b.limit_ms))],[ct('measured.gpu'),esc(fmtMs(b.used_gpu_ms))],[ct('measured.share'),m.active_fraction_60s==null?ct('none'):Math.round(m.active_fraction_60s*100)+'%'],
-      [ct('measured.tasks'),esc(w.tasks_accepted??0)],[ct('measured.tokens'),esc(w.supervised_tokens??0)],[ct('measured.bytes'),esc(fmtB(w.bytes_in??null))+' / '+esc(fmtB(w.bytes_out??null))+' · '+esc(fmtB(b.bytes))]])
+      [ct('measured.tasks'),esc(w.tasks_accepted??0)],[ct('measured.tokens'),esc(w.supervised_tokens??0)],[ct('measured.acceptedTokens'),esc(w.accepted_tokens??0)],[ct('measured.bytes'),esc(fmtB(w.bytes_in??null))+' / '+esc(fmtB(w.bytes_out??null))+' · '+esc(fmtB(b.bytes)+' / '+fmtB(S.policy.daily_traffic_mb*1e6))]])
       +'<p class="kc-note">'+esc(ct('measured.month',{h:((S.month?.wall_ms||0)/3600e3).toFixed(1)}))+'</p>';
   }
   function sensorsBlock(){
@@ -85,8 +88,7 @@
     const num=(k,label,min,max,stepv=1)=>'<label class="kc-field"><span>'+esc(label)+'</span><input type="number" min="'+min+'" max="'+max+'" step="'+stepv+'" value="'+esc(p[k])+'" data-pol="'+k+'"></label>';
     let h=card('','<div class="kc-toggle-row"><div><strong>'+esc(ct('toggle'))+'</strong><small class="kc-note">'+esc(ct('card.subtitle'))+' · '+esc(ct('toggle.note'))+'</small></div><label class="kc-switch"><input type="checkbox" id="kcToggle" data-act-change="toggle"'+(on?' checked':'')+(busy?' disabled':'')+'><span></span></label></div>'
       +L('status',statusLine)+L('setup',setupList)
-      +'<div class="kc-actions">'+btn(S.manual_pause?'resume':'pause',ct(S.manual_pause?'btn.resume':'btn.pause'),{disabled:!S.participation})+btn('stop',ct('btn.stop'),{disabled:!S.link&&!S.participation})+btn('diag',ct('btn.diag'))+'</div>'
-      +(lastResult.diag?'<pre class="kc-pre">'+esc(JSON.stringify({state:S.state,reason:S.reason,missing:S.missing,decision:S.governor?.decision,sensors:S.governor?.sensors,broker:S.governor?.broker,runtime:S.runtime,preflight:S.preflight,link:S.link&&{endpoint:S.link.endpoint,fingerprint:S.link.fingerprint,device_state:S.link.device_state},worker:S.worker&&{state:S.worker.state,reason:S.worker.reason,outbox:S.worker.outbox},last_error:S.last_error},null,1))+'</pre>':''));
+      +'<div class="kc-actions">'+btn(S.manual_pause?'resume':'pause',ct(S.manual_pause?'btn.resume':'btn.pause'),{disabled:!S.participation})+btn('stop',ct('btn.stop'),{disabled:!S.link&&!S.participation})+btn('diag',ct('btn.diag'))+'</div>'+msg('diag'));
     h+='<div class="kc-grid">'+card(ct('limits'),slider('gpu_target_pct',ct('gpu'),ct('gpu.note'))+slider('cpu_target_pct',ct('cpu'),ct('cpu.note'))+slider('daily_hours',ct('hours'),'',p.extended_hours?24:12,1,'h')
       +chk('only_idle',ct('only_idle'))+chk('only_ac',ct('only_ac'))+chk('pause_on_games',ct('pause_on_games'))+chk('pause_on_local_ai',ct('pause_on_local_ai'))+chk('pause_on_fullscreen',ct('pause_on_fullscreen'))
       +'<details class="kc-adv"><summary>'+esc(ct('advanced'))+'</summary><label class="kc-field"><span>'+esc(ct('profile'))+'</span><select data-pol="profile">'+['gentle','custom','full'].map(x=>'<option value="'+x+'"'+(p.profile===x?' selected':'')+'>'+esc(ct('profile.'+x))+'</option>').join('')+'</select></label>'
@@ -254,16 +256,16 @@
       +'<label class="kc-field"><span>'+esc(ct('data.backend'))+'</span><select id="kcBackend">'+backends.map(b=>'<option'+(b===defB?' selected':'')+'>'+b+'</option>').join('')+'</select></label>'+btn('runtime',ct('data.check'),{primary:true})
       +(pr?(pr.backend_ok?'<p class="kc-msg">'+esc(ct('data.ok'))+'</p>':'<p class="kc-msg bad">'+esc(ct('data.fail',{e:pr.backend_error?.message||'?'}))+'</p>')+kv([['python',esc(pr.python)],pr.torch?['torch',esc(pr.torch+(pr.cuda?' · CUDA '+pr.cuda:''))]:null,pr.bitsandbytes?['bitsandbytes',esc(pr.bitsandbytes)]:null,pr.mlx?['mlx',esc(pr.mlx+(pr.mlx_vlm?' · mlx-vlm '+pr.mlx_vlm:''))]:null,pr.gpu?['GPU',esc(pr.gpu+(pr.memory_total_bytes?' · '+fmtB(pr.memory_total_bytes):''))]:null,pr.transformers?['transformers',esc(pr.transformers)]:null]):'')+msg('runtime'))
       +card(ct('data.model'),field('kcModelDir',ct('data.modelDir'),m?.model_dir||'',{browse:'folder',wide:true})
-        +'<label class="kc-field"><span>'+esc(ct('data.variant'))+'</span><select id="kcVariant">'+(S.profile.variants||[]).map(v=>'<option'+(m?.variant_id===v?' selected':'')+'>'+esc(v)+'</option>').join('')+'</select></label>'
+        +'<label class="kc-field"><span>'+esc(ct('data.variant'))+'</span><select id="kcVariant">'+(S.profile.runtime_variants||[]).map(v=>'<option'+(m?.variant_id===v?' selected':'')+'>'+esc(v)+'</option>').join('')+'</select></label>'
         +btn('model',ct('data.verify'),{primary:true,disabled:!rt?.python})
         +(m?kv([[ct('data.digest'),'<code>'+esc(short(m.files_digest))+'</code> · '+esc(m.files)+' files · '+esc(fmtB(m.total_bytes))],[ct('data.arch'),'<span class="badge'+(m.architecture_ok?' ok':'')+'">'+esc(ct(m.architecture_ok?'data.archOk':'data.archBad'))+'</span> '+esc([m.architecture?.model_type,m.architecture?.num_hidden_layers+' layers',m.architecture?.hidden_size].join(' · '))],
           m.pinned?[ct('data.pinned'),esc(m.pinned.source_repo)+' @ <code>'+esc(short(m.pinned.source_revision))+'</code>']:null,[ct('data.prov'),'<span class="badge'+(m.provenance==='verified'?' ok':'')+'">'+esc(ct(m.provenance==='verified'?'prov.verified':'prov.unverified'))+'</span>'+(m.provenance_check?' '+esc(m.provenance_check.mismatches.length+' mismatches'):'')]])
-          +'<div class="kc-actions">'+(m.pinned?btn('provenance',ct('data.checkHub')):'')+btn('preflight',ct('data.preflight'),{disabled:!m.architecture_ok})+'</div>':'')
+          +'<div class="kc-actions">'+(m.pinned?btn('provenance',ct('data.checkHub')):'')+'<select id="kcPreflightLength" aria-label="'+esc(ct('data.context'))+'"><option>256</option><option'+(pf?.max_length===512?' selected':'')+'>512</option></select>'+btn('preflight',ct('data.preflight'),{disabled:!m.architecture_ok})+'</div>':'')
         +(pf?(pf.ok?'<p class="kc-msg">'+esc(ct('data.preflightOk',{l:pf.model_load_s?.toFixed?.(1)??'?',s:pf.step_s?.toFixed?.(2)??'?'}))+((pf.peak_reserved_bytes||pf.mlx_peak_bytes)?' · peak '+esc(fmtB(pf.peak_reserved_bytes||pf.mlx_peak_bytes)):'')+'</p>':'<p class="kc-msg bad">'+esc(ct('data.preflightFail',{e:pf.error?.message||'?'}))+'</p>'):'')+msg('model'))+'</div>';
     const lg=S.legacy;
-    h+='<div class="kc-grid">'+card(ct('data.legacy'),field('kcLegacy',ct('lab.file'),'',{browse:'file',wide:true,placeholder:'experiment-v01.zip'})+btn('legacy',ct('data.legacyBtn'))
+    h+='<div class="kc-grid">'+card(ct('data.legacy'),field('kcLegacy','ZIP','',{browse:'file',wide:true,placeholder:'experiment-v01.zip'})+btn('legacy',ct('data.legacyBtn'))
         +(lg?'<p class="kc-msg'+(lg.verified_all?'':' bad')+'">'+esc(lg.verified_all?ct('data.legacyOk',{n:lg.aggregation?.length??0}):ct('data.legacyBad'))+'</p>'+(lg.notes?'<ul class="kc-facts">'+[].concat(lg.notes).slice(0,6).map(n=>'<li>'+esc(typeof n==='string'?n:JSON.stringify(n))+'</li>').join('')+'</ul>':''):'')+msg('legacy'))
-      +card(ct('data.verifyReport'),field('kcReport',ct('lab.file'),'',{browse:'file',wide:true,placeholder:'kvalah-compute-report-*.zip'})+btn('verify-report',ct('data.verifyBtn'))+msg('verify'))+'</div>';
+      +card(ct('data.verifyReport'),field('kcReport','ZIP','',{browse:'file',wide:true,placeholder:'kvalah-compute-report-*.zip'})+btn('verify-report',ct('data.verifyBtn'))+msg('verify'))+'</div>';
     h+='<p class="kc-note">'+esc(ct('data.privacy'))+'</p>';
     return h;
   }
@@ -300,7 +302,12 @@
     },
     pause:()=>run(()=>call('pause',{})),resume:()=>run(()=>call('resume',{})),
     stop:()=>{if(confirm(ct('confirm.stop')))run(async()=>{await call('participation',{enabled:false});return call('link/forget',{});});},
-    diag:()=>{lastResult.diag=!lastResult.diag;render(true);},
+    diag:()=>run(async()=>{
+      const report=await call('diagnostics');
+      const url=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:'application/json'}));
+      const a=document.createElement('a');a.href=url;a.download='kvalah-compute-diagnostics.json';a.click();
+      setTimeout(()=>URL.revokeObjectURL(url),5000);
+    },'diag'),
     'consent-revoke':()=>run(()=>call('consent/revoke',{})),
     pair:()=>run(async()=>{lastResult.pair=null;const r=await call('link/pair',{pairing:val('kcPairing'),alias:val('kcAlias')||undefined});delete form.kcPairing;return r;},'pair'),
     'link-refresh':()=>run(()=>call('link/refresh',{}),'pair'),
@@ -333,7 +340,7 @@
     runtime:()=>run(()=>call('runtime',{python:val('kcPython'),backend:val('kcBackend')}),'runtime'),
     model:()=>run(()=>call('model',{model_dir:val('kcModelDir'),variant_id:val('kcVariant')}),'model'),
     provenance:()=>run(()=>call('model/provenance',{}),'model'),
-    preflight:()=>run(()=>call('preflight',{}),'model'),
+    preflight:()=>run(()=>call('preflight',{max_length:Number(val('kcPreflightLength'))||256}),'model'),
     legacy:()=>run(async()=>{await call('legacy/import',{file:val('kcLegacy')});},'legacy'),
     'verify-report':()=>run(async()=>{const r=await call('verify-report',{file:val('kcReport')});note('verify',(r.ok?'OK':'FAIL')+' · '+(r.run_id||'')+' · rounds '+(r.committed_rounds??'?')+(r.problems?.length?' · '+r.problems.slice(0,5).join('; '):''),!r.ok);},'verify'),
     browse:async el=>{const [id,kind]=el.dataset.arg.split('|');if(!desktop())return;try{const f=kind==='folder'?await desktop().chooseFolder('other'):await desktop().chooseFile('any');if(f){body().querySelector('#'+id).value=f;form[id]=f;}}catch(e){toast(e.message);}}

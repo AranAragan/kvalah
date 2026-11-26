@@ -51,6 +51,43 @@ function submit(c,d,task,{bytes=makeUpdate(c,task),tokens=task.expected_supervis
 }
 const cfg=(o={})=>({preset:'smoke',name:'t',profile_id:T.id,variants:['mock'],dataset_id:'smoke@1',local_steps:2,rounds:2,...o});
 
+test('T12: distinct runs can reference the same initial and committed checkpoint bytes',async()=>{
+  const {c}=await setup(),device=enroll(c);
+  try{
+    const runs=['First','Second'].map(name=>c.createExperiment(cfg({name,rounds:1,quorum:{mode:'all',target:1}})));
+    const checkpoints=[];
+    for(const run of runs){
+      c.startExperiment(run.id);
+      assert.equal(c.latestCheckpoint(run.id).round_idx,0);
+      submit(c,device,claim(c,device).task);
+      const checkpoint=c.latestCheckpoint(run.id);
+      assert.equal(checkpoint.round_idx,1);
+      checkpoints.push(checkpoint.hash);
+    }
+    assert.equal(checkpoints[0],checkpoints[1]);
+  }finally{c.close();}
+});
+
+test('T16/T23: registry edits do not change an existing run and the event tail keeps the newest entries',async()=>{
+  const {c,now}=await setup(),device=enroll(c);
+  const digest='1'.repeat(64);
+  try{
+    c.registerVariant({profile_id:T.id,variant_id:'mock',files_digest:digest});
+    const experiment=c.createExperiment(cfg());
+    c.registerVariant({profile_id:T.id,variant_id:'mock',files_digest:'2'.repeat(64)});
+    c.startExperiment(experiment.id);
+    assert.equal(claim(c,device).task,null);
+    device.caps.variants[0].files_digest=digest;
+    assert.equal(claim(c,device).task.model_files_digest,digest);
+    const event=c.db.prepare("insert into events(ts,severity,code) values(?,'info',?)");
+    c.db.exec('begin');
+    for(let i=0;i<1010;i++)event.run(now(),'test.'+i);
+    c.db.exec('commit');
+    assert.equal(c.latestEvents(5).at(-1).code,'test.1009');
+    assert.equal(c.events(0,5).some(e=>e.code==='test.1009'),false);
+  }finally{c.close();}
+});
+
 test('D01–D04 dataset engine: validation, exact dedup, PII/secret filters, licence, group-aware split, masks',async()=>{
   const {rows,rejected}=parseJSONL(fs.readFileSync(FIXTURE,'utf8')+'\n{"id":"x"}\nnot json\n');
   assert.equal(rows.length,34);assert.deepEqual(rejected.map(r=>r.reason).sort(),['bad_messages','invalid_json']);

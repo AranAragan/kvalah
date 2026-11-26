@@ -22,8 +22,15 @@ export function startSidecar({python,threads=1,onEvent=()=>{},onLog=()=>{},extra
   const child=spawn(python,['-u','-m','kvalah_compute.sidecar'],{cwd:PY_ROOT,env:sidecarEnv(threads,extraEnv),stdio:['pipe','pipe','pipe'],windowsHide:true});
   try{os.setPriority(child.pid,os.constants.priority.PRIORITY_BELOW_NORMAL);}catch{}
   const waiters=new Map();let buf='',exited=null,seq=0;
-  const exitP=new Promise(r=>child.on('exit',(code,signal)=>{exited={code,signal};for(const [,w] of waiters)w.reject(Object.assign(Error('compute sidecar exited ('+(code??signal)+')'),{code:'SIDECAR_EXIT'}));waiters.clear();r(exited);}));
-  child.on('error',e=>{for(const [,w] of waiters)w.reject(e);waiters.clear();});
+  const exitP=new Promise(resolve=>child.once('close',(code,signal)=>{
+    exited={code,signal};
+    for(const [,w] of waiters)w.reject(Object.assign(Error('compute sidecar exited ('+(code??signal)+')'),{code:'SIDECAR_EXIT'}));
+    waiters.clear();
+    resolve(exited);
+  }));
+  function rejectPending(e){for(const [,w] of waiters)w.reject(e);waiters.clear();}
+  child.on('error',rejectPending);
+  child.stdin.on('error',rejectPending);
   child.stdout.setEncoding('utf8');
   child.stdout.on('data',d=>{buf+=d;let i;while((i=buf.indexOf('\n'))>=0){const line=buf.slice(0,i);buf=buf.slice(i+1);if(!line.trim())continue;let m;try{m=JSON.parse(line);}catch{onLog('non-JSON sidecar output dropped');continue;}
     if(m.id&&waiters.has(m.id)&&(m.type==='result'||m.type==='error')){const w=waiters.get(m.id);waiters.delete(m.id);m.type==='result'?w.resolve(m.data):w.reject(Object.assign(Error(m.message||'sidecar error'),{code:m.code||'SIDECAR_ERROR'}));}
