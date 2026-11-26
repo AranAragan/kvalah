@@ -5,6 +5,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.10.0-compute.3.dev.1] - 2026-11-26
+
+- Fixed central tokenization for MistralCommonBackend. Complete SFT conversations use finetuning mode and assistant targets are checked against serving-mode prefixes.
+- Added verified import of local MLX conversions, with separate records for verified official BF16 weights and the administrator's local conversion attestation.
+- Added dialogue-group checks across Train, Validation and Test, held-out evaluation of the final adapter, and continuation from a saved global checkpoint.
+- Existing installations reuse their Compute state, Python environments and local model files.
+
 ## [0.10.0-compute.2.dev.2] - 2026-11-26
 
 - Redesigned Compute with separate contribution and lab modes, participation presets, contextual status and locally translated errors.

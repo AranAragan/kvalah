@@ -12,6 +12,7 @@
     return value;
   };
   const friendly=code=>X[code]?tx(code):code&&D[lang()]['r.'+code]?ct('r.'+code):tx('errorDefault');
+  const trust=p=>tx(p==='locally_attested'?'trustLocal':p==='verified'?'trustReady':'trustUnknown');
   const reason=r=>r?(D[lang()]['r.'+r]?ct('r.'+r):String(r)):'';
   const short=h=>h?String(h).slice(0,12):ct('none');
   const fmtMs=ms=>{if(ms==null)return ct('none');const s=Math.round(ms/1000);return s<60?s+' s':s<3600?Math.floor(s/60)+' min '+(s%60)+' s':Math.floor(s/3600)+' h '+Math.floor(s%3600/60)+' min';};
@@ -293,11 +294,11 @@
     return h;
   }
   // ---------- Lab ----------
-  function expertExperiment(){
+  function expertExperiment(source){
     if(!S.lab?.info?.running&&!S.lab?.experiments?.length)return card('','<p>'+esc(ct('lab.need'))+'</p>'+btn('goto',ct('tab.devices'),{arg:'devices'}));
-    const l=S.lab,prof=S.profile.id;
+    const l=S.lab,prof=S.profile.id,prior=source?.config;
     const variants=l.variants.filter(v=>v.profile_id===prof);
-    let h='<div class="kc-grid">'+card(ct('lab.models'),(variants.length?'<ul class="dev-list">'+variants.map(v=>'<li><span><strong>'+esc(v.variant_id)+'</strong><small>'+esc(short(v.files_digest))+'</small></span><span class="badge'+(v.provenance==='verified'?' ok':'')+'">'+esc(ct(v.provenance==='verified'?'prov.verified':'prov.unverified'))+'</span></li>').join('')+'</ul>':'<p class="kc-note">'+esc(ct('lab.noModels'))+'</p>')
+    let h='<div class="kc-grid">'+card(ct('lab.models'),(variants.length?'<ul class="dev-list">'+variants.map(v=>'<li><span><strong>'+esc(v.variant_id)+'</strong><small>'+esc(short(v.files_digest))+'</small></span><span class="badge'+(v.provenance!=='unverified'?' ok':'')+'">'+esc(trust(v.provenance))+'</span></li>').join('')+'</ul>':'<p class="kc-note">'+esc(ct('lab.noModels'))+'</p>')
       +btn('register-model',ct('lab.registerModel'),{disabled:!S.model?.architecture_ok})+reportedVariants(variants)+msg('model'))
       +card(ct('lab.datasets'),(l.datasets.length?'<ul class="dev-list">'+l.datasets.map(d=>'<li><span><strong>'+esc(d.id)+'</strong><small>'+esc(Object.entries(d.split_counts||{}).map(([k,v])=>k+': '+v).join(' · '))+' · '+esc(d.license||'')+' · max '+esc(d.max_length)+'</small></span>'+(d.synthetic?'<span class="badge">'+esc(ct('lab.synthetic'))+'</span>':'')+'</li>').join('')+'</ul>':'<p class="kc-note">'+esc(ct('lab.noDatasets'))+'</p>')
         +'<details><summary>'+esc(ct('lab.import'))+'</summary>'+field('kcDsFile',ct('lab.file'),'',{browse:'file',wide:true})+'<div class="kc-row">'+field('kcDsId',ct('lab.dsid'),'')+field('kcDsRev',ct('lab.rev'),'1')+'</div>'+btn('import-dataset',ct('lab.import'))+'</details>'
@@ -306,18 +307,17 @@
     const vlist=pv.length?pv:variants.map(v=>v.variant_id);
     h+=card(ct('lab.new'),'<p class="kc-note">'+esc(ct('lab.new.note'))+'</p><div class="kc-form">'
       +field('kcName',ct('lab.name'),'',{wide:true})
+      +(source?'<input type="hidden" id="kcInitialCheckpoint" value="'+esc(source.id+'|'+source.checkpoint.sha256)+'">'+plain(tx('continuesFrom',{run:source.run_id,round:source.checkpoint.round,hash:short(source.checkpoint.sha256)}),'kc-caption'):'')
       +'<label class="kc-field"><span>'+esc(ct('lab.preset'))+'</span><select id="kcPreset">'+['smoke','pilot','research'].map(x=>'<option value="'+x+'">'+esc(ct('preset.'+x))+'</option>').join('')+'</select></label>'
-      +'<label class="kc-field"><span>'+esc(ct('lab.dataset'))+'</span><select id="kcDataset">'+l.datasets.map(d=>'<option>'+esc(d.id)+'</option>').join('')+'</select></label>'
-      +'<fieldset class="kc-field wide"><legend>'+esc(ct('lab.variants'))+'</legend>'+vlist.map(v=>'<label class="kc-check"><input type="checkbox" class="kcVar" id="kcVar_'+esc(v)+'" value="'+esc(v)+'"'+(variants.find(x=>x.variant_id===v)?' checked':'')+'> '+esc(v)+'</label>').join('')+'</fieldset>'
+      +'<label class="kc-field"><span>'+esc(ct('lab.dataset'))+'</span><select id="kcDataset">'+l.datasets.map(d=>'<option'+(prior?.dataset_id===d.id?' selected':'')+'>'+esc(d.id)+'</option>').join('')+'</select></label>'
+      +'<fieldset class="kc-field wide"><legend>'+esc(ct('lab.variants'))+'</legend>'+vlist.map(v=>'<label class="kc-check"><input type="checkbox" class="kcVar" id="kcVar_'+esc(v)+'" value="'+esc(v)+'"'+((prior?prior.variants.includes(v):variants.some(x=>x.variant_id===v))?' checked':'')+'> '+esc(v)+'</label>').join('')+'</fieldset>'
       +field('kcRounds',ct('lab.rounds'),'',{type:'number',placeholder:'2'})+field('kcSteps',ct('lab.steps'),'',{type:'number',placeholder:'3'})
       +'<label class="kc-field"><span>'+esc(ct('lab.optimizer'))+'</span><select id="kcOpt"><option>sgd</option><option>adamw</option></select></label>'+field('kcLr',ct('lab.lr'),'',{placeholder:'0.001'})
-      +'<label class="kc-field"><span>'+esc(ct('lab.maxlen'))+'</span><select id="kcMaxLen"><option>256</option><option value="512"'+(S.preflight?.max_length!==512?' disabled':'')+'>512</option></select></label>'
+      +'<label class="kc-field"><span>'+esc(ct('lab.maxlen'))+'</span><select id="kcMaxLen"><option>256</option><option value="512"'+(S.preflight?.max_length!==512?' disabled':'')+(prior?.max_length===512?' selected':'')+'>512</option></select></label>'
       +'<label class="kc-field"><span>'+esc(ct('lab.quorum'))+'</span><select id="kcQMode"><option value="">'+esc(ct('lab.preset'))+'</option><option value="all">'+esc(ct('quorum.all'))+'</option><option value="fault_tolerant">'+esc(ct('quorum.ft'))+'</option></select></label>'
-      +field('kcQMin',ct('lab.qmin'),'',{type:'number'})+field('kcQTarget',ct('lab.qtarget'),'',{type:'number',placeholder:'3'})+field('kcDeadline',ct('lab.deadline'),'',{type:'number',placeholder:'600'})+field('kcSeed',ct('lab.seed'),'',{type:'number',placeholder:'20261126'})+field('kcEvalEvery',ct('lab.evalEvery'),'',{type:'number'})
+      +field('kcQMin',ct('lab.qmin'),'',{type:'number'})+field('kcQTarget',ct('lab.qtarget'),'',{type:'number',placeholder:'3'})+field('kcDeadline',ct('lab.deadline'),'',{type:'number',placeholder:'600'})+field('kcSeed',ct('lab.seed'),prior?.seed??'',{type:'number',placeholder:'20261126'})+field('kcEvalEvery',ct('lab.evalEvery'),'',{type:'number'})
       +'<label class="kc-check wide"><input type="checkbox" id="kcResearch"> '+esc(ct('lab.research'))+'</label></div>'
-      +'<div class="kc-actions">'+btn('dry-run',ct('lab.dryRun'))+btn('create',ct('lab.create'),{primary:true,disabled:!plan})+'</div>'+msg('plan')
-      +(plan?'<p class="kc-note">'+esc(ct('lab.plan',{tasks:plan.tasks,rows:plan.rows_per_task,tokens:plan.supervised_tokens_total,params:plan.trainable_params.toLocaleString(lang()),targets:plan.targets,r:plan.rank,a:plan.alpha}))+'</p><p class="kc-note"><code>config '+esc(short(plan.config_hash))+' · frozen A '+esc(short(plan.frozen_a_hash))+'</code></p>'
-        +(!plan.research_pass_possible?'<p class="kc-msg bad">'+esc(ct('lab.planWarn',{why:[plan.dataset.synthetic?ct('lab.synthetic'):null,plan.model_variants.some(v=>v.provenance!=='verified')?ct('lab.unverified'):null].filter(Boolean).join(', ')}))+'</p>':''):''));
+      +'<div class="kc-actions">'+btn('dry-run',ct('lab.dryRun'))+btn('create',ct('lab.create'),{primary:true,disabled:!plan})+'</div><div data-plan-summary></div>');
     h+=card(ct('lab.experiments'),L('exps',expList));
     return h;
   }
@@ -340,6 +340,7 @@
       if(e.state==='RUNNING')a.push(btn('exp-pause',ct('exp.pause'),{arg:e.id}),btn('exp-finish',ct('exp.finish'),{arg:e.id}));
       if(['PAUSED','BLOCKED'].includes(e.state))a.push(btn('exp-resume',ct('exp.resume'),{arg:e.id}));
       if(!['COMPLETED','CANCELLED'].includes(e.state))a.push(btn('exp-cancel',ct('exp.cancel'),{arg:e.id}));
+      if(e.checkpoint)a.push(btn('exp-continue',tx('continueAdapter'),{arg:e.id}));
       a.push(btn('exp-report',ct('exp.report'),{arg:e.id}),btn('exp-peft',ct('exp.peft'),{arg:e.id,disabled:!e.committed_rounds}),btn('exp-monitor',ct('tab.monitor'),{arg:e.id}));
       return '<li><span><strong>'+esc(e.name)+'</strong> <span class="badge'+(e.state==='COMPLETED'?' ok':'')+'">'+esc(stateText(e.state))+'</span><small>'+esc(e.run_id)+' · '+esc(e.config.preset==='smoke'?tx('smoke'):ct('preset.'+e.config.preset))+' · '+esc(e.committed_rounds)+'/'+esc(e.target_rounds)+' · '+esc(when(e.created_at))+'</small></span><span class="kc-actions">'+a.join('')+'</span></li>';
     }).join('')+'</ul><label class="kc-check"><input type="checkbox" id="kcWeights"> '+esc(ct('exp.weights'))+'</label>'+msg('exp');
@@ -382,9 +383,16 @@
     const picker=ex.length>1?'<label class="kc-field"><span>'+esc(ct('mon.choose'))+'</span><select id="kcExpSel" data-act-change="select-exp">'+
       ex.map(x=>'<option value="'+esc(x.id)+'"'+(x.id===selExp?' selected':'')+'>'+esc(x.name+' · '+stateText(x.state))+'</option>').join('')+'</select></label>':'';
     const evals=Object.entries(e.eval?.rounds||{});
+    const metrics=v=>'NLL '+v.nll.toFixed(4)+' · PPL '+v.perplexity.toFixed(2)+' · '+(v.token_accuracy*100).toFixed(1)+'% · '+v.tokens;
     const summary=evals.map(([round,v])=>'<div class="kc-device-row"><div class="kc-device-summary"><strong>'+esc(ct('col.round')+' '+round)+'</strong>'+
-      '<small>'+esc(v.backend||'—')+' · '+esc(v.provenance==='verified'?tx('trustReady'):tx('trustUnknown'))+'</small></div>'+
-      (v.status==='DONE'?'<strong>'+esc('NLL '+v.nll.toFixed(4)+' · PPL '+v.perplexity.toFixed(2)+' · '+(v.token_accuracy*100).toFixed(1)+'% · '+v.tokens)+'</strong>':pill(tx('noMeasure'),'warn'))+'</div>').join('');
+      '<small>'+esc(v.backend||'—')+' · '+esc(trust(v.provenance))+'</small></div>'+
+      (v.status==='DONE'?'<strong>'+esc(metrics(v))+'</strong>':pill(tx('noMeasure'),'warn'))+'</div>').join('');
+    const test=e.eval?.test, dataset=S.lab?.datasets.find(d=>d.id===e.config.dataset_id),testReady=!!(dataset?.group_audited&&dataset.split_counts?.test);
+    const testPanel=finished?panel(tx('testEvaluation'),test?.status==='DONE'?
+      plain(metrics(test))+plain([test.variant_id,trust(test.provenance),tx('testCheckpoint',{round:test.round,hash:short(test.checkpoint)})].filter(Boolean).join(' · '),'kc-caption'):
+      plain(tx(testReady?'testEvaluationInfo':'testNeedsAudit'))+
+      (test?notice(tx('testNotRun'),'warn'):'')+
+      (testReady?row(btn('exp-test',tx(e.test_pending?'checking':'runTest'),{arg:e.id,disabled:e.test_pending})):'')):'';
     const participants=finished?(committed.at(-1)?.accepted||[]).map(item=>({device_id:item.device_id,state:'accepted'})):(r?.slots||[]);
     const slots=participants.map(item=>{
       const device=S.lab?.devices.find(d=>d.id===item.device_id);
@@ -395,15 +403,18 @@
     const progress=finished?[[tx('acceptedUpdates'),committed.reduce((n,x)=>n+(x.accepted?.length||0),0)]]:
       [[ct('mon.accepted'),r?r.accepted+' / '+r.target:'—'],[ct('mon.round'),r?(r.idx+1)+' / '+e.target_rounds:'—'],[ct('mon.deadline'),e.state==='RUNNING'?fmtMs(r?.remaining_ms):'—']];
     return '<div class="kc-stack">'+panel('',picker+pill(stateText(e.state),finished?'good':e.state==='BLOCKED'?'warn':'')+
-      h2(e.name)+plain(e.run_id,'kc-caption')+scores([[tx('completedRounds'),e.committed_rounds+' / '+e.target_rounds],...progress])+
+      h2(e.name)+plain(e.run_id,'kc-caption')+
+      (e.config.initial_checkpoint?plain(tx('continuesFrom',{run:e.config.initial_checkpoint.experiment_id,round:e.config.initial_checkpoint.source_round,hash:short(e.config.initial_checkpoint.sha256)}),'kc-caption'):'')+
+      scores([[tx('completedRounds'),e.committed_rounds+' / '+e.target_rounds],...progress])+
       '<progress class="kc-monitor-progress" aria-label="'+esc(tx('completedRounds'))+'" max="'+e.target_rounds+'" value="'+e.committed_rounds+'"></progress>'+
       (e.blocker?.reason?notice(friendly(e.blocker.reason),'warn'):'')+
       row(btn('lab-nav',tx('experiments'),{arg:'experiments'})+btn('rounds-json',ct('mon.exportJson'))+
         (e.state==='RUNNING'?btn('exp-pause',ct('exp.pause'),{arg:e.id})+btn('exp-finish',ct('exp.finish'),{arg:e.id})+btn('exp-cancel',ct('exp.cancel'),{arg:e.id}):'')+
         (['PAUSED','BLOCKED'].includes(e.state)?btn('exp-resume',ct('exp.resume'),{arg:e.id,primary:true}):'')+
-        (e.state==='COMPLETED'?btn('exp-report',ct('exp.report'),{arg:e.id,primary:true})+btn('exp-peft',ct('exp.peft'),{arg:e.id}):''))+
+        (e.state==='COMPLETED'?btn('exp-report',ct('exp.report'),{arg:e.id,primary:true})+btn('exp-peft',ct('exp.peft'),{arg:e.id}):'')+
+        (e.checkpoint?btn('exp-continue',tx('continueAdapter'),{arg:e.id}):''))+
       (e.state==='COMPLETED'?'<label class="kc-check"><input id="kcWeights" type="checkbox">'+esc(ct('exp.weights'))+'</label>':'')+msg('exp'),'kc-hero')+
-      '<div class="kc-experience-grid">'+panel(tx(finished?'lastRoundDevices':'devices'),slots||plain(tx('noAssignments')))+panel(tx('evaluation'),summary||plain(tx('noMeasure')))+'</div>'+
+      '<div class="kc-experience-grid">'+panel(tx(finished?'lastRoundDevices':'devices'),slots||plain(tx('noAssignments')))+panel(tx('validationEvaluation'),summary||plain(tx('noMeasure')))+testPanel+'</div>'+
       (failed.length?panel(tx('blocked'),failed.map(f=>plain(ct('col.round')+' '+(f.idx+1)+' · '+friendly(f.blocker?.reason))).join('')):'')+
       panel(tx('technicalDetails'),'<details data-expand="round-ledger"><summary>'+esc(ct('mon.table'))+'</summary>'+monitorLive()+'</details>'+
         '<details data-expand="round-events"><summary>'+esc(ct('mon.events'))+'</summary>'+eventsBlock()+'</details>')+'</div>';
@@ -479,10 +490,12 @@
   function labModels(){
     const l=S.lab,variants=l?.variants||[];
     return '<div class="kc-experience-grid"><div class="kc-stack">'+panel(tx('runtimeModels'),(variants.length?variants.map(v=>
-      '<div class="kc-device-row"><span class="kc-device-icon" aria-hidden="true">◈</span><div class="kc-device-summary"><strong>'+esc(v.variant_id)+'</strong></div>'+
-      pill(tx(v.provenance==='verified'?'trustReady':'trustUnknown'),v.provenance==='verified'?'good':'warn')+'</div>').join(''):plain(tx('autoModels')))+
-      (S.feature_enabled?row(btn('expert-open',tx('expert'))):'')+msg('model'))+
-      panel(tx('bundleData'),plain(tx('autoModels'))+(l?.datasets||[]).map(d=>'<div class="kc-device-row"><strong>'+esc(d.id)+'</strong></div>').join(''))+
+      '<div class="kc-device-row"><span class="kc-device-icon" aria-hidden="true">◈</span><div class="kc-device-summary"><strong>'+esc(v.variant_id)+'</strong>'+
+      (v.official_source?'<small>'+esc(tx('officialSource',{repo:v.official_source.repo,revision:short(v.official_source.revision)}))+'</small>':'')+'</div>'+
+      pill(trust(v.provenance),v.provenance==='unverified'?'warn':'good')+'</div>').join(''):plain(tx('autoModels')))+
+      (S.feature_enabled?row(btn('expert-open',tx('expert'))+(S.profile.variants.includes('mlx-4bit')?btn('show-mlx-import',tx('importMlx')):'')):'')+msg('model'))+
+      panel(tx('bundleData'),plain(tx('autoModels'))+(l?.datasets||[]).map(d=>'<div class="kc-device-row"><div class="kc-device-summary"><strong>'+esc(d.id)+'</strong><small>'+esc(tx('splitCounts',d.split_counts||{}))+'</small></div>'+
+        pill(tx(d.group_audited?'groupsAudited':'groupsLegacy'),d.group_audited?'good':'warn')+'</div>').join(''))+
       '</div><div class="kc-stack">'+(onlineOptions(l))+'</div></div>';
   }
   function onlineOptions(l){
@@ -532,11 +545,12 @@
   function showExpert(){
     openDialog('expert',tx('expert'),expertData()+row(btn('feature-off',ct('feature.disable'))));
   }
-  function showExperiment(){
-    tab='experiments';render(true);
-    openDialog('new-experiment',tx('newExperiment'),plain(tx('smokeDescription'))+row(btn('show-smoke',tx('smoke'),{primary:true})));
-    dialog().querySelector('[data-dialog-content]').insertAdjacentHTML('beforeend','<details><summary>'+esc(tx('customExperiment'))+'</summary>'+
-      expertExperiment()+'</details>');
+  function showExperiment(source){
+    plan=null;planInput=null;lastResult.plan=null;
+    if(!source){tab='experiments';render(true);}
+    const smokeIntro=source?'':plain(tx('smokeDescription'))+row(btn('show-smoke',tx('smoke'),{primary:true}));
+    openDialog('new-experiment',tx(source?'continueAdapter':'newExperiment'),smokeIntro+'<details'+(source?' open':'')+'><summary>'+
+      esc(tx('customExperiment'))+'</summary>'+expertExperiment(source)+'</details>');
   }
   // ---------- actions ----------
   const fieldElement=id=>(dialog().open?dialog().querySelector('#'+id):null)||body().querySelector('#'+id);
@@ -561,7 +575,9 @@
         const submit=dialog().querySelector('[data-act=create]');
         if(submit)submit.disabled=!plan;
         const target=dialog().querySelector('[data-plan-summary]');
-        if(target)target.innerHTML=plan?notice(ct('lab.plan',{tasks:plan.tasks,rows:plan.rows_per_task,tokens:plan.supervised_tokens_total,params:plan.trainable_params,targets:plan.targets,r:plan.rank,a:plan.alpha})):msg('plan');
+        if(target)target.innerHTML=plan?notice(ct('lab.plan',{tasks:plan.tasks,rows:plan.rows_per_task,tokens:plan.supervised_tokens_total,params:plan.trainable_params,targets:plan.targets,r:plan.rank,a:plan.alpha}))+
+          plain('config '+short(plan.config_hash)+' · frozen A '+short(plan.frozen_a_hash),'kc-caption')+
+          (!plan.research_pass_possible?notice(ct('lab.planWarn',{why:[plan.dataset.synthetic?ct('lab.synthetic'):null,plan.model_variants.some(v=>!v.research_eligible)?ct('lab.unverified'):null].filter(Boolean).join(', ')}),'warn'):''):msg('plan');
       }
     }
   }
@@ -572,6 +588,8 @@
     const lr=val('kcLr');cfg.optimizer={name:val('kcOpt')||'sgd',...(lr?{lr:Number(lr)}:{})};
     if(qm)cfg.quorum={mode:qm,target:numv('kcQTarget')??3,min:numv('kcQMin')};
     const ee=numv('kcEvalEvery');if(ee!==undefined)cfg.eval={every:ee};
+    const initial=val('kcInitialCheckpoint');
+    if(initial){const [experiment_id,sha256]=initial.split('|');cfg.initial_checkpoint={experiment_id,sha256};}
     return cfg;
   }
   const acts={
@@ -614,7 +632,7 @@
     stop:()=>{if(confirm(tx('confirmStop')))run(()=>call('participation',{enabled:false}));},
     'expert-open':showExpert,
     'auto-lab':()=>run(async()=>{await rememberFeature();return call('lab/auto-start',{});},'lab'),
-    'new-experiment':showExperiment,
+    'new-experiment':()=>showExperiment(),
     'show-smoke':showSmoke,
     'smoke-start':()=>run(async()=>{
       const id=requestId,accept=dialog().querySelector('#kcSmokeUnverified').checked;
@@ -654,6 +672,21 @@
     'dev-drain':el=>{const [id,on]=el.dataset.arg.split('|');run(()=>call('lab/drain',{id,on:on==='true'}),'lab');},
     'dev-rename':el=>{const a=prompt(ct('dev.renamePrompt'));if(a)run(()=>call('lab/rename',{id:el.dataset.arg,alias:a}),'lab');},
     'register-model':()=>run(async()=>{await call('lab/register-model',{});note('model',ct('saved'));},'model'),
+    'show-mlx-import':()=>openDialog('mlx-import',tx('importMlx'),plain(tx('importMlxInfo'))+
+      field('kcMlxManifest',tx('mlxManifest'),'',{browse:'file',wide:true})+field('kcMlxSource',tx('mlxSource'),'',{browse:'folder',wide:true})+
+      field('kcMlxOutput',tx('mlxOutput'),S.model?.variant_id==='mlx-4bit'?S.model.model_dir:'',{browse:'folder',wide:true})+
+      '<label class="kc-check"><input type="checkbox" id="kcMlxReviewed">'+esc(tx('mlxReviewed'))+'</label>'+
+      '<p data-mlx-progress role="status"></p><p data-dialog-error role="alert"></p>',
+      btn('close-dialog',tx('cancel'))+btn('import-mlx',tx('verifyMlx'),{primary:true})),
+    'import-mlx':()=>run(async()=>{
+      const progress=dialog().querySelector('[data-mlx-progress]'),button=dialog().querySelector('[data-act=import-mlx]');
+      progress.textContent=tx('verifyingMlx');button.disabled=true;
+      try{
+        const result=await call('lab/import-mlx-conversion',{manifest_file:val('kcMlxManifest'),source_dir:val('kcMlxSource'),
+          output_dir:val('kcMlxOutput'),reviewed:fieldElement('kcMlxReviewed').checked});
+        clearDialog();note('model',tx('mlxVerified',{hash:short(result.files_digest)}));
+      }finally{progress.textContent='';button.disabled=false;}
+    },'model'),
     'register-device-model':el=>{const [device_id,variant_id]=el.dataset.arg.split('|');run(async()=>{await call('lab/register-model',{device_id,variant_id});note('model',ct('saved'));},'model');},
     'import-fixture':()=>run(async()=>{const r=await call('lab/import-dataset',{fixture:true});note('dataset',ct('saved')+': '+(r.id||r.dataset_id||''));},'dataset'),
     'import-dataset':()=>run(async()=>{const r=await call('lab/import-dataset',{file:val('kcDsFile'),dataset_id:val('kcDsId'),revision:val('kcDsRev')||'1'});note('dataset',ct('saved')+': '+(r.id||r.dataset_id||''));},'dataset'),
@@ -664,6 +697,8 @@
     'exp-resume':el=>run(()=>call('lab/experiment/resume',{id:el.dataset.arg}),'exp'),'exp-finish':el=>run(()=>call('lab/experiment/finish',{id:el.dataset.arg}),'exp'),
     'exp-cancel':el=>{if(confirm(ct('exp.confirmCancel')))run(()=>call('lab/experiment/cancel',{id:el.dataset.arg}),'exp');},
     'exp-monitor':el=>{selExp=el.dataset.arg;tab='monitor';refresh(true);},
+    'exp-continue':el=>{const e=S.lab?.experiments.find(x=>x.id===el.dataset.arg);if(e?.checkpoint)showExperiment(e);},
+    'exp-test':el=>run(()=>call('lab/experiment/evaluate-test',{id:el.dataset.arg}),'exp'),
     'exp-report':el=>{const w=body().querySelector('#kcWeights')?.checked===true;pickDir().then(d=>{d=d||prompt(ct('browse'));if(d)run(async()=>{const r=await call('lab/report',{experiment_id:el.dataset.arg,dir:d,include_weights:w});note('exp',ct('exp.done',{p:r.path}));},'exp');});},
     'exp-peft':el=>{pickDir().then(d=>{d=d||prompt(ct('browse'));if(d)run(async()=>{const r=await call('lab/export-peft',{experiment_id:el.dataset.arg,dir:d});note('exp',ct('exp.done',{p:r.out_dir||r.path||d}));},'exp');});},
     'select-exp':el=>{selExp=el.value;refresh(true);},

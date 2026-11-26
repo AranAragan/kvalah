@@ -33,6 +33,8 @@ class MLXBackend:
         import mlx.nn as nn
         with open(os.path.join(model_dir, "config.json"), encoding="utf8") as f:
             cfg = json.load(f)
+        if cfg.get("model_file") or cfg.get("auto_map") or (cfg.get("text_config") or {}).get("ple_storage"):
+            raise SidecarError("MODEL_INVALID", "custom MLX model loading is disabled")
         if cfg.get("model_type") == "mistral3":
             # load_model takes a local Path only (no hub lookup, no processor); offline env is also enforced.
             from pathlib import Path

@@ -18,6 +18,7 @@ import {createCoordinatorService,lanAddresses,DEFAULT_PORT} from './coordinator/
 import {getProfile,listProfiles,testMode} from './protocol/schema.mjs';
 import {fail,ComputeError} from './protocol/errors.mjs';
 import {PINNED} from './registry.mjs';
+import {researchProvenance} from './mlx-conversion.mjs';
 import {importLegacy} from './legacy.mjs';
 import {verifyReport} from './report.mjs';
 import {createSetup,describeHardware,localCandidates,participationProfiles} from './onboarding.mjs';
@@ -340,7 +341,7 @@ export function createController({dir,secretBox=fileSecretBox,startSidecar=rawSi
     service??=createCoordinatorService({dir:path.join(dir,'coordinator'),startSidecar:lockedSidecar,log:m=>log('[coordinator] '+m),
       evaluator:()=>st.runtime?.probe?.backend_ok&&st.model?.architecture_ok?{python:st.runtime.python,backend:st.runtime.backend,model_dir:st.model.model_dir,variant_id:st.model.variant_id,files_digest:st.model.files_digest,
         threads:gov.cpuThreads(os.availableParallelism?.()||2),extraEnv:testMode()?{KVALAH_COMPUTE_TEST:'1'}:{}}:null,
-      canRunHeavy:()=>gov.decide({phase:'preflight',localAction:true})});
+      canRunHeavy:(phase='preflight')=>gov.decide({phase,localAction:true})});
     return service;
   }
   const hasLab=()=>!!service||fs.existsSync(path.join(dir,'coordinator','db','coordinator.sqlite'));
@@ -373,7 +374,11 @@ export function createController({dir,secretBox=fileSecretBox,startSidecar=rawSi
   function labView(){
     if(!hasLab())return null;
     const s=svc(),c=s.coord;
-    return {info:s.info(),devices:c.listDevices(),experiments:c.listExperiments().slice(0,20),datasets:c.listDatasets(),variants:c.variants().map(v=>({profile_id:v.profile_id,variant_id:v.variant_id,files_digest:v.files_digest,provenance:v.provenance,pinned:v.manifest?.pinned||null})),
+    return {info:s.info(),devices:c.listDevices(),experiments:c.listExperiments().slice(0,20),datasets:c.listDatasets(),variants:c.variants().map(v=>{
+      const proof=v.manifest?.local_conversion;
+      return {profile_id:v.profile_id,variant_id:v.variant_id,files_digest:v.files_digest,provenance:v.provenance,pinned:v.manifest?.pinned||null,
+        official_source:proof?{repo:proof.source.repo,revision:proof.source.revision}:null};
+    }),
       self_device:identity?.device_id||null,smoke:smokeReadiness()};
   }
   const smokeRequests=new Map();
@@ -393,7 +398,7 @@ export function createController({dir,secretBox=fileSecretBox,startSidecar=rawSi
       else if(!device.status?.eligible)reason=device.status?.blocking_reason||'waiting_heartbeat';
       else if(!variant?.files_digest||reg?.files_digest&&reg.files_digest!==variant.files_digest)reason='model_mismatch';
       return {id:device.id,alias:device.alias,online:device.online,authorization:device.state,reason,
-        variant:variant?.variant_id,digest:variant?.files_digest,verified:reg?.provenance==='verified'};
+        variant:variant?.variant_id,digest:variant?.files_digest,verified:!!reg&&researchProvenance(reg)};
     });
     const selected=Array.isArray(ids)?ids:all.filter(d=>!d.reason).slice(0,3).map(d=>d.id);
     const selectedDevices=selected.map(id=>all.find(d=>d.id===id)).filter(Boolean);
@@ -455,6 +460,7 @@ export function createController({dir,secretBox=fileSecretBox,startSidecar=rawSi
       case 'revoke':return c.revokeDevice(String(b.id),'admin');
       case 'drain':return c.drainDevice(String(b.id),b.on!==false);
       case 'rename':return c.renameDevice(String(b.id),b.alias);
+      case 'import-mlx-conversion':sensorsOn();return s.importMlxConversion({...b,profile_id:st.profile_id});
       case 'register-model':{
         if(b.device_id){
           // A variant this coordinator cannot verify locally (e.g. the Mac's MLX folder): register the files digest the
@@ -477,6 +483,7 @@ export function createController({dir,secretBox=fileSecretBox,startSidecar=rawSi
       case 'experiment/resume':return c.resumeExperiment(String(b.id));
       case 'experiment/cancel':return c.cancelExperiment(String(b.id));
       case 'experiment/finish':return c.finishAfterRound(String(b.id));
+      case 'experiment/evaluate-test':sensorsOn();return c.evaluateTest(String(b.id));
       case 'experiment/status':return {status:c.status(String(b.id)),rounds:c.rounds(String(b.id))};
       case 'events':return b.tail===true?c.latestEvents(200):c.events(Number(b.after)||0,200);
       case 'report':{
@@ -494,9 +501,9 @@ export function createController({dir,secretBox=fileSecretBox,startSidecar=rawSi
           const out=path.join(b.dir,`kvalah-peft-${e.run_id}-r${ck.round_idx}`);
           const sc=startSidecar({python:st.runtime.python,threads:1,extraEnv:testMode()?{KVALAH_COMPUTE_TEST:'1'}:{}});
           try{
-            const v=c.variants().find(x=>x.profile_id===e.config.profile_id)||{};
+            const v=e.model_snapshot?.find(x=>x.manifest?.local_conversion||x.manifest?.pinned)||{};
             return await sc.call('export_peft',{adapter_path:path.join(tmp,'adapter.safetensors'),out_dir:out,profile:getProfile(e.config.profile_id),
-              meta:{checkpoint_sha256:ck.hash,experiment_id:e.id,round:ck.round_idx,schema_hash:e.config.schema_hash||null,source_revision:v.manifest?.pinned?.source_revision||null}}).promise;
+              meta:{checkpoint_sha256:ck.hash,experiment_id:e.id,round:ck.round_idx,schema_hash:e.config.schema_hash||null,source_revision:v.manifest?.local_conversion?.source.revision||v.manifest?.pinned?.source_revision||null}}).promise;
           }finally{await sc.stop(5000).catch(()=>sc.kill());}
         }finally{fs.rmSync(tmp,{recursive:true,force:true});}
       }

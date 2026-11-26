@@ -264,9 +264,14 @@ def evaluate(msg):
     wait_permit(cid, 0)
     b.load(_safe_dir(msg["model_dir"]) if msg.get("model_dir") else "", t)
     b.set_adapter(ad)
-    wait_permit(cid, 1)
-    r = b.evaluate(rows)
-    b.release()
+    def guarded_rows():
+        for i, row in enumerate(rows, 1):
+            wait_permit(cid, i)
+            yield row
+    try:
+        r = b.evaluate(guarded_rows())
+    finally:
+        b.release()
     n = max(1, r["tokens"])
     return {"nll": r["nll_sum"] / n, "perplexity": float(np.exp(r["nll_sum"] / n)), "tokens": r["tokens"], "token_accuracy": r["correct"] / n, "rows": len(rows)}
 

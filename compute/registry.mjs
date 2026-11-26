@@ -17,10 +17,12 @@ function getJSON(url){
     const u=new URL(url);if(u.hostname!=='huggingface.co'||u.protocol!=='https:')return reject(Error('only https://huggingface.co is allowed'));
     https.get(u,{headers:{'user-agent':'kvalah-compute/0.2'},timeout:20000},res=>{
       if(res.statusCode!==200){res.resume();return reject(Error('Hugging Face API returned HTTP '+res.statusCode));}
-      const c=[];let n=0;res.on('data',d=>{n+=d.length;if(n>8e6)res.destroy(Error('response too large'));else c.push(d);});res.on('end',()=>{try{resolve(JSON.parse(Buffer.concat(c)));}catch(e){reject(e);}});
+      const c=[];let n=0;res.on('error',reject);res.on('aborted',()=>reject(Error('incomplete Hugging Face response')));
+      res.on('data',d=>{n+=d.length;if(n>8e6)res.destroy(Error('response too large'));else c.push(d);});res.on('end',()=>{try{resolve(JSON.parse(Buffer.concat(c)));}catch(e){reject(e);}});
     }).on('error',reject).on('timeout',function(){this.destroy(Error('timeout'));});
   });
 }
+export function officialMlxSource(){return getJSON('https://huggingface.co/api/models/'+PINNED['ministral3b-ffa-r8-v1']['cuda-nf4'].source_repo+'/revision/'+PINNED['ministral3b-ffa-r8-v1']['cuda-nf4'].source_revision+'?blobs=true');}
 const gitBlobSha1=file=>{const b=fs.readFileSync(file);return createHash('sha1').update('blob '+b.length+'\0').update(b).digest('hex');};
 // Compare a verified local file list ({path,size,sha256}) with the published tree of repo@revision.
 export async function verifyAgainstHub({repo,revision,files,modelDir}){

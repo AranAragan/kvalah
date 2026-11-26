@@ -4,8 +4,9 @@
 // Kvalah chats, uploads and project files have no path into this pipeline.
 import {createHash} from 'node:crypto';
 import {fail} from '../protocol/errors.mjs';
-import {sha256,hashJSON,canonicalJSON} from '../protocol/hash.mjs';
-export const PREPROCESSING_VERSION='kc2-dataset-1';
+import {sha256,hashJSON,canonicalJSON,isHex64} from '../protocol/hash.mjs';
+export const PREPROCESSING_VERSION='kc2-dataset-2';
+const SPLITS=['train','validation','test'];
 export const LIMITS={file_bytes:64*2**20,line_bytes:64*1024,rows:100000,messages:32,content_chars:16000};
 export const LICENSES=['CC0-1.0','CC-BY-4.0','CC-BY-SA-4.0','MIT','Apache-2.0','BSD-3-Clause','ODC-By-1.0','CDLA-Permissive-2.0'];
 const ROLES=['system','user','assistant'];
@@ -65,34 +66,84 @@ export function validateRow(r){
 // Steps up to (and excluding) tokenization. Deterministic for a given input and seed.
 export function prepareRows(rows,{seed=1,ratios={validation:0.086,test:0.057},nearThreshold=0.85}={}){
   const excluded=[],stats={input:rows.length,exact_duplicates:0,near_duplicate_links:0,pii:{},license_missing:0,license_not_allowed:0};
-  const kept=[];const seenExact=new Map(),seenId=new Set();
+  const kept=[],parent=[],groups=new Map(),seenExact=new Map(),seenId=new Set();
+  function find(i){while(parent[i]!==i){parent[i]=parent[parent[i]];i=parent[i];}return i;}
+  function join(i,j){const a=find(i),b=find(j);if(a!==b)parent[Math.max(a,b)]=Math.min(a,b);}
   for(const r of rows){
     if(seenId.has(r.id)){excluded.push({id:r.id,reason:'duplicate_id'});continue;}seenId.add(r.id);
     if(!r.license){stats.license_missing++;excluded.push({id:r.id,reason:'license_missing'});continue;}
     if(!LICENSES.includes(r.license)){stats.license_not_allowed++;excluded.push({id:r.id,reason:'license_not_allowed'});continue;}
     const flags=piiFlags(rowText(r));
     if(flags.length){for(const f of flags)stats.pii[f]=(stats.pii[f]||0)+1;excluded.push({id:r.id,reason:'pii_or_secret:'+flags.join(',')});continue;}
-    const key=sha256(normalizeText(rowText(r)));
-    if(seenExact.has(key)){stats.exact_duplicates++;excluded.push({id:r.id,reason:'exact_duplicate_of:'+seenExact.get(key)});continue;}
-    seenExact.set(key,r.id);kept.push(r);
+    const key=sha256(normalizeText(rowText(r))),g=r.group_id?.normalize('NFKC').trim(),duplicate=seenExact.get(key);
+    const index=duplicate??kept.length;
+    if(duplicate!==undefined){stats.exact_duplicates++;excluded.push({id:r.id,reason:'exact_duplicate_of:'+kept[index].id});}
+    else{seenExact.set(key,index);kept.push(r);parent.push(index);}
+    // A removed duplicate can connect two explicit groups. Keep that link when assigning splits.
+    if(g){if(groups.has(g))join(groups.get(g),index);else groups.set(g,index);}
   }
   // Near duplicates join the same split group (prevents leakage across train/validation/test).
-  const parent=kept.map((_,i)=>i),find=i=>parent[i]===i?i:(parent[i]=find(parent[i]));
   const sigs=kept.map(r=>minhash(rowText(r))),buckets=new Map();
-  for(let i=0;i<kept.length;i++)for(let b=0;b<16;b++){const k=b+':'+sigs[i].slice(b*4,b*4+4).join(',');if(!buckets.has(k))buckets.set(k,[]);buckets.get(k).push(i);}
-  for(const list of buckets.values())for(let x=1;x<list.length;x++){const i=list[0],j=list[x];if(find(i)!==find(j)&&jaccard(sigs[i],sigs[j])>=nearThreshold){parent[find(j)]=find(i);stats.near_duplicate_links++;}}
-  const groupOf=i=>{const root=find(i);return kept[root].group_id?'g:'+kept[root].group_id:'r:'+kept[root].id;};
-  // Explicit group ids also merge: rows sharing group_id or a near-duplicate cluster go to one split.
-  const gmap=new Map();
-  kept.forEach((r,i)=>{const gs=[groupOf(i)];if(r.group_id)gs.push('g:'+r.group_id);let target=null;for(const g of gs)if(gmap.has(g)){target=gmap.get(g);break;}target??=gs[0];for(const g of gs)gmap.set(g,target);});
+  for(let i=0;i<kept.length;i++){
+    const candidates=new Set();
+    for(let b=0;b<16;b++){
+      const key=b+':'+sigs[i].slice(b*4,b*4+4).join(',');
+      const bucket=buckets.get(key);
+      if(!bucket){buckets.set(key,{rows:[i],oneGroup:true});continue;}
+      if(!bucket.oneGroup||find(bucket.rows[0])!==find(i)){
+        for(const j of bucket.rows){
+          if(find(i)===find(j)||candidates.has(j))continue;
+          candidates.add(j);
+          if(jaccard(sigs[i],sigs[j])>=nearThreshold){join(i,j);stats.near_duplicate_links++;}
+        }
+        bucket.oneGroup=bucket.rows.every(j=>find(j)===find(i));
+      }
+      bucket.rows.push(i);
+    }
+  }
+  const groupOf=i=>{
+    const root=kept[find(i)],g=root.group_id?.normalize('NFKC').trim();
+    return g?'g:'+g:'r:'+root.id;
+  };
   const splits={train:[],validation:[],test:[]};
   kept.forEach((r,i)=>{
-    const g=gmap.get(groupOf(i)),u=parseInt(sha256(`${seed}|split|${g}`).slice(0,8),16)/2**32;
+    const g=groupOf(i),u=parseInt(sha256(`${seed}|split|${g}`).slice(0,8),16)/2**32;
     const s=u<ratios.test?'test':u<ratios.test+ratios.validation?'validation':'train';
     splits[s].push({...r,_group:g});
   });
   return {splits,excluded,stats};
 }
+
+// Recompute from immutable shard bytes at registration and before an independent Test evaluation.
+export function auditSplitGroups(manifest,getShard){
+  const groupSplit=new Map(),ids=new Set(),fingerprints={},counts={};
+  if(Object.keys(manifest.shards||{}).length!==SPLITS.length)fail('DATASET_INVALID','expected Train, Validation and Test shards');
+  for(const split of SPLITS){
+    const groups=new Set(), list=manifest.shards?.[split];
+    if(!Array.isArray(list))fail('DATASET_INVALID','missing dataset split: '+split);
+    let count=0;
+    for(const [index,s] of list.entries()){
+      const bytes=getShard(s.sha256);
+      if(!bytes||sha256(bytes)!==s.sha256)fail('DATASET_INVALID','missing or corrupt '+split+' shard');
+      let shard;
+      try{shard=JSON.parse(bytes);}catch{fail('DATASET_INVALID','invalid '+split+' shard JSON');}
+      if(shard?.split!==split||shard.index!==index||shard.dataset_id!==manifest.dataset_id||shard.revision!==manifest.revision||
+        !Array.isArray(shard.rows)||shard.rows.length!==s.rows)fail('DATASET_INVALID','shard metadata differs from the manifest');
+      for(const r of shard.rows){
+        if(typeof r?.id!=='string'||ids.has(r.id)||!isHex64(r.group_digest))fail('DATASET_INVALID','missing group or duplicate row in dataset shards');
+        ids.add(r.id);groups.add(r.group_digest);
+        if(groupSplit.has(r.group_digest)&&groupSplit.get(r.group_digest)!==split)fail('DATASET_SPLIT_OVERLAP','a dialogue group spans multiple dataset splits');
+        groupSplit.set(r.group_digest,split);
+      }
+      count+=shard.rows.length;
+    }
+    if(count!==manifest.split_counts?.[split])fail('DATASET_INVALID','split count differs from the manifest');
+    fingerprints[split]=hashJSON([...groups].sort());
+    counts[split]=groups.size;
+  }
+  return {version:1,counts,fingerprints};
+}
+
 // Tokenize (via the supplied central tokenizer), validate masks and build immutable shards + manifest.
 export async function buildDataset({rows,datasetId,revision,profileId,maxLength,seed=1,tokenizer,shardSize=64,source,provenance}){
   if(!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(datasetId))fail('DATASET_INVALID','dataset id: lowercase letters, digits, . _ -');
@@ -104,12 +155,14 @@ export async function buildDataset({rows,datasetId,revision,profileId,maxLength,
     const tok=list.length?await tokenizer(list.map(r=>({id:r.id,messages:r.messages})),maxLength):{rows:[],excluded:[]};
     if(list.length){if(tokHash&&tok.tokenizer_hash!==tokHash)fail('DATASET_INVALID','tokenizer changed during preparation');tokHash=tok.tokenizer_hash;tplHash=tok.chat_template_hash;tokOpts=tok.tokenizer_options||null;}
     for(const e of tok.excluded)excluded.push(e);
-    const good=[];
+    const good=[],groups=new Map(list.map(r=>[r.id,sha256(r._group)])),seen=new Set();
     for(const t of tok.rows){
+      if(!groups.has(t.id)||seen.has(t.id))fail('DATASET_INVALID','tokenizer returned an unexpected or repeated row');
+      seen.add(t.id);
       // Mask validation: same length, first position never a target, at least one target.
-      if(!Array.isArray(t.input_ids)||t.input_ids.length!==t.target_mask.length||t.target_mask[0]!==0||t.input_ids.length>maxLength){excluded.push({id:t.id,reason:'mask_invalid'});continue;}
+      if(!Array.isArray(t.input_ids)||!Array.isArray(t.target_mask)||t.input_ids.length!==t.target_mask.length||t.target_mask[0]!==0||t.input_ids.length>maxLength){excluded.push({id:t.id,reason:'mask_invalid'});continue;}
       if(!t.target_mask.slice(1).some(Boolean)){excluded.push({id:t.id,reason:'no_target_tokens'});continue;}
-      good.push({id:t.id,input_ids:t.input_ids.map(Number),target_mask:t.target_mask.map(v=>v?1:0)});
+      good.push({id:t.id,group_digest:groups.get(t.id),input_ids:t.input_ids.map(Number),target_mask:t.target_mask.map(v=>v?1:0)});
     }
     good.sort((a,b)=>a.id<b.id?-1:1);
     split_counts[split]=good.length;
@@ -128,5 +181,6 @@ export async function buildDataset({rows,datasetId,revision,profileId,maxLength,
     tokenizer_hash:tokHash,chat_template_hash:tplHash,tokenizer_options:tokOpts,split_seed:seed,split_counts,tokens_by_split,shards:manifestShards,split_fingerprint:hashJSON(fingerprints),
     excluded_by_reason:excluded.reduce((a,e)=>{const k=String(e.reason).split(':')[0];a[k]=(a[k]||0)+1;return a;},{}),stats:prep.stats,synthetic,
     status:(split_counts.train||0)>=3000&&(split_counts.validation||0)>=300&&(split_counts.test||0)>=200?'RESEARCH_SIZE':'SMOKE_ONLY'};
+  manifest.group_audit=auditSplitGroups(manifest,h=>shards[h]);
   return {manifest,shards,excluded};
 }

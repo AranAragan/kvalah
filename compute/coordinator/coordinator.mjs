@@ -14,6 +14,8 @@ import {canonicalAdapter} from '../protocol/canonical.mjs';
 import {fedavg} from '../protocol/aggregate.mjs';
 import {normalizeConfig,configHash,optimizerHash} from '../protocol/config.mjs';
 import {newKeyPair,validPublicKey,signJSON,verifyBytes,keyFingerprint} from '../protocol/sign.mjs';
+import {auditSplitGroups,PREPROCESSING_VERSION} from '../datasets/engine.mjs';
+import {researchProvenance,verifiedConversionImport} from '../mlx-conversion.mjs';
 
 export const MAX_UPDATE_BYTES=8*1024*1024;
 const PAIR_TTL_MS=10*60*1000,PAIR_ATTEMPTS=5,HEARTBEAT_OFFLINE_MS=30*1000;
@@ -160,12 +162,28 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
   function renameDevice(id,a){const d=device(id);if(!d)fail('NOT_FOUND','device not found');db.prepare('update devices set alias=? where id=?').run(alias(a),id);return {ok:true};}
 
   // ---------- registry & datasets ----------
-  function registerVariant({profile_id,variant_id,files_digest,manifest,provenance}){
+  function registerVariant({profile_id,variant_id,files_digest,manifest,provenance,conversion}){
     const p=getProfile(profile_id);if(!p.variants[variant_id])fail('INVALID_SCHEMA','unknown variant');
     if(files_digest!=null&&!isHex64(files_digest))fail('INVALID_SCHEMA','bad files digest');
+    const metadata={...manifest};
+    delete metadata.local_conversion;
+    let status=provenance==='verified'?'verified':'unverified';
+    if(variant_id==='mlx-4bit'){
+      status='unverified';
+      const prev=db.prepare('select * from model_variants where profile_id=? and variant_id=?').get(p.id,variant_id);
+      if(conversion!==undefined){
+        if(!verifiedConversionImport(conversion)||conversion.profile_id!==p.id||conversion.variant_id!==variant_id||
+          conversion.files_digest!==files_digest)fail('MODEL_UNVERIFIED','local conversion was not verified for this model digest');
+        metadata.local_conversion=conversion;
+        status='locally_attested';
+      }else if(prev?.files_digest===files_digest&&researchProvenance({...prev,manifest:P(prev.manifest)})){
+        return {ok:true,provenance:prev.provenance};
+      }
+    }else if(conversion!==undefined)fail('INVALID_SCHEMA','unexpected MLX conversion for this variant');
     db.prepare('insert or replace into model_variants(profile_id,variant_id,files_digest,provenance,manifest,updated_at) values(?,?,?,?,?,?)')
-      .run(p.id,variant_id,files_digest??null,['verified','unverified'].includes(provenance)?provenance:'unverified',J(manifest||{}),now());
-    audit('admin','model.register',{profile_id,variant_id,files_digest});return {ok:true};
+      .run(p.id,variant_id,files_digest??null,status,J(metadata),now());
+    audit('admin','model.register',{profile_id,variant_id,files_digest,provenance:status,manifest_sha256:conversion?.conversion.manifest_sha256});
+    return {ok:true,provenance:status};
   }
   const variants=()=>db.prepare('select * from model_variants').all().map(v=>({...v,manifest:P(v.manifest)}));
   // Dataset manifest + shards come from the Dataset Engine (datasets/engine.mjs); shards are stored in CAS.
@@ -173,6 +191,10 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
     if(!manifest?.dataset_id||!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(manifest.dataset_id))fail('DATASET_INVALID','bad dataset id');
     for(const [split,list] of Object.entries(manifest.shards||{}))for(const s of list){
       const bytes=shards[s.sha256];if(!bytes||sha256(bytes)!==s.sha256)fail('DATASET_INVALID','shard '+split+' missing or corrupt');
+    }
+    if(manifest.preprocessing_version===PREPROCESSING_VERSION||manifest.group_audit!==undefined){
+      const audit=auditSplitGroups(manifest,h=>shards[h]);
+      if(hashJSON(audit)!==hashJSON(manifest.group_audit??null))fail('DATASET_INVALID','dataset group audit differs from its shards');
     }
     const id=manifest.dataset_id+'@'+manifest.revision;
     if(db.prepare('select 1 from datasets where id=?').get(id))fail('IMMUTABLE','dataset revision already registered');
@@ -182,7 +204,7 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
     return {id};
   }
   const datasetManifest=id=>{const d=db.prepare('select * from datasets where id=?').get(String(id));if(!d)fail('DATASET_REQUIRED','dataset '+String(id).slice(0,80)+' is not registered');return JSON.parse(d.manifest);};
-  const listDatasets=()=>db.prepare('select id,manifest,created_at from datasets order by created_at').all().map(d=>{const m=JSON.parse(d.manifest);return {id:d.id,created_at:d.created_at,license:m.license,source:m.source,split_counts:m.split_counts,tokens_by_split:m.tokens_by_split,synthetic:!!m.synthetic,tokenizer_hash:m.tokenizer_hash,profile_id:m.profile_id,max_length:m.max_length};});
+  const listDatasets=()=>db.prepare('select id,manifest,created_at from datasets order by created_at').all().map(d=>{const m=JSON.parse(d.manifest);return {id:d.id,created_at:d.created_at,license:m.license,source:m.source,split_counts:m.split_counts,tokens_by_split:m.tokens_by_split,synthetic:!!m.synthetic,tokenizer_hash:m.tokenizer_hash,profile_id:m.profile_id,max_length:m.max_length,group_audited:!!m.group_audit};});
   function trainRows(manifest){
     const rows=[];
     for(const s of manifest.shards.train){const shard=JSON.parse(cas.get(s.sha256).toString('utf8'));for(const r of shard.rows)rows.push(r);}
@@ -190,15 +212,37 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
   }
 
   // ---------- experiments ----------
+  const rowsPerRound=cfg=>cfg.quorum.target*cfg.local_steps*cfg.batch_size*cfg.grad_accum;
+  function startingAdapter(cfg,p,models){
+    const source=cfg.initial_checkpoint;
+    if(!source){
+      const tensors=canonicalAdapter(p,cfg.seed);
+      return {tensors,bytes:encode(tensors,{kind:'kvalah-ffa-adapter',profile:p.id,round:'0'}),lineage:{parent:null,kind:'canonical_init',seed:cfg.seed}};
+    }
+    const e=experiment(source.experiment_id),prior=P(e.config),snapshot=P(e.model_snapshot)||[];
+    const ck=db.prepare("select c.* from checkpoints c join rounds r on r.experiment_id=c.experiment_id and r.idx=c.round_idx-1 and r.checkpoint_hash=c.hash and r.state='COMMITTED' where c.experiment_id=? and c.hash=? and c.round_idx>0 order by c.round_idx desc limit 1").get(e.id,source.sha256);
+    if(!ck||cfg.profile_id!==prior.profile_id||cfg.dataset_id!==prior.dataset_id||cfg.max_length!==prior.max_length||cfg.seed!==prior.seed||
+      cfg.variants.length!==prior.variants.length||cfg.variants.some(v=>!prior.variants.includes(v))||
+      models.length!==snapshot.length||models.some(v=>!snapshot.some(x=>x.variant_id===v.variant_id&&x.files_digest===v.files_digest))){
+      fail('CHECKPOINT_INCOMPATIBLE','checkpoint must be committed and match the profile, base models, dataset revision, context length and seed');
+    }
+    const bytes=cas.get(ck.hash), tensors=verifyTensors(decode(bytes).tensors,p,true);
+    if(frozenAHash(tensors)!==e.frozen_a_hash||frozenAHash(canonicalAdapter(p,cfg.seed))!==e.frozen_a_hash)fail('FROZEN_A_CHANGED','checkpoint frozen A differs from the experiment seed');
+    const row_offset=(prior.initial_checkpoint?.row_offset??0)+ck.round_idx*rowsPerRound(prior);
+    if(!Number.isSafeInteger(row_offset))fail('CHECKPOINT_INCOMPATIBLE','training row offset out of range');
+    const lineage={kind:'continued',parent:ck.hash,source_experiment_id:e.id,source_round:ck.round_idx,row_offset};
+    return {bytes,tensors,lineage};
+  }
   function planRows(cfg,manifest){
     // Deterministic permutation per epoch (seeded), sequential non-overlapping slices per assignment.
     const rows=trainRows(manifest);
     if(!rows.length)fail('DATASET_REQUIRED','dataset has no train rows');
-    const per=cfg.local_steps*cfg.batch_size*cfg.grad_accum,need=cfg.rounds*cfg.quorum.target*per;
-    const order=[];let epoch=0;
+    const per=cfg.local_steps*cfg.batch_size*cfg.grad_accum,need=cfg.rounds*rowsPerRound(cfg);
+    const offset=cfg.initial_checkpoint?.row_offset??0;
+    const order=[];let epoch=Math.floor(offset/rows.length),skip=offset%rows.length;
     while(order.length<need){
       const perm=rows.map(r=>({r,k:sha256(`${cfg.seed}|${epoch}|${r.id}`)})).sort((a,b)=>a.k<b.k?-1:1).map(x=>({...x.r,epoch}));
-      order.push(...perm);epoch++;
+      order.push(...perm.slice(skip,skip+need-order.length));epoch++;skip=0;
     }
     return {per,epochs:epoch,order:order.slice(0,need)};
   }
@@ -207,16 +251,17 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
     const cfg=normalizeConfig(input),p=getProfile(cfg.profile_id),m=datasetManifest(cfg.dataset_id);
     if(m.profile_id&&m.profile_id!==p.id)fail('DATASET_INVALID','dataset was tokenized for another model profile');
     if(m.max_length!==cfg.max_length)fail('DATASET_INVALID',`dataset was prepared with max_length ${m.max_length}`);
+    const vs=variants().filter(v=>v.profile_id===p.id&&cfg.variants.includes(v.variant_id));
+    const init=startingAdapter(cfg,p,vs);
+    if(cfg.initial_checkpoint)Object.assign(cfg.initial_checkpoint,{source_round:init.lineage.source_round,row_offset:init.lineage.row_offset});
     const plan=planRows(cfg,m),slots=[];
     for(let r=0;r<cfg.rounds;r++)for(let s=0;s<cfg.quorum.target;s++){const rows=plan.order.slice((r*cfg.quorum.target+s)*plan.per,(r*cfg.quorum.target+s+1)*plan.per);slots.push({round:r,slot:s,rows:rows.length,supervised_tokens:rows.reduce((a,x)=>a+supervised(x),0)});}
-    const init=canonicalAdapter(p,cfg.seed);
-    const vs=variants().filter(v=>v.profile_id===p.id&&cfg.variants.includes(v.variant_id));
-    return {config:cfg,config_hash:configHash(cfg),schema_hash:schemaHash(p),frozen_a_hash:frozenAHash(init),initial_adapter_sha256:sha256(encode(init)),
+    return {config:cfg,config_hash:configHash(cfg),schema_hash:schemaHash(p),frozen_a_hash:frozenAHash(init.tensors),initial_adapter_sha256:sha256(init.bytes),
       trainable_params:Object.values(tensorSchema(p,false)).reduce((a,[o,r])=>a+o*r,0),targets:p.layers*Object.keys(p.targets).length,rank:p.rank,alpha:p.alpha,
       dataset:{id:cfg.dataset_id,license:m.license,split_counts:m.split_counts,tokens_by_split:m.tokens_by_split,synthetic:!!m.synthetic,tokenizer_hash:m.tokenizer_hash},
       epochs:plan.epochs,rows_per_task:plan.per,tasks:slots.length,supervised_tokens_total:slots.reduce((a,s)=>a+s.supervised_tokens,0),slots,
-      model_variants:cfg.variants.map(v=>{const r=vs.find(x=>x.variant_id===v);return {variant_id:v,registered:!!r,files_digest:r?.files_digest||null,provenance:r?.provenance||'unregistered'};}),
-      research_pass_possible:vs.length===cfg.variants.length&&vs.every(v=>v.provenance==='verified')&&!m.synthetic};
+      model_variants:cfg.variants.map(v=>{const r=vs.find(x=>x.variant_id===v);return {variant_id:v,registered:!!r,files_digest:r?.files_digest||null,provenance:r?.provenance||'unregistered',research_eligible:!!r&&researchProvenance(r)};}),
+      research_pass_possible:vs.length===cfg.variants.length&&vs.every(researchProvenance)&&!m.synthetic};
   }
   function createExperiment(input){
     const plan=dryRun(input),cfg=plan.config,id='exp-'+randomBytes(6).toString('hex'),run=(cfg.preset+'-'+randomBytes(3).toString('hex'));
@@ -225,7 +270,7 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
       .map(({variant_id,files_digest,provenance,manifest})=>({variant_id,files_digest,provenance,manifest}));
     if(!profile.test_only&&cfg.variants.some(id=>!modelSnapshot.find(v=>v.variant_id===id&&v.files_digest)))fail('MODEL_UNVERIFIED','register a model digest for every selected variant first');
     if(!profile.test_only&&cfg.preset==='research'){
-      if(!cfg.research_confirmed||modelSnapshot.some(v=>v.provenance!=='verified'))fail('MODEL_UNVERIFIED','research requires approval and verified provenance for all variants');
+      if(!cfg.research_confirmed||modelSnapshot.some(v=>!researchProvenance(v)))fail('MODEL_UNVERIFIED','research requires approval and verified provenance for all variants');
       const pilots=db.prepare("select config,model_snapshot from experiments where state='COMPLETED' and json_extract(config,'$.preset')='pilot'").all();
       if(!pilots.some(p=>{
         const previous=P(p.config),models=P(p.model_snapshot)||[];
@@ -259,10 +304,11 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
     const e=experiment(id);if(e.state!=='CREATED')fail('INVALID_TRANSITION','experiment already started; create a new run to change settings');
     const cfg=JSON.parse(e.config),p=getProfile(cfg.profile_id);
     if(!p.test_only&&!e.model_snapshot)fail('MODEL_UNVERIFIED','this experiment predates model snapshots; create a new experiment with verified model digests');
-    const init=canonicalAdapter(p,cfg.seed),bytes=encode(init,{kind:'kvalah-ffa-adapter',profile:p.id,round:'0'}),h=cas.put(bytes);
+    const {tensors:init,bytes,lineage}=startingAdapter(cfg,p,P(e.model_snapshot)||[]),h=cas.put(bytes);
+    if(cfg.initial_checkpoint&&cfg.initial_checkpoint.row_offset!==lineage.row_offset)fail('CHECKPOINT_INCOMPATIBLE','checkpoint continuation differs from the saved configuration');
     tx(db,()=>{
       db.prepare('insert or ignore into artifacts(sha256,kind,bytes,created_at) values(?,?,?,?)').run(h,'checkpoint',bytes.length,now());
-      db.prepare('insert or ignore into checkpoints(hash,experiment_id,round_idx,created_at,lineage) values(?,?,?,?,?)').run(h,e.id,0,now(),J({parent:null,kind:'canonical_init',seed:cfg.seed}));
+      db.prepare('insert or ignore into checkpoints(hash,experiment_id,round_idx,created_at,lineage) values(?,?,?,?,?)').run(h,e.id,0,now(),J(lineage));
       db.prepare('update experiments set started_at=?,initial_hash=?,frozen_a_hash=? where id=?').run(now(),h,frozenAHash(init),e.id);
       openRound({...e},cfg,0,1,h);
     });
@@ -529,7 +575,7 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
     if(!evaluate){db.prepare('update experiments set eval=? where id=?').run(J({...(P(experiment(expId).eval)||{}),status:'NOT RUN: no trusted evaluator configured on this coordinator'}),expId);return;}
     Promise.resolve().then(()=>{
       const e=experiment(expId);
-      return evaluate({experiment:P(e.config),modelSnapshot:P(e.model_snapshot),checkpoint:cas.get(hash),round,hash});
+      return evaluate({experiment:P(e.config),modelSnapshot:P(e.model_snapshot),checkpoint:cas.get(hash),round,hash,split:'validation'});
     }).then(res=>{
       if(closed)return; // coordinator closed while the evaluator was running: drop the late result
       const e=experiment(expId),ev=P(e.eval)||{};ev.rounds=ev.rounds||{};ev.rounds[round]={...res,checkpoint:hash,at:now()};
@@ -544,6 +590,38 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
       db.prepare('update experiments set eval=? where id=?').run(J(ev),expId);
       event('error','eval.failed',{experiment:expId},{round,code:err.code||'EVALUATION_FAILED'});
     });
+  }
+  const testJobs=new Map();
+  function evaluateTest(id){
+    const e=experiment(id);
+    if(e.state!=='COMPLETED')fail('INVALID_TRANSITION','finish the experiment before evaluating on the Test split');
+    if(testJobs.has(e.id))return testJobs.get(e.id);
+    const cfg=P(e.config),m=datasetManifest(cfg.dataset_id),ck=latestCheckpoint(e.id);
+    if(!ck||ck.round_idx<1)fail('CHECKPOINT_INCOMPATIBLE','no committed checkpoint for Test evaluation');
+    if(!m.group_audit||!m.split_counts?.test)fail('DATASET_INVALID','Test evaluation requires a nonempty Test split with an audited dataset revision');
+    const previous=P(e.eval)?.test;
+    if(previous?.status==='DONE'&&previous.checkpoint===ck.hash)return Promise.resolve(previous);
+    const groups=auditSplitGroups(m,h=>cas.get(h));
+    if(hashJSON(groups)!==hashJSON(m.group_audit))fail('DATASET_INVALID','dataset group audit differs from its shards');
+    const bytes=cas.get(ck.hash);
+    const job=Promise.resolve().then(()=>evaluate?
+      evaluate({experiment:cfg,modelSnapshot:P(e.model_snapshot),checkpoint:bytes,round:ck.round_idx,hash:ck.hash,split:'test'}):
+      {status:'NOT RUN',reason:'no trusted evaluator configured'})
+      .catch(err=>({status:'NOT RUN',reason:err.code||'EVALUATION_FAILED'}))
+      .then(result=>{
+        const test={...result,split:'test',checkpoint:ck.hash,round:ck.round_idx,dataset_id:cfg.dataset_id,
+          group_audit_sha256:hashJSON(groups),test_groups_sha256:groups.fingerprints.test,at:now()};
+        if(!closed){
+          const ev=P(experiment(e.id).eval)||{};
+          ev.test=test;
+          db.prepare('update experiments set eval=? where id=?').run(J(ev),e.id);
+          audit('admin','eval.test',{id:e.id,status:test.status,checkpoint:ck.hash,dataset_id:cfg.dataset_id});
+          event('info','eval.test',{experiment:e.id},{round:ck.round_idx,status:test.status,nll:test.nll});
+        }
+        return test;
+      }).finally(()=>testJobs.delete(e.id));
+    testJobs.set(e.id,job);
+    return job;
   }
   function tick(){
     // Expire leases (assignment returns to open → replacement possible, no double counting).
@@ -583,8 +661,10 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
     const e=experiment(id),cfg=JSON.parse(e.config),r=currentRound(e);
     const asg=r?db.prepare('select a.*,(select device_id from tasks t where t.assignment_id=a.id order by attempt desc limit 1) dev,(select progress from tasks t where t.assignment_id=a.id order by attempt desc limit 1) prog,(select state from tasks t where t.assignment_id=a.id order by attempt desc limit 1) tstate from assignments a where experiment_id=? and round_idx=? and round_attempt=? order by slot').all(e.id,r.idx,r.attempt):[];
     const committed=db.prepare("select count(*) n from rounds where experiment_id=? and state='COMMITTED'").get(e.id).n;
+    const checkpoint=committed?latestCheckpoint(e.id):null;
     return {id:e.id,run_id:e.run_id,name:e.name,state:e.state,config:cfg,config_hash:e.config_hash,model_snapshot:P(e.model_snapshot),created_at:e.created_at,started_at:e.started_at,finished_at:e.finished_at,
       initial_hash:e.initial_hash,frozen_a_hash:e.frozen_a_hash,committed_rounds:committed,target_rounds:cfg.rounds,blocker:P(e.blocker),eval:P(e.eval),
+      checkpoint:checkpoint?{sha256:checkpoint.hash,round:checkpoint.round_idx}:null,test_pending:testJobs.has(e.id),
       round:r?{idx:r.idx,attempt:r.attempt,state:r.state,parent_hash:r.parent_hash,opened_at:r.opened_at,deadline_at:r.deadline_at,remaining_ms:Math.max(0,r.deadline_at-now()),blocker:P(r.blocker),
         accepted:asg.filter(a=>a.state==='accepted').length,leased:asg.filter(a=>a.state==='leased').length,min_quorum:cfg.quorum.min,target:cfg.quorum.target,
         slots:asg.map(a=>({slot:a.slot,state:a.state,device_id:a.dev,task_state:a.tstate,expected_tokens:a.expected_tokens,progress:P(a.prog)}))}:null};
@@ -603,6 +683,6 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
   const latestCheckpoint=id=>{const e=experiment(id);return db.prepare('select * from checkpoints where experiment_id=? order by round_idx desc limit 1').get(e.id);};
   return {db,cas,projectId,coordinatorKey:key.publicKey,createPairing,pairStart,pairComplete,approveDevice,revokeDevice,drainDevice,renameDevice,authDevice,useNonce,startSession,heartbeat,listDevices,
     registerVariant,variants,registerDataset,datasetManifest,listDatasets,dryRun,createExperiment,startExperiment,pauseExperiment,resumeExperiment,cancelExperiment,finishAfterRound,
-    claim,renew,progress,abandon,artifactFor,declareUpdate,putContent,commitUpdate,updateStatus,tick,recover,status,rounds,listExperiments,events,latestEvents,checkpoint,latestCheckpoint,
+    claim,renew,progress,abandon,artifactFor,declareUpdate,putContent,commitUpdate,updateStatus,tick,recover,status,rounds,listExperiments,events,latestEvents,checkpoint,latestCheckpoint,evaluateTest,
     onEvent:fn=>{listeners.add(fn);return ()=>listeners.delete(fn);},close:()=>{closed=true;db.close();}};
 }

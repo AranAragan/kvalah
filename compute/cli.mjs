@@ -17,6 +17,8 @@ const HELP=`kvalah-compute <command> [options]
   worker        --pairing STR --python P --model-dir D [--variant V] [--alias NAME] --i-consent
                 [--gpu 10] [--cpu 10] [--hours 4] [--no-idle] [--no-ac] [--no-games]
   export        --experiment ID --out DIR [--weights] [--peft]
+  import-mlx    --manifest FILE --source-dir DIR --output-dir DIR --reviewed
+  evaluate-test --experiment ID [--python P --backend B --model-dir D --variant V]
   verify-report --file report.zip
   legacy-import --file experiment-v01.zip
   status
@@ -80,9 +82,11 @@ try{
         if(!flag('i-consent')){console.log(JSON.stringify(st.consent.text,null,1));throw Error('--join-self also runs a worker here: read the consent text above and add --i-consent');}
         await h('consent/accept',{text_revision:st.consent.text.text_revision,project_id:st.consent.text.project_id});
         if(opt('model-dir')){const p=await h('preflight',{max_length:cfg.max_length??256});if(!p.preflight?.ok)throw Error('preflight failed');}}
-      const dataset=flag('fixture')||!opt('dataset')?{fixture:true}:{file:abs(opt('dataset')),dataset_id:opt('dataset-id'),revision:opt('dataset-rev','1')};
-      const ds=await h('lab/import-dataset',{...dataset,max_length:cfg.max_length??256});
-      cfg.dataset_id=ds.id;
+      if(!cfg.dataset_id||flag('fixture')||opt('dataset')){
+        const dataset=flag('fixture')||!opt('dataset')?{fixture:true}:{file:abs(opt('dataset')),dataset_id:opt('dataset-id'),revision:opt('dataset-rev','1')};
+        const ds=await h('lab/import-dataset',{...dataset,max_length:cfg.max_length??256});
+        cfg.dataset_id=ds.id;
+      }
       const plan=await h('lab/dry-run',{config:cfg});
       out({tasks:plan.tasks,rows_per_task:plan.rows_per_task,supervised_tokens:plan.supervised_tokens_total,config_hash:plan.config_hash,frozen_a_hash:plan.frozen_a_hash,research_pass_possible:plan.research_pass_possible});
       const want=Number(opt('expect-devices',cfg.quorum?.target||1));
@@ -121,6 +125,17 @@ try{
       out(await h('lab/report',{experiment_id:ex,dir:o,include_weights:flag('weights')}));
       if(flag('peft')){if(opt('python'))await h('runtime',{python:abs(opt('python')),backend:opt('backend')});out(await h('lab/export-peft',{experiment_id:ex,dir:o}));}
       break;
+    }
+    case 'import-mlx':{
+      await policyFromFlags();
+      out(await h('lab/import-mlx-conversion',{manifest_file:abs(need('manifest')),source_dir:abs(need('source-dir')),output_dir:abs(need('output-dir')),reviewed:flag('reviewed')}));
+      break;
+    }
+    case 'evaluate-test':{
+      await policyFromFlags();
+      if(opt('python'))await setup({preflight:false});
+      const r=await h('lab/experiment/evaluate-test',{id:need('experiment')});
+      out(r);await stop(r.status==='DONE'?0:1);break;
     }
     case 'verify-report':{const r=await h('verify-report',{file:abs(need('file'))});out(r);await stop(r.ok?0:1);break;}
     case 'legacy-import':{const r=await h('legacy/import',{file:abs(need('file'))});out(r);await stop(r.verified_all?0:1);break;}

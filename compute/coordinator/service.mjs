@@ -12,9 +12,10 @@ import {pairingString} from '../worker/client.mjs';
 import {startSidecar as defaultSidecar} from '../worker/sidecar.mjs';
 import {parseJSONL,buildDataset} from '../datasets/engine.mjs';
 import {getProfile} from '../protocol/schema.mjs';
-import {fail} from '../protocol/errors.mjs';
+import {fail,ComputeError} from '../protocol/errors.mjs';
 import {exportReport} from '../report.mjs';
 import {PINNED,verifyAgainstHub} from '../registry.mjs';
+import {verifyLocalConversion} from '../mlx-conversion.mjs';
 export const DEFAULT_PORT=8765;
 export const FIXTURE=fileURLToPath(new URL('../fixtures/smoke-sft-v1.jsonl',import.meta.url));
 const isPrivateV4=ip=>/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|127\.|169\.254\.)/.test(ip);
@@ -39,7 +40,8 @@ export function createCoordinatorService({dir,startSidecar=defaultSidecar,evalua
   }
   // Trusted evaluation on the coordinator's own runtime (spec §7.2). Waits for the governor (never competes
   // with the local AI or a game), and is NOT RUN when no runtime/model is configured.
-  async function evaluate({experiment,checkpoint,modelSnapshot}){
+  async function evaluate({experiment,checkpoint,modelSnapshot,split='validation'}){
+    if(split!=='validation'&&split!=='test')fail('INVALID_SCHEMA','unsupported evaluation split');
     const rt=evaluator();
     if(!rt?.python||(!rt.model_dir&&rt.backend!=='mock'))return {status:'NOT RUN',reason:'no trusted evaluator runtime/model configured'};
     const p=getProfile(experiment.profile_id);
@@ -52,15 +54,15 @@ export function createCoordinatorService({dir,startSidecar=defaultSidecar,evalua
     evalBusy=true;
     try{
       const m=coord.datasetManifest(experiment.dataset_id);
-      const rows=[];for(const s of m.shards.validation||[])rows.push(...JSON.parse(coord.cas.get(s.sha256).toString('utf8')).rows);
-      if(!rows.length)return {status:'NOT RUN',reason:'dataset has no validation rows'};
+      const rows=[];for(const s of m.shards[split]||[])rows.push(...JSON.parse(coord.cas.get(s.sha256).toString('utf8')).rows);
+      if(!rows.length)return {status:'NOT RUN',reason:'dataset has no '+split+' rows'};
       const d=fs.mkdtempSync(path.join(work,'eval-'));
       try{
         fs.writeFileSync(path.join(d,'adapter.safetensors'),checkpoint);fs.writeFileSync(path.join(d,'rows.json'),JSON.stringify({rows}));
         const t0=now();
         const r=await withSidecar(rt,sc=>sc.call('evaluate',{adapter_path:path.join(d,'adapter.safetensors'),rows_path:path.join(d,'rows.json'),model_dir:rt.model_dir||'',backend:rt.backend,
           model_files_digest:variant?.files_digest,task:{layers:p.layers,targets:p.targets,rank:p.rank,alpha:p.alpha,profile:p.id,max_length:experiment.max_length}}).promise,{heavy:true});
-        return {...r,status:'DONE',split:'validation',backend:rt.backend,variant_id:rt.variant_id||null,provenance:variant?.provenance||null,eval_ms:now()-t0};
+        return {...r,status:'DONE',split,backend:rt.backend,variant_id:rt.variant_id||null,provenance:variant?.provenance||null,eval_ms:now()-t0};
       }finally{fs.rmSync(d,{recursive:true,force:true});}
     }finally{evalBusy=false;}
   }
@@ -108,6 +110,26 @@ export function createCoordinatorService({dir,startSidecar=defaultSidecar,evalua
     const pin=PINNED[profile_id]?.[variant_id];if(!pin)fail('NOT_FOUND','no pinned source revision for this variant');
     return verifyAgainstHub({repo:pin.source_repo,revision:pin.source_revision,files:model.files,modelDir:model_dir});
   }
+  let importingConversion=false;
+  async function importMlxConversion(input){
+    if(importingConversion)fail('CONFLICT','a local conversion verification is already in progress');
+    const checkResources=phase=>{
+      if(closed)fail('STOPPED','coordinator stopped');
+      const decision=canRunHeavy(phase);
+      if(!decision.run)fail('PAUSED','the resource policy paused conversion verification: '+decision.reason);
+    };
+    importingConversion=true;
+    try{
+      let proof;
+      try{proof=await verifyLocalConversion(input,{now,checkResources});}
+      catch(err){if(err instanceof ComputeError)throw err;fail('CONVERSION_INVALID','could not read the local conversion files');}
+      checkResources();
+      const {profile_id,variant_id,files_digest}=proof;
+      const result=coord.registerVariant({profile_id,variant_id,files_digest,conversion:proof,
+        manifest:{architecture:proof.conversion.architecture,quantization:proof.conversion.quantization}});
+      return {...result,files_digest,source:proof.source.status,conversion:proof.conversion.status};
+    }finally{importingConversion=false;}
+  }
   // Dataset import: validation → dedup → PII/secret/licence filters → group-aware split → tokenization with
   // the coordinator's pinned tokenizer → mask validation → immutable shards + manifest.
   async function importDataset({file,fixture=false,dataset_id,revision='1',profile_id,max_length=256,seed=1,source,provenance,runtime}){
@@ -131,6 +153,6 @@ export function createCoordinatorService({dir,startSidecar=defaultSidecar,evalua
       return {id:reg.id,manifest:built.manifest,rejected_lines:rejected,excluded:built.excluded.slice(0,200)};
     }finally{fs.rmSync(d,{recursive:true,force:true});}
   }
-  return {coord,start,stop,info,createPairing,verifyModel,registerModel,checkProvenance,importDataset,evaluate,
+  return {coord,start,stop,info,createPairing,verifyModel,registerModel,checkProvenance,importMlxConversion,importDataset,evaluate,
     exportReport:o=>exportReport(coord,o),close:async()=>{closed=true;await stop();coord.close();}};
 }

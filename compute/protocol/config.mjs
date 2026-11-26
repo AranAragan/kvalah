@@ -1,6 +1,6 @@
 // Experiment configuration: validation, presets (Smoke / Pilot / Research) and the immutable config hash.
 import {fail} from './errors.mjs';
-import {hashJSON} from './hash.mjs';
+import {hashJSON,isHex64} from './hash.mjs';
 import {getProfile} from './schema.mjs';
 export const PRESETS={
   smoke:{rounds:2,local_steps:3,quorum:{mode:'all',min:3,target:3},round_deadline_s:600,lease_ttl_s:120,eval:{initial:true,final:true,every:0}},
@@ -41,6 +41,13 @@ export function normalizeConfig(input){
     research_confirmed:input.research_confirmed===true
   };
   if(!cfg.dataset_id)fail('DATASET_REQUIRED','choose an approved dataset');
+  if(input.initial_checkpoint!=null){
+    const c=input.initial_checkpoint;
+    if(typeof c.experiment_id!=='string'||!/^exp-[a-f0-9]{12}$/.test(c.experiment_id)||!isHex64(c.sha256)){
+      fail('INVALID_SCHEMA','initial checkpoint requires a source experiment and a SHA-256');
+    }
+    cfg.initial_checkpoint={experiment_id:c.experiment_id,sha256:c.sha256};
+  }
   if(input.target_device_ids!==undefined){
     const ids=input.target_device_ids;
     if(!Array.isArray(ids)||ids.length!==quorum.target||new Set(ids).size!==ids.length||ids.some(id=>typeof id!=='string'||!/^dev-[a-f0-9]{32}$/.test(id))){

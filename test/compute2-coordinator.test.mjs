@@ -11,14 +11,14 @@ import {parseJSONL,buildDataset,prepareRows,piiFlags} from '../compute/datasets/
 import {newKeyPair,signBytes} from '../compute/protocol/sign.mjs';
 import {decode,encode} from '../compute/protocol/safetensors.mjs';
 import {onlyB,getProfile,frozenAHash} from '../compute/protocol/schema.mjs';
-import {sha256} from '../compute/protocol/hash.mjs';
+import {sha256,canonicalJSON} from '../compute/protocol/hash.mjs';
 import {exportReport,verifyReport} from '../compute/report.mjs';
 
 const T=getProfile('tiny-test-ffa-r4');
 function clock(){let t=Date.UTC(2026,10,26,9,0,0);const f=()=>t;f.add=ms=>{t+=ms;};return f;}
-async function setup({rows=null}={}){
+async function setup({rows=null,evaluate=null}={}){
   const dir=tmp('kc-coord-'),now=clock();
-  const c=createCoordinator({dir,now});
+  const c=createCoordinator({dir,now,evaluate});
   const {rows:parsed}=parseJSONL(fs.readFileSync(FIXTURE,'utf8'));
   const ds=await buildDataset({rows:rows||parsed,datasetId:'smoke',revision:'1',profileId:T.id,maxLength:256,tokenizer:jsTokenizer});
   c.registerDataset(ds.manifest,ds.shards);
@@ -113,6 +113,92 @@ test('D01–D04 dataset engine: validation, exact dedup, PII/secret filters, lic
   const total=Object.values(a.manifest.split_counts).reduce((x,y)=>x+y,0);assert.equal(total,33);
   const bad=await buildDataset({rows,datasetId:'smoke',revision:'1',profileId:T.id,maxLength:256,tokenizer:async(r,m)=>{const t=await jsTokenizer(r,m);t.rows[0].target_mask[0]=1;return t;}});
   assert.ok((bad.manifest.excluded_by_reason.mask_invalid||0)>=1,'mask with target at position 0 is excluded');
+});
+
+test('dialogue group links are transitive across removed duplicates, and registration rejects a forged split',async()=>{
+  const row=(id,group_id,content)=>({id,group_id,license:'CC0-1.0',messages:[{role:'user',content},{role:'assistant',content:'answer'}]});
+  const rows=[row('a','a','algebra diagonal matrix'),row('b','b','historic sailing knots'),row('c','c','mineral crystal structure'),
+    row('ab','b','algebra diagonal matrix'),row('bc','c','historic sailing knots')];
+  const prep=prepareRows(rows,{seed:17,ratios:{test:0.2,validation:0.3}});
+  assert.equal(prep.stats.exact_duplicates,2);
+  assert.deepEqual(Object.values(prep.splits).filter(x=>x.length).map(x=>x.map(r=>r.id)),[['a','b','c']]);
+  assert.equal(new Set(Object.values(prep.splits).flat().map(r=>r._group)).size,1);
+  const {c,ds}=await setup();
+  try{
+    const manifest=structuredClone(ds.manifest),shards={...ds.shards};
+    const train=JSON.parse(shards[manifest.shards.train[0].sha256]);
+    const test=JSON.parse(shards[manifest.shards.test[0].sha256]);
+    test.rows[0].group_digest=train.rows[0].group_digest;
+    const altered=Buffer.from(canonicalJSON(test)),hash=sha256(altered);
+    shards[hash]=altered;manifest.shards.test[0].sha256=hash;
+    assert.throws(()=>c.registerDataset(manifest,shards),{code:'DATASET_SPLIT_OVERLAP'});
+  }finally{c.close();}
+});
+
+test('Test evaluation uses the final committed checkpoint, stays separate from Validation, and retries after a policy pause',async()=>{
+  let blocked=true,tests=0;
+  const {c,ds}=await setup({evaluate:async ({split,hash,round,checkpoint})=>{
+    assert.equal(sha256(checkpoint),hash);
+    if(split==='test'){tests++;return blocked?{status:'NOT RUN',reason:'governor paused evaluation'}:{status:'DONE',nll:0.25};}
+    assert.equal(split,'validation');
+    return {status:'DONE',nll:round===0?2:2.1};
+  }});
+  try{
+    const device=enroll(c),e=c.createExperiment(cfg({rounds:1,quorum:{mode:'all',target:1}}));
+    assert.throws(()=>c.evaluateTest(e.id),{code:'INVALID_TRANSITION'});
+    c.startExperiment(e.id);
+    const task=claim(c,device).task;
+    for(const s of ds.manifest.shards.test)assert.throws(()=>c.artifactFor(device.id,s.sha256),{code:'FORBIDDEN_SCOPE'});
+    submit(c,device,task);
+    const held=c.evaluateTest(e.id);
+    assert.equal(c.evaluateTest(e.id),held,'concurrent local requests share one evaluator job');
+    assert.equal((await held).status,'NOT RUN');
+    blocked=false;
+    const result=await c.evaluateTest(e.id);
+    assert.equal(result.split,'test');assert.equal(result.round,1);
+    assert.equal(result.checkpoint,c.latestCheckpoint(e.id).hash);
+    assert.equal(result.test_groups_sha256,ds.manifest.group_audit.fingerprints.test);
+    assert.equal((await c.evaluateTest(e.id)).nll,0.25);
+    assert.equal(tests,2,'a successful final Test result is reused');
+    const ev=c.status(e.id).eval;
+    assert.equal(ev.gate.passed,false,'an improved Test NLL cannot pass the Validation gate');
+    assert.equal(ev.rounds[1].nll,2.1);assert.equal(ev.test.nll,0.25);
+  }finally{c.close();}
+});
+
+test('continuation restores the committed global adapter, frozen A, and next scheduled rows',async()=>{
+  const {c,dir}=await setup(),d=enroll(c);
+  const base=cfg({rounds:2,seed:21,quorum:{mode:'all',target:1},eval:{initial:false,final:false}});
+  try{
+    const parent=c.createExperiment(base);
+    const started=c.startExperiment(parent.id);
+    const first=claim(c,d).task;
+    submit(c,d,first);
+    const saved=c.status(parent.id).checkpoint,next=claim(c,d).task;
+    c.cancelExperiment(parent.id);
+    const initial_checkpoint={experiment_id:parent.id,sha256:saved.sha256},input={...base,rounds:1,initial_checkpoint};
+    assert.throws(()=>c.dryRun({...input,seed:base.seed+1}),{code:'CHECKPOINT_INCOMPATIBLE'});
+    assert.throws(()=>c.dryRun({...input,initial_checkpoint:{...initial_checkpoint,sha256:started.initial_hash}}),{code:'CHECKPOINT_INCOMPATIBLE'});
+    c.registerVariant({profile_id:T.id,variant_id:'mock',files_digest:'9'.repeat(64)});
+    assert.throws(()=>c.dryRun(input),{code:'CHECKPOINT_INCOMPATIBLE'});
+    c.registerVariant({profile_id:T.id,variant_id:'mock',files_digest:null});
+    const resumed=c.createExperiment({...input,initial_checkpoint:{...initial_checkpoint,row_offset:0}});
+    assert.equal(resumed.initial_adapter_sha256,saved.sha256);
+    assert.equal(resumed.config.initial_checkpoint.row_offset,base.local_steps);
+    assert.equal(c.startExperiment(resumed.id).frozen_a_hash,started.frozen_a_hash);
+    assert.equal(c.latestCheckpoint(resumed.id).hash,saved.sha256);
+    const task=claim(c,d).task;
+    assert.equal(task.base_adapter_hash,saved.sha256);
+    assert.deepEqual(task.row_ids,next.row_ids);
+    submit(c,d,task);
+    assert.equal(c.status(resumed.id).state,'COMPLETED');
+    assert.equal(c.status(parent.id).state,'CANCELLED');
+    const chain=c.dryRun({...input,initial_checkpoint:{experiment_id:resumed.id,sha256:c.latestCheckpoint(resumed.id).hash}});
+    assert.equal(chain.config.initial_checkpoint.row_offset,2*base.local_steps);
+    const out=path.join(dir,'continued.zip');
+    exportReport(c,{experiment_id:resumed.id,out,include_weights:true});
+    assert.equal(verifyReport(out).ok,true);
+  }finally{c.close();}
 });
 test('N01 duplicate alias: two installations stay distinct devices; re-pair with a different key is a conflict',async()=>{
   const {c}=await setup();const a=enroll(c,'Laptop'),b=enroll(c,'Laptop');

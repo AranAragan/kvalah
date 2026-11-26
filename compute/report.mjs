@@ -49,10 +49,14 @@ export function verifyReport(file){
   // Lineage: round k parent = round k-1 committed checkpoint, round 0 parent = initial.
   const committed=rounds.filter(r=>r.state==='COMMITTED').sort((a,b)=>a.idx-b.idx);
   let prev=exp.initial_hash,lineageOk=true;
+  const source=exp.config.initial_checkpoint;
+  if(source&&((prev!==null&&source.sha256!==prev)||!Number.isSafeInteger(source.source_round)||source.source_round<1||
+    !Number.isSafeInteger(source.row_offset)||source.row_offset<1||source.experiment_id===exp.id))lineageOk=false;
   for(const r of committed){if(r.parent_hash!==prev)lineageOk=false;prev=r.checkpoint_hash;}
   checks.push({check:'lineage',ok:lineageOk});if(!lineageOk)problems.push('lineage broken');
   if(w(exp.initial_hash)){
-    let aOk=true,aggOk=true;
+    let aOk=frozenAHash(verifyTensors(decode(w(exp.initial_hash)).tensors,p,true))===exp.frozen_a_hash,aggOk=true;
+    if(!aOk)problems.push('initial checkpoint frozen A differs');
     for(const r of committed){
       const base=decode(w(r.parent_hash)).tensors;
       const ups=(r.accepted||[]).map(a=>({id:a.task_id,weight:a.weight,tensors:verifyTensors(decode(w(a.payload_sha)).tensors,p,false)}));

@@ -14,6 +14,34 @@
 4. Training Lab: register variants (local + *Reported by approved devices*), import dataset, dry run, start.
 5. Monitoring → wait for COMPLETED → export report → verify report.
 
+## Local MLX conversions, Test evaluation and continuation
+
+1. Convert the pinned official BF16 model on Apple Silicon with the Research Pilot's `convert_mlx.py`.
+   In **Laboratory → Models and data → Import MLX conversion**, select the external `.provenance.json`,
+   the clean BF16 folder used for conversion, and the MLX output folder. The coordinator can read
+   copies of all three on Windows. Review the conversion process before confirming it. The same import
+   is available as `import-mlx --manifest FILE --source-dir DIR --output-dir DIR --reviewed`.
+2. Compute verifies the official source file inventory against the pinned Hub commit and checks Git/LFS
+   hashes, then verifies the SHA-256 inventory and the architecture and packed Q/V tensors of the MLX
+   output. The registry distinguishes verified official source weights from an unsigned local
+   conversion attestation. For claims that depend on correct numerical conversion, retain evidence
+   from a trusted conversion process or independently reproduce it. For participation, select the
+   verified output folder on the Mac worker and run its usual preflight. Research still requires
+   administrator confirmation, verified provenance for all variants, and a completed matching Pilot.
+3. Import the combined JSONL with a new revision to audit the Train, Validation and Test splits.
+   Explicit dialogue group IDs and detected exact/near duplicates are grouped transitively before
+   splitting. Near-duplicate detection is heuristic. The group audit is stored with the shard hashes.
+   In the monitor for a completed experiment, **Evaluate on Test** uses the final committed adapter
+   and a trusted local evaluator under the Resource Governor. The export records Test metrics apart
+   from Validation and its Research Gate. A legacy revision can still run its original workflow.
+   Test evaluation needs a nonempty audited Test split. Keep it held out while tuning the experiment.
+4. In **Experiments** or the monitor, choose **Continue from adapter**. This starts a new experiment
+   from a committed global checkpoint in this laboratory. Keep the source profile, selected base
+   model digests, dataset revision, context length and seed. The new run retains frozen A and begins
+   at the next scheduled row position after the selected round. The position accounts for all slots
+   in committed rounds, including slots excluded by fault-tolerant quorum. In a CLI configuration,
+   add `initial_checkpoint: {experiment_id, sha256}` with the source experiment and checkpoint hash.
+
 ## CLI (same controller as the app)
 `node compute/cli.mjs --help` (Mac/Linux from source) or, from an installed Windows build,
 `$env:ELECTRON_RUN_AS_NODE=1; & kvalah.exe resources\app\compute\cli.mjs <cmd> … 2>&1 | Out-Host`.

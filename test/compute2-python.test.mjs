@@ -7,6 +7,13 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
 const py=python(['torch','transformers','peft','tokenizers','safetensors']);
+const mistralPython=python(['transformers','mistral_common']);
+
+test('MistralCommon finetuning masks only assistant turns in English and Russian',{skip:mistralPython?false:'needs KVALAH_COMPUTE_PYTHON with mistral_common'},()=>{
+  const result=spawnSync(mistralPython,[path.join(PY_ROOT,'tests','check_mistral_masks.py')],{
+    encoding:'utf8',env:{...process.env,PYTHONPATH:PY_ROOT,PYTHONUTF8:'1',HF_HUB_OFFLINE:'1',TRANSFORMERS_OFFLINE:'1'}});
+  assert.equal(result.status,0,result.stderr||result.stdout);
+});
 test('backend checks: SFT mask, torch↔MLX parity, PEFT round trip, Mistral3 target discovery',{skip:py?false:'needs KVALAH_COMPUTE_PYTHON with torch, transformers, peft',timeout:600000},t=>{
   const r=spawnSync(py,[path.join(PY_ROOT,'tests','check_backends.py')],{encoding:'utf8',env:{...process.env,PYTHONPATH:PY_ROOT,KVALAH_COMPUTE_TEST:'1',HF_HUB_OFFLINE:'1'},maxBuffer:16e6});
   let rep;try{rep=JSON.parse(r.stdout.trim().split('\n').pop());}catch{assert.fail('no report: '+r.stderr.slice(-1500));}
