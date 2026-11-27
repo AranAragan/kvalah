@@ -80,6 +80,17 @@ test('detected architecture drives the builder and the live sidecar trains, eval
       assert.equal(assessed.control.tokens,3);
       assert.equal(assessed.candidate.tokens,3);
       assert.ok(Number.isFinite(assessed.candidate.nll_sum));
+      if(kind==='ffn'){
+        const composed={backend:'torch-cpu-test',model_files_digest:verified.files_digest,experts:[{spec,checkpoint:ck.file,sha256:ck.hash,
+          validation:validation.file,validation_sha256:validation.hash}],router:{mode:'uniform',top_k:1},loop:{start:0,end:2,passes:2},max_length:96,
+          paths:{model_dir:model}};
+        const comparison=await sc.call('fusion_compare',composed).promise;
+        assert.equal(comparison.tokens,3);
+        assert.ok(Number.isFinite(comparison.candidate_nll));
+        const generated=await sc.call('fusion_generate',{...composed,prompt:'What is 2 + 2?',max_new_tokens:2}).promise;
+        assert.equal(typeof generated.text,'string');
+        assert.ok(generated.generated_tokens<=2);
+      }
     }
     assert.equal(events.filter(e=>e.type==='step').length,6);
     assert.deepEqual(await sc.call('release_model').promise,{resident:false});

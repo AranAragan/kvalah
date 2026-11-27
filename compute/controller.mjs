@@ -599,6 +599,8 @@ export function createController({dir,secretBox=fileSecretBox,startSidecar=rawSi
         return svc().startFusion(b);
       }
       case 'fusion/control':return svc().controlFusion(b.id,b.action);
+      case 'fusion/compose':return svc().evaluateComposition(b);
+      case 'fusion/generate':return svc().generateFusion(b);
       case 'policy/preset':{
         if(!Object.hasOwn(participationProfiles,b.id))fail('INVALID_SCHEMA','unknown participation profile');
         return setPolicy({...participationProfiles[b.id],profile:b.id==='gentle'?'gentle':'custom'},b.revision);

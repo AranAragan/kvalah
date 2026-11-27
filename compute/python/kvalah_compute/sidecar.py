@@ -362,8 +362,14 @@ def fusion_operation(msg):
     _release_legacy()
     return run(msg,permit=wait_permit,emit=emit,evaluation=msg["cmd"]=="fusion_evaluate")
 
+def composed_operation(msg):
+    from .fusion_composed import run
+    _release_legacy()
+    return run(msg,permit=wait_permit,emit=emit,infer=msg["cmd"]=="fusion_generate")
+
 HANDLERS = {"preflight": preflight, "probe": probe, "verify_model": verify_model, "train": train, "evaluate": evaluate, "tokenize": tokenize, "export_peft": export_peft, "release_model": release_model}
 HANDLERS.update(fusion_train=fusion_operation,fusion_evaluate=fusion_operation)
+HANDLERS.update(fusion_compare=composed_operation,fusion_generate=composed_operation)
 
 def main():
     while True:

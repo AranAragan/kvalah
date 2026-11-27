@@ -12,11 +12,12 @@ from tempfile import TemporaryDirectory
 
 import numpy as np
 import psutil
-from safetensors.numpy import save_file
+from safetensors.numpy import load_file,save_file
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"compute"/"python"))
 from kvalah_compute import fusion_runtime,sidecar
 from kvalah_compute.canonical import sha256_file
+from kvalah_compute.fusion_ministral import loop_text_layers
 
 
 def guard(coordinator_db,cold=False):
@@ -61,6 +62,7 @@ def main(args):
         rows_file=folder/"train.json"
         rows_file.write_text(json.dumps({"split":"train","rows":[row]}),encoding="utf-8")
         rng=np.random.default_rng(934)
+        fitted=[]
         for kind in ("ffa-lora","lora","ffn"):
             spec={"key":kind.replace("-","_"),"kind":kind,"layers":[0],"rank":8,"alpha":16,"intermediate":128}
             layout=fusion_runtime.schema_for(spec,3072,26)
@@ -81,18 +83,66 @@ def main(args):
                     "paths":{"model_dir":str(args.model.resolve()),"checkpoint":str(ck),"rows":str(rows_file),
                              "result":str(folder/f"{kind}.update.safetensors")}},permit=lambda _,step:guard(args.coordinator_db,cold=step==0 and kind=="ffa-lora"),emit=emit)
                 result.pop("update_path")
+                updated=load_file(folder/f"{kind}.update.safetensors")
+                full=folder/f"{kind}.fitted.safetensors"
+                save_file({**initial,**updated},full)
+                fitted.append((spec,layout,full))
                 output.write(json.dumps({"classification":"MEASURED","backend":"cuda-nf4","expert":kind,"model_files_digest":digest,
                     "initial_telemetry":guarded,"wall_s":time.perf_counter()-start,"events":events,**result})+"\n")
                 output.flush()
                 time.sleep(next(e["compute_ms"] for e in events if e["type"]=="step")*.009)
             finally:
                 sidecar.emit=old
+        if args.loop_probe:
+            import torch
+            backend=next_backend(args,digest)
+            try:
+                for spec,layout,checkpoint in fitted:
+                    backend.install(spec,checkpoint,layout,append=True)
+                backend.model.requires_grad_(False)
+                rows=list(backend.layers[0].router.parameters())
+                for p in rows:p.requires_grad_(True)
+                router_before=[p.detach().clone() for p in rows]
+                backend.model.train()
+                guard(args.coordinator_db)
+                with loop_text_layers(backend.model,start=0,end=2,passes=2) as gates:
+                    gate_before=gates.detach().clone()
+                    opt=torch.optim.SGD([*rows,gates],lr=.05)
+                    start=time.perf_counter()
+                    nll,_,targets=backend.objective(row)
+                    loss=nll/targets.numel()
+                    loss.backward()
+                    router_norm=sum(float(p.grad.norm()) for p in rows if p.grad is not None)
+                    loop_norm=float(gates.grad.norm())
+                    if not np.isfinite(router_norm+loop_norm) or not router_norm or not loop_norm:
+                        raise RuntimeError("non-finite or zero Router/Loop gradient")
+                    opt.step()
+                    torch.cuda.synchronize()
+                    if torch.equal(gates,gate_before) or not any(not torch.equal(a,b) for a,b in zip(rows,router_before,strict=True)):
+                        raise RuntimeError("Router/Loop optimizer did not change parameters")
+                    duration=time.perf_counter()-start
+                    output.write(json.dumps({"classification":"MEASURED","backend":"cuda-nf4","expert":"moe-loop-probe",
+                        "model_files_digest":digest,"trainable_router_grad_norm":router_norm,"loop_gate_grad_norm":loop_norm,
+                        "loop":{"start":0,"end":2,"passes":2},"nll":float(loss.detach()),"supervised_tokens":targets.numel(),
+                        "step_wall_s":duration,"shared_backbone":True,**backend.metrics()})+"\n")
+                    output.flush()
+                time.sleep(duration*9)
+            finally:
+                backend.clear()
     fusion_runtime.release()
+
+
+def next_backend(args,digest):
+    backend,warm=fusion_runtime.acquire({"id":"moe-loop-probe","backend":"cuda","model_files_digest":digest,
+        "paths":{"model_dir":str(args.model.resolve())}},lambda *_:guard(args.coordinator_db),lambda *_:None)
+    if not warm:raise RuntimeError("expected a resident NF4 model")
+    return backend
 
 
 if __name__=="__main__":
     parser=argparse.ArgumentParser(description=__doc__)
     for opt in ("archive","model","coordinator-db","out"):
         parser.add_argument("--"+opt,type=Path,required=True)
+    parser.add_argument("--loop-probe",action="store_true")
     try:main(parser.parse_args())
     finally:fusion_runtime.release()

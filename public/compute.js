@@ -26,6 +26,7 @@
   let S=null,tab='overview',open=false,busy=false,timer=null,selExp=null,expData=null,coordEvents=[],plan=null,pairing=null,lastResult={};
   let fusionState=null,fusionTab='summary',fusionEstimate=null,fusionError=null;
   let fusionLayers=new Set([0]);
+  let fusionOutput=null;
   let mode=localStorage.getItem('kvalah-compute-mode')==='laboratory'?'laboratory':'contribution';
   let refreshId=0,stale=false,hardware=null,smoke=null,requestId=null,smokeIds=[],expanded=new Set(),invitationEpoch=0;
   const presets={gentle:10,balanced:25,productive:50};
@@ -603,13 +604,25 @@
       fx('Участвует в заданиях Fusion при соблюдении ограничений Compute.','Eligible for Fusion jobs within the Compute resource policy.'):
       fx('Участие в заданиях Fusion выключено.','Fusion job participation is off.'))+
       row(btn('fusion-worker-toggle',S.policy?.fusion_training?fx('Остановить участие','Stop participation'):fx('Разрешить задания Fusion','Allow Fusion jobs'))))+labDevices();
-    if(fusionTab==='models')return controls+panel(fx('Композиции','Compositions'),models.map(m=>card(short(m.hash),kv([
+    if(fusionTab==='models'){
+      const available=experts.filter(e=>e.checkpoint?.assessment?.passed&&['VALIDATED','PUBLISHED'].includes(e.status));
+      const draft=available.length?panel(fx('Новая композиция','New composition'),'<fieldset class="kc-field"><legend>'+esc(fx('Проверенные эксперты','Validated experts'))+'</legend>'+
+        available.map(e=>'<label class="kc-check"><input id="fxExpert_'+esc(e.id)+'" type="checkbox" data-fusion-expert="'+esc(e.id)+'"> '+esc(e.name)+'</label>').join('')+'</fieldset>'+
+        '<div class="kc-experience-grid">'+field('fxComposeStart',fx('Начало Loop','Loop start'),0,{type:'number'})+field('fxComposeEnd',fx('Конец Loop','Loop end'),Math.min(base?.layers??1,4),{type:'number'})+
+        choose('fxComposePasses',fx('Проходы','Passes'),[[1,1],[2,2],[3,3],[4,4]])+'</div>'+
+        plain(fx('Равномерная маршрутизация. Публикация доступна после доверенной Validation.','Uniform routing. Publishing requires trusted Validation.'),'kc-caption')+
+        row(btn('fusion-compose',fx('Собрать и проверить','Compose and evaluate'),{primary:true}))):'';
+      return controls+draft+panel(fx('Композиции','Compositions'),models.map(m=>card(short(m.hash),kv([
       [fx('Статус','Status'),esc(m.status)], [fx('Эксперты','Experts'),m.envelope.manifest.experts.length],
       [fx('Маршрутизатор','Router'),esc(m.envelope.manifest.router.mode)],[fx('Проходы','Passes'),m.envelope.manifest.loop.passes],
       ['Validation NLL',m.assessment?.candidate_nll??'—']])+row(m.hash===active?pill(fx('Активна','Active'),'good'):
-        m.status==='VALIDATED'?btn('fusion-publish',fx('Опубликовать','Publish'),{arg:m.hash}):
+        m.status==='CANDIDATE'?btn('fusion-recheck',fx('Проверить','Evaluate'),{arg:m.hash}):m.status==='VALIDATED'?btn('fusion-publish',fx('Опубликовать','Publish'),{arg:m.hash}):
         m.status==='PUBLISHED'?btn('fusion-rollback',fx('Вернуться к версии','Roll back to version'),{arg:m.hash}):''))).join('')||
-      plain(fx('Композиции создаются после проверки экспертных checkpoint','Create compositions after validating expert checkpoints')));
+      plain(fx('Композиции создаются после проверки экспертных checkpoint','Create compositions after validating expert checkpoints')))+
+        (active?panel(fx('Локальный инференс','Local inference'),'<label class="kc-field"><span>'+esc(fx('Запрос к опубликованной версии','Prompt for the published version'))+
+        '</span><textarea id="fxPrompt" maxlength="4096" rows="3"></textarea></label>'+row(btn('fusion-infer',fx('Запустить','Generate'),{primary:true}))+
+          (fusionOutput?plain(fusionOutput.text||fx('Модель завершила ответ','The model ended its response'),'kc-fusion-output'):'')):'');
+    }
     return controls+panel(fx('Диагностика','Diagnostics'),kv([[fx('Ключ подписания','Signing public key'),esc(fusionState.public_key)],
       [fx('Связь с координатором Compute','Compute coordinator'),esc(S.lab?.info?.endpoint??ct('none'))]]));
   }
@@ -750,6 +763,13 @@
       domain:val('fxDomain'),kind:val('fxKind'),layers:[...fusionLayers],rank:numv('fxRank'),intermediate:numv('fxExpertWidth'),training_mode:val('fxTrainingMode')}),'fusion'),
     'fusion-archive':el=>{const e=fusionState?.experts.find(x=>x.id===el.dataset.arg);if(e)run(()=>fusionCall('expert/archive',{id:e.id,from:e.status}),'fusion');},
     'fusion-publish':el=>run(()=>fusionCall('models/publish',{hash:el.dataset.arg}),'fusion'),
+    'fusion-compose':()=>run(()=>fusionCall('compose',{
+      experts:[...body().querySelectorAll('[data-fusion-expert]:checked')].map(el=>{
+        const e=fusionState.experts.find(x=>x.id===el.dataset.fusionExpert);return {id:e.id,version:e.version};
+      }),loop:{start:numv('fxComposeStart'),end:numv('fxComposeEnd'),passes:numv('fxComposePasses')}
+    }),'fusion'),
+    'fusion-recheck':el=>run(()=>fusionCall('compose',{hash:el.dataset.arg}),'fusion'),
+    'fusion-infer':()=>run(async()=>{fusionOutput=await fusionCall('generate',{prompt:val('fxPrompt')});},'fusion'),
     'fusion-rollback':el=>run(()=>fusionCall('models/rollback',{hash:el.dataset.arg}),'fusion'),
     'fusion-estimate':()=>run(async()=>{
       const n=numv('fxExperts');

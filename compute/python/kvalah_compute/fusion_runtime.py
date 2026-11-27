@@ -118,11 +118,11 @@ class TorchFusion:
             slot.experts.clear()
             slot.router.rows.clear()
 
-    def install(self,spec,file,schema):
+    def install(self,spec,file,schema,*,append=False):
         import torch
         from safetensors import safe_open
         from .fusion_ministral import insert_expert
-        self.empty_expert()
+        if not append:self.empty_expert()
         modules=insert_expert(self.layers,name=spec["key"],kind=spec["kind"],layers=spec["layers"],rank=spec.get("rank"),
                               alpha=spec.get("alpha"),intermediate=spec.get("intermediate"))
         self.parts={f"layers.{i}.fusion.{key}":p for i,m in modules.items() for key,p in m.named_parameters()}
@@ -205,7 +205,7 @@ class TorchFusion:
             gc.collect();torch.cuda.empty_cache()
 
 
-def run(msg,*,permit,emit,evaluation=False):
+def acquire(msg,permit,emit):
     global _resident
     from .sidecar import verify_model
     cid=msg["id"]
@@ -231,6 +231,13 @@ def run(msg,*,permit,emit,evaluation=False):
         _resident=(signature,backend)
     backend=_resident[1]
     emit({"type":"loaded","id":cid,"cache_hit":warm,"model_load_s":(time.perf_counter()-t0)})
+    return backend,warm
+
+
+def run(msg,*,permit,emit,evaluation=False):
+    cid=msg["id"]
+    paths=msg["paths"]
+    backend,warm=acquire(msg,permit,emit)
     spec=msg["expert"]
     schema=schema_for(spec,backend.width,len(backend.layers))
     src=checked_path(paths["checkpoint"])

@@ -13,6 +13,7 @@ import {startSidecar as defaultSidecar} from '../worker/sidecar.mjs';
 import {parseJSONL,buildDataset} from '../datasets/engine.mjs';
 import {getProfile} from '../protocol/schema.mjs';
 import {fail,ComputeError} from '../protocol/errors.mjs';
+import {hashJSON,sha256} from '../protocol/hash.mjs';
 import {exportReport} from '../report.mjs';
 import {PINNED,verifyAgainstHub} from '../registry.mjs';
 import {researchProvenance,verifyLocalConversion} from '../mlx-conversion.mjs';
@@ -232,7 +233,69 @@ export function createCoordinatorService({dir,startSidecar=defaultSidecar,evalua
     fs.writeFileSync(path.join(fusionDir,'production-work'),'1\n',{mode:0o600});
     return result;
   }
+  async function composedWork(input,{infer=false}={}){
+    managed();
+    const rt=evaluator();
+    if(!rt?.python||!rt.model_dir||!['cuda','torch-cpu-test'].includes(rt.backend))fail('RUNTIME_REQUIRED','composed Fusion requires its verified Torch runtime');
+    if(!canRunHeavy().run||fusionEvalBusy||evalBusy)fail('PAUSED','the local resource policy has reserved the training runtime');
+    const composing=!infer&&!input.hash;
+    const editable=composing&&(Array.isArray(input.experts)&&input.experts.length>=1&&input.experts.length<=8);
+    if(composing&&!editable)fail('INVALID_SCHEMA','choose one to eight validated experts');
+    let candidate=infer?fusionRegistry.active():composing?null:fusionRegistry.composition(input.hash);
+    if(infer&&(!candidate||candidate.status!=='PUBLISHED'))fail('CONFLICT','publish a verified composition before inference');
+    if(!infer&&candidate&&candidate.status!=='CANDIDATE')fail('CONFLICT','only an unevaluated candidate can be checked');
+    const references=composing?input.experts:candidate.envelope.manifest.experts;
+    if(!references.length||references.length>8||!references.every(r=>Number.isSafeInteger(r.version)&&r.version>0))fail('INVALID_SCHEMA','invalid expert version set');
+    const experts=references.map(r=>fusionRegistry.get(r.id,r.version));
+    const base=experts[0].base;
+    if(base.backbone_sha256!==rt.files_digest||experts.some(e=>hashJSON(e.base)!==hashJSON(base)))fail('MODEL_UNVERIFIED','composition differs from the loaded backbone');
+    const loop=composing?input.loop:candidate.envelope.manifest.loop;
+    if(candidate&&candidate.envelope.manifest.router.mode!=='uniform')fail('ARCHITECTURE','this composed runtime supports uniform routing');
+    const datasets=coord.listDatasets(),groups=new Map(),byDataset=new Map();
+    let context=256;
+    if(!infer){
+      for(const e of experts){
+        if(byDataset.has(e.dataset_sha256))continue;
+        const ds=datasets.find(d=>d.manifest_hash===e.dataset_sha256&&d.group_audited);
+        if(!ds)fail('DATASET_REQUIRED','composition needs audited expert Validation data');
+        const original=coord.datasetManifest(ds.id),selected=[];
+        context=Math.max(context,original.max_length);
+        for(const [split,shards] of Object.entries(original.shards)){
+          for(const shard of shards){
+            const {rows}=JSON.parse(coord.cas.get(shard.sha256,{maxBytes:16*1024**2}).toString('utf8'));
+            for(const row of rows){
+              const former=groups.get(row.group_digest);
+              if(former&&former!==split)fail('DATASET_SPLIT_OVERLAP','composition dataset group crosses Train, Validation or Test');
+              groups.set(row.group_digest,split);
+              if(split==='validation'&&selected.length<32)selected.push({input_ids:row.input_ids,target_mask:row.target_mask});
+            }
+          }
+        }
+        if(!selected.length)fail('DATASET_REQUIRED','composition is missing Validation rows');
+        byDataset.set(e.dataset_sha256,Buffer.from(JSON.stringify({split:'validation',rows:selected})));
+      }
+      if(composing)candidate=fusionRegistry.assemble({base,experts:references,loop,router:{mode:'uniform',top_k:1}});
+    }
+    fusionEvalBusy=true;
+    const d=fs.mkdtempSync(path.join(work,'fusion-composed-'));
+    try{
+      const specs=experts.map((e,i)=>{
+        const ck=path.join(d,'expert-'+i+'.safetensors'),validation=path.join(d,'val-'+i+'.json'),sample=byDataset.get(e.dataset_sha256);
+        fs.writeFileSync(ck,fusionRegistry.cas.get(e.checkpoint.hash));
+        if(sample)fs.writeFileSync(validation,sample);
+        return {checkpoint:ck,sha256:e.checkpoint.hash,validation:sample?validation:null,validation_sha256:sample?sha256(sample):null,
+          spec:{key:e.key,kind:e.kind,layers:e.layers,rank:e.rank,alpha:e.alpha,intermediate:e.tensors.find(t=>t.name.endsWith('.gate.weight'))?.shape[0]??null,
+            training_mode:e.tensors.find(t=>t.name.endsWith('.gate.weight'))?.trainable===false?'down':'full'}};
+      });
+      const result=await withSidecar(rt,sc=>sc.call(infer?'fusion_generate':'fusion_compare',{backend:rt.backend,model_files_digest:rt.files_digest,
+        experts:specs,paths:{model_dir:rt.model_dir},router:candidate.envelope.manifest.router,loop:candidate.envelope.manifest.loop,
+        max_length:context,prompt:infer?input.prompt:null,max_new_tokens:infer?input.max_new_tokens??32:null}).promise,{heavy:true});
+      if(infer)return {hash:candidate.hash,...result};
+      return fusionRegistry.assess(candidate.hash,{dataset_sha256:hashJSON(specs.map(s=>s.validation_sha256)),...result});
+    }finally{fs.rmSync(d,{recursive:true,force:true});fusionEvalBusy=false;}
+  }
   return {coord,start,stop,info,createPairing,verifyModel,registerModel,checkProvenance,importMlxConversion,importDataset,evaluate,
     startFusion,fusionRuns:()=>fusionQueue?.list()??[],controlFusion:(id,action)=>managed().control(id,action),
+    evaluateComposition:input=>composedWork(input),generateFusion:input=>composedWork(input,{infer:true}),
     exportReport:o=>exportReport(coord,o),close:async()=>{closed=true;await stop();fusionRegistry?.close();coord.close();}};
 }
