@@ -183,16 +183,16 @@ def looped(model,loop,gates):
 
 def generate(msg,model,loop,gates,permit,step):
     import torch
-    from .tokenize_rows import load_tokenizer
+    from .tokenize_rows import load_tokenizer,tokenize_prefix
     text=msg.get("prompt")
     maximum=msg.get("max_new_tokens",32)
     if not isinstance(text,str) or not text.strip() or len(text)>4096 or type(maximum)!=int or not 1<=maximum<=128:
         raise SidecarError("INVALID_SCHEMA","invalid Fusion prompt or generation length")
     train,serving,_=load_tokenizer(msg["paths"]["model_dir"])
     tokenizer=serving or train
-    inputs=tokenizer.apply_chat_template([{"role":"user","content":text}],tokenize=True,add_generation_prompt=True,return_tensors="pt")
-    if not isinstance(inputs,torch.Tensor):inputs=inputs["input_ids"]
-    inputs=inputs.to(next(model.parameters()).device)
+    tokens=tokenize_prefix(train,[{"role":"user","content":text}],prefix_tokenizer=serving)
+    if not tokens:raise SidecarError("INVALID_SCHEMA","Fusion prompt has no model input tokens")
+    inputs=torch.tensor([tokens],dtype=torch.long,device=next(model.parameters()).device)
     maximum_context=msg.get("max_length",256)
     if inputs.shape[-1]+maximum>maximum_context:raise SidecarError("INVALID_SCHEMA","Fusion context budget exceeded")
     result=[]

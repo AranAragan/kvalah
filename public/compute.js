@@ -530,6 +530,8 @@
       TRAINING:fx('Обучается','Training'),PAUSED:fx('На паузе','Paused'),AGGREGATING:fx('Агрегация','Aggregating'),
       EVALUATING:fx('Проверка на Validation','Validation in progress'),VALIDATED:fx('Проверен','Validated'),
       REJECTED:fx('Порог качества не пройден','Quality threshold not met'),PUBLISHED:fx('Опубликован','Published'),
+      QUEUED:fx('В очереди','Queued'),DONE:fx('Завершено','Completed'),FAILED:fx('Ошибка стадии','Stage failed'),
+      CANCELLED:fx('Отменено','Cancelled'),PAUSED_EVALUATION:fx('Проверка на паузе','Validation paused'),
       STOPPED:fx('Остановлен','Stopped'),ARCHIVED:fx('В архиве','Archived')})[status]??status;
     const choose=(id,label,options)=>'<label class="kc-field"><span>'+esc(label)+'</span><select id="'+id+'">'+
       options.map(([value,name])=>'<option value="'+esc(value)+'">'+esc(name)+'</option>').join('')+'</select></label>';

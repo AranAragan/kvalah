@@ -19,6 +19,12 @@ def _render(tok, msgs, gen, **options):
         ids = ids[0]
     return [int(x) for x in ids]
 
+def tokenize_prefix(tok, msgs, *, prefix_tokenizer=None):
+    if prefix_tokenizer is None:
+        return _render(tok, msgs, True)
+    # Serving-mode validation requires a model identifier. Tokenization is local.
+    return _render(prefix_tokenizer, msgs, True, model="local-sft")
+
 def tokenize_row(tok, row, max_length, *, prefix_tokenizer=None):
     msgs = [{"role": m["role"], "content": m["content"]} for m in row["messages"]]
     if not msgs or msgs[-1]["role"] != "assistant":
@@ -34,12 +40,7 @@ def tokenize_row(tok, row, max_length, *, prefix_tokenizer=None):
             continue
         if i == 0:
             return None, "missing_assistant_prefix"
-        if prefix_tokenizer is None:
-            pre = _render(tok, msgs[:i], True)
-        else:
-            # Serving mode accepts a user-ended prefix. Its model identifier is
-            # required by request validation and is never used to load a model.
-            pre = _render(prefix_tokenizer, msgs[:i], True, model="local-sft")
+        pre = tokenize_prefix(tok, msgs[:i], prefix_tokenizer=prefix_tokenizer)
         upto = _render(tok, msgs[:i + 1], False)
         if upto[:len(pre)] != pre:
             return None, "template_prefix_mismatch"

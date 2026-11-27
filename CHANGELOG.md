@@ -5,6 +5,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.10.0-fusion.1.dev.3] - 2026-11-27
+
+- Use the central serving-prefix encoder for Expert Fusion inference. MistralCommon now receives the local model identifier required for user-ended generation requests.
+
 ## [0.10.0-fusion.1.dev.2] - 2026-11-27
 
 Test build for Expert Fusion reacceptance. Physical Fusion‑01 remains open.

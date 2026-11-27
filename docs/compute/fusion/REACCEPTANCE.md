@@ -1,4 +1,4 @@
-# Expert Fusion v0.10.0-fusion.1.dev.2 reacceptance
+# Expert Fusion v0.10.0-fusion.1.dev.3 reacceptance
 
 The experimental branch retains the accepted Compute Worker, large artifact transfer, file-backed FedAvg and visual architecture builder from `d5a49d0`. The table records the evidence and the scope of the remaining hardware acceptance.
 
@@ -27,6 +27,8 @@ The experimental branch retains the accepted Compute Worker, large artifact tran
 Physical Fusion‑01, five federated rounds per expert across the three laptops and specialized independent holdout quality are NOT RUN. The five-round coordinator regression uses deterministic fixture updates. The isolated MSI sidecar test uses verified Ministral 3B NF4 with archived Train data read only. It exercises multiple optimizer steps per stage on a single physical GPU. See the raw measurements for the observed completion and abort conditions. The original R60 is untouched.
 
 At a 128-token context, the MSI finished five actual optimizer steps for FFA‑LoRA, LoRA and FFN with 327, 226 and 281 supervised tokens, respectively. The same verified backbone stayed resident for the second and third expert. An attempted 256-token run stopped at the free-VRAM floor. The 128-token expert pass stopped before the integration stage when free system RAM fell below the minimum. [Raw independent expert measurements](measurements/dev2-cuda-experts.jsonl)
+
+A subsequent serial process trial completed five Router and five Loop optimizer steps on the MSI. Reload then exposed MistralCommon's mandatory serving-mode model identifier. The dev.3 inference path uses the same central user-ended prefix encoder as dataset preparation. The native tokenizer regression covers English and Russian one-turn and multi-turn prefixes.
 
 ## Reproduction
 

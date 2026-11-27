@@ -9,7 +9,7 @@ import unittest
 from mistral_common.tokens.tokenizers.base import SpecialTokens
 from transformers import AutoTokenizer
 
-from kvalah_compute.tokenize_rows import run
+from kvalah_compute.tokenize_rows import load_tokenizer, run, tokenize_prefix
 
 
 def make_tokenizer(path):
@@ -57,6 +57,7 @@ class MistralMasks(unittest.TestCase):
 
         reference = AutoTokenizer.from_pretrained(
             path, mode="finetuning", local_files_only=True, trust_remote_code=False)
+        train, serving, _ = load_tokenizer(path)
         self.assertEqual(reference.backend, "mistral_common")
         result = run(path, rows, 256)
         self.assertEqual(result["excluded"], [])
@@ -75,6 +76,8 @@ class MistralMasks(unittest.TestCase):
                 ends = [i + 1 for i, token in enumerate(ids) if token == eos]
                 answers = [msg["content"] for msg in source["messages"] if msg["role"] == "assistant"]
                 self.assertEqual(len(starts), len(answers))
+                prompt_end = source["messages"][:-1]
+                self.assertEqual(tokenize_prefix(train, prompt_end, prefix_tokenizer=serving), ids[:starts[-1]])
                 expected = [0] * len(ids)
                 for start, end, answer in zip(starts, ends, answers, strict=True):
                     self.assertEqual(ids[start:end], encoder.encode(answer, bos=False, eos=True))
