@@ -150,7 +150,8 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
     const variants=(Array.isArray(c.variants)?c.variants:[]).slice(0,8).map(v=>({profile_id:String(v.profile_id||'').slice(0,60),variant_id:String(v.variant_id||'').slice(0,40),files_digest:isHex64(v.files_digest)?v.files_digest:null}));
     return {backend:String(c.backend||'').slice(0,20),device_name:String(c.device_name||'').slice(0,60),precision:String(c.precision||'').slice(0,12),
       memory_total_bytes:Number.isFinite(c.memory_total_bytes)?c.memory_total_bytes:null,memory_free_bytes:Number.isFinite(c.memory_free_bytes)?c.memory_free_bytes:null,
-      unified_memory:!!c.unified_memory,preflight_ok:c.preflight_ok===true,preflight_max_length:[256,512].includes(c.preflight_max_length)?c.preflight_max_length:null,variants};
+      unified_memory:!!c.unified_memory,preflight_ok:c.preflight_ok===true,preflight_max_length:[256,512].includes(c.preflight_max_length)?c.preflight_max_length:null,
+      preflight_peak_bytes:Number.isSafeInteger(c.preflight_peak_bytes)&&c.preflight_peak_bytes>0?c.preflight_peak_bytes:null,variants};
   }
   function listDevices(){
     return db.prepare('select * from devices order by created_at').all().map(d=>{

@@ -686,7 +686,7 @@ const server=http.createServer(async(req,res)=>{
       if(!settings.computeV2||!settings.expertFusion)return json(res,{code:'DISABLED'},409);
       try{
         const sub=route.slice('/api/compute/fusion/'.length),input=req.method==='POST'?await body(req):{};
-        if(req.method==='POST'&&['start','control','compose','generate'].includes(sub))return json(res,await computeV2.request('POST','fusion/'+sub,input));
+        if(req.method==='POST'&&['start','control','compose','composition-control','generate'].includes(sub))return json(res,await computeV2.request('POST','fusion/'+sub,input));
         return json(res,await fusionLab.handle(req.method,sub,input));
       }
       catch(e){return json(res,{code:e.code||'ERROR',error:e.message},e.status>=400&&e.status<600?e.status:400);}

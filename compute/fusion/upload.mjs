@@ -7,7 +7,7 @@ import {checkStreamLayout,createStreamStore} from './stream.mjs';
 
 // Filesystem counterpart of Compute v0.3's begin/parts/complete protocol. Authorization stays
 // with the coordinator's device grant. The result is staged until an expert-specific validator seals it.
-export function createDiskUploads(root,{quotaBytes,maxArtifact,maxSessions=8,authorize,seal}){
+export function createDiskUploads(root,{quotaBytes,maxArtifact,maxSessions=8,now=Date.now,authorize,seal}){
   if(!Number.isSafeInteger(quotaBytes)||quotaBytes<2||!Number.isSafeInteger(maxArtifact)||maxArtifact<1)fail('INVALID_SCHEMA','upload quota is required');
   fs.mkdirSync(root,{recursive:true,mode:0o700});
   const disk=createStreamStore(path.join(root,'completed'),{quotaBytes:Math.floor(quotaBytes/2),artifactLimit:maxArtifact});
@@ -25,7 +25,7 @@ export function createDiskUploads(root,{quotaBytes,maxArtifact,maxSessions=8,aut
     const file=path.join(folder,'receipt.json');
     return fs.existsSync(file)?JSON.parse(fs.readFileSync(file,'utf8')):null;
   }
-  const completing=new Set();
+  const completing=new Set(),sealing=new Set();
   function atomic(folder,name,bytes){
     const temporary=path.join(folder,randomUUID()+'.tmp');
     try{fs.writeFileSync(temporary,bytes,{mode:0o600,flag:'wx',flush:true});fs.renameSync(temporary,path.join(folder,name));}
@@ -35,8 +35,8 @@ export function createDiskUploads(root,{quotaBytes,maxArtifact,maxSessions=8,aut
   function prune(){
     for(const dir of fs.readdirSync(root,{withFileTypes:true})){
       if(!dir.isDirectory()||!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(dir.name)||completing.has(dir.name))continue;
-      const folder=entry(dir.name),m=load(folder);
-      if(m.expires<=Date.now())fs.rmSync(folder,{recursive:true,force:true});
+      const folder=entry(dir.name);
+      if(!fs.existsSync(path.join(folder,'manifest.json'))||load(folder).expires<=now())fs.rmSync(folder,{recursive:true,force:true});
     }
   }
   return {
@@ -50,6 +50,7 @@ export function createDiskUploads(root,{quotaBytes,maxArtifact,maxSessions=8,aut
       if(fs.existsSync(folder)){
         const prior=load(folder);
         if(prior.device!==device||prior.tokens!==tokens||hashJSON(prior.artifact)!==hashJSON(declared))fail('DUPLICATE_DIFFERENT','upload declaration changed');
+        if(m.expires>prior.expires)atomic(folder,'manifest.json',JSON.stringify(m));
         return status(folder,prior);
       }
       let reserved=0,count=0;
@@ -86,8 +87,9 @@ export function createDiskUploads(root,{quotaBytes,maxArtifact,maxSessions=8,aut
       if(m.device!==device)fail('NOT_OWNER','Fusion upload belongs to another device');
       const prior=receipt(folder);
       if(prior)return prior;
-      if(completing.has(id)||missing(folder,m).length)fail('CONFLICT','Fusion upload is incomplete or already sealing');
+      if(completing.has(id)||sealing.has(m.artifact.sha256)||missing(folder,m).length)fail('CONFLICT','Fusion upload is incomplete or already sealing');
       completing.add(id);
+      sealing.add(m.artifact.sha256);
       try{
         const result=await disk.receive(m.artifact,(part,i)=>{
           authorize(device,id);
@@ -99,8 +101,9 @@ export function createDiskUploads(root,{quotaBytes,maxArtifact,maxSessions=8,aut
         const value=await seal(device,id,m,result.file);
         atomic(folder,'receipt.json',JSON.stringify(value));
         for(const i of m.artifact.parts.keys())fs.rmSync(path.join(folder,String(i)),{force:true});
+        disk.discard(m.artifact.sha256);
         return value;
-      }finally{completing.delete(id);}
+      }finally{completing.delete(id);sealing.delete(m.artifact.sha256);}
     }
   };
 }

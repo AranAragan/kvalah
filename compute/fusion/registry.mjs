@@ -19,8 +19,8 @@ const unsafeKeys=new Set(['constructor','prototype','__proto__']);
 const migrations={
   CREATED:['PROVISIONING','ARCHIVED'], PROVISIONING:['READY','PAUSED','REJECTED'], READY:['TRAINING','EVALUATING','ARCHIVED'],
   TRAINING:['PAUSED','AGGREGATING','EVALUATING','REJECTED'], PAUSED:['PROVISIONING','TRAINING','REJECTED','ARCHIVED'],
-  AGGREGATING:['READY','EVALUATING','REJECTED'], EVALUATING:['VALIDATED','REJECTED'], VALIDATED:['INTEGRATING','EVALUATING','ARCHIVED'],
-  INTEGRATING:['PUBLISHED','REJECTED','VALIDATED'], PUBLISHED:['ARCHIVED'], REJECTED:['ARCHIVED'], ARCHIVED:[]
+  AGGREGATING:['READY','EVALUATING','REJECTED'], EVALUATING:['VALIDATED','REJECTED'], VALIDATED:['TRAINING','INTEGRATING','EVALUATING','ARCHIVED'],
+  INTEGRATING:['PUBLISHED','REJECTED','VALIDATED'], PUBLISHED:['TRAINING','ARCHIVED'], REJECTED:['TRAINING','ARCHIVED'], ARCHIVED:[]
 };
 const positive=(n,max=Number.MAX_SAFE_INTEGER)=>Number.isSafeInteger(n)&&n>0&&n<=max;
 const validName=(key,pattern=ENTITY)=>typeof key==='string'&&pattern.test(key)&&!key.split('.').some(part=>unsafeKeys.has(part));
@@ -43,6 +43,11 @@ export function validateTensors(bytes,schema){
     for(const value of tensor.data)if(!Number.isFinite(value))fail('NONFINITE','non-finite expert weight');
   }
   return tensors;
+}
+
+function parameterSchemas(experts,base,loop){
+  return {router:experts.flatMap(e=>e.layers.map(i=>({name:`router.layers.${i}.${e.key}`,shape:[base.width]}))),
+    loop:loop.passes>1?[{name:'loop.gates',shape:[loop.passes-1]}]:[]};
 }
 
 export function normalizeExpert(input){
@@ -321,17 +326,21 @@ export function openFusion(root,{weightQuotaBytes=16*1024**3}={}){
       base=validateBase(base);
       const roles=Array.isArray(experts)&&experts.length<=4096;
       requireCondition(roles,'invalid expert list');
-      const modelLoop={start:loop.start??0,end:loop.end??0,passes:loop.passes??1};
+      const modelLoop={start:loop.start??0,end:loop.end??0,passes:loop.passes??1,...(loop.sha256?{sha256:loop.sha256}:null)};
       requireCondition(positive(modelLoop.passes,4)&&[modelLoop.start,modelLoop.end].every(x=>Number.isInteger(x)&&x>=0&&x<=base.layers)&&
         modelLoop.end>=modelLoop.start&&(modelLoop.passes===1||modelLoop.end>modelLoop.start),'invalid loop layout');
       const topK=router.top_k??1,mode=router.mode??'token';
       requireCondition([1,2,4].includes(topK)&&['static','domain','request','token','domain-informed','uniform','random'].includes(mode),'invalid router config');
       requireCondition(router.sha256===undefined||isHex64(router.sha256)&&cas.has(router.sha256),'unknown router weights');
+      requireCondition(!loop.sha256||isHex64(loop.sha256)&&cas.has(loop.sha256)&&modelLoop.passes>1,'unknown Loop gates');
       return txn(()=>{
         const parent=getSetting('active')??null;
         const records=experts.map(ref=>get(ref.id,ref.version));
-        requireCondition(records.every(e=>e.checkpoint?.assessment?.passed&&['VALIDATED','INTEGRATING','PUBLISHED'].includes(e.status)&&hashJSON(base)===hashJSON(e.base)),'expert requires a validated matching checkpoint');
+        requireCondition(records.every(e=>e.checkpoint?.assessment?.passed&&e.status!=='ARCHIVED'&&hashJSON(base)===hashJSON(e.base)),'expert requires a validated matching checkpoint');
         requireCondition(new Set(records.map(e=>e.key)).size===records.length,'duplicate expert key');
+        const schemas=parameterSchemas(records,base,modelLoop);
+        if(router.sha256)validateTensors(cas.get(router.sha256,{maxBytes:MAX_EXPERT_BYTES}),schemas.router);
+        if(loop.sha256)validateTensors(cas.get(loop.sha256,{maxBytes:MAX_EXPERT_BYTES}),schemas.loop);
         const refs=records.map(e=>({id:e.id,key:e.key,version:e.version,sha256:e.checkpoint.hash,schema_sha256:e.schema_sha256,
           kind:e.kind,layers:e.layers,rank:e.rank,alpha:e.alpha}));
         const env=signed({kind:'composition',parent,base,experts:refs,router:{mode,top_k:topK,sha256:router.sha256??null},
@@ -340,6 +349,32 @@ export function openFusion(root,{weightQuotaBytes=16*1024**3}={}){
         db.prepare('INSERT OR IGNORE INTO compositions VALUES (?,?,?,?,?)').run(hash,canonicalJSON(env),'CANDIDATE',parent,Date.now());
         return composition(hash);
       });
+    },
+    exportCompositionParameters(hash){
+      const {envelope}=composition(hash),m=envelope.manifest;
+      const artifacts=Object.fromEntries(['router','loop'].filter(key=>m[key].sha256).map(key=>[key,cas.get(m[key].sha256,{maxBytes:MAX_EXPERT_BYTES})]));
+      return {envelope,artifacts};
+    },
+    importCompositionParameters(envelope,artifacts,trustedKey){
+      const m=verifyEnvelope(envelope,trustedKey);
+      requireCondition(m.kind==='composition'&&Array.isArray(m.experts)&&m.experts.length>0&&m.experts.length<=16&&
+        ['uniform','token'].includes(m.router?.mode)&&m.loop&&!(m.router.mode==='token'&&!m.router.sha256),'invalid production composition bundle');
+      const references=m.experts.map(ref=>{
+        const matches=db.prepare('SELECT expert,version FROM checkpoints WHERE hash=? ORDER BY expert,version').all(ref.sha256);
+        const found=matches.map(x=>get(x.expert,x.version)).find(e=>e.key===ref.key&&e.schema_sha256===ref.schema_sha256&&e.checkpoint?.assessment?.passed&&e.status!=='ARCHIVED');
+        if(!found)fail('NOT_FOUND','import requires the matching locally validated expert checkpoints');
+        return {id:found.id,version:found.version};
+      });
+      const schemas=parameterSchemas(m.experts,validateBase(m.base),m.loop);
+      for(const key of ['router','loop']){
+        const hash=m[key].sha256,bytes=artifacts[key];
+        if(!hash){requireCondition(!bytes,'unexpected composition weights');continue;}
+        requireCondition(Buffer.isBuffer(bytes)&&bytes.length<=MAX_EXPERT_BYTES&&sha256(bytes)===hash,'composition weight hash differs from signed manifest');
+        validateTensors(bytes,schemas[key]);
+      }
+      for(const bytes of Object.values(artifacts))cas.put(bytes);
+      return this.assemble({base:m.base,experts:references,router:{mode:m.router.mode,top_k:m.router.top_k,
+        sha256:m.router.sha256??undefined},loop:m.loop});
     },
     composition, active:()=>{const h=getSetting('active');return h?composition(h):null;},
     compositions:()=>db.prepare('SELECT hash FROM compositions ORDER BY created DESC').all().map(({hash})=>composition(hash)),
@@ -362,7 +397,11 @@ export function openFusion(root,{weightQuotaBytes=16*1024**3}={}){
         const x=composition(hash);
         if(x.status!=='VALIDATED'||x.parent!==(getSetting('active')??null))fail('CONFLICT','composition is unvalidated or based on an outdated active version');
         for(const ref of x.envelope.manifest.experts){
-          const expert=get(ref.id,ref.version);
+          const expert=get(ref.id);
+          if(expert.version!==ref.version){
+            if(expert.status==='ARCHIVED'||!get(ref.id,ref.version).checkpoint?.assessment?.passed)fail('CONFLICT','historical expert checkpoint is unavailable');
+            continue;
+          }
           if(expert.status==='VALIDATED')change(ref.id,'VALIDATED','INTEGRATING');
           if(['VALIDATED','INTEGRATING'].includes(expert.status))change(ref.id,'INTEGRATING','PUBLISHED');
           else if(expert.status!=='PUBLISHED')fail('CONFLICT','expert is unavailable');

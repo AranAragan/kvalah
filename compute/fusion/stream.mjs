@@ -184,6 +184,10 @@ export function createStreamStore(root,{quotaBytes,artifactLimit=MAX_STREAM_BYTE
         return {file:complete,reused,received:downloads};
       }finally{if(fd!==undefined)fs.closeSync(fd);running.delete(artifact.sha256);}
     },
-    file(artifact){checkStreamLayout(artifact,{maxBytes:artifactLimit});return resolve(artifact);}
+    file(artifact){checkStreamLayout(artifact,{maxBytes:artifactLimit});return resolve(artifact);},
+    discard(hash){
+      if(!isHex64(hash)||running.has(hash))fail('CONFLICT','streamed artifact is still in use');
+      for(const file of Object.values(names(hash)))fs.rmSync(file,{force:true});
+    }
   };
 }

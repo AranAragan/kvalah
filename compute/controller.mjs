@@ -132,7 +132,9 @@ export function createController({dir,secretBox=fileSecretBox,startSidecar=rawSi
     const p=st.runtime?.probe||{};
     return {backend:st.runtime?.backend,device_name:p.gpu||(platform==='darwin'?'Apple '+(p.machine||''):p.machine||''),precision:p.precision||null,
       memory_total_bytes:p.memory_total_bytes??(platform==='darwin'?os.totalmem():null),memory_free_bytes:p.memory_free_bytes??null,unified_memory:platform==='darwin',
-      preflight_ok:!!st.preflight?.ok,preflight_max_length:st.preflight?.max_length,variants:st.model?[{profile_id:st.profile_id,variant_id:st.model.variant_id,files_digest:st.model.files_digest}]:[],
+      preflight_ok:!!st.preflight?.ok,preflight_max_length:st.preflight?.max_length,
+      preflight_peak_bytes:st.preflight?.peak_reserved_bytes??st.preflight?.mlx_peak_bytes??null,
+      variants:st.model?[{profile_id:st.profile_id,variant_id:st.model.variant_id,files_digest:st.model.files_digest}]:[],
       runtime_version:`kvalah-compute/${VERSION} python/${p.python||'?'} ${p.torch?'torch/'+p.torch:''}${p.mlx?'mlx/'+p.mlx:''}`.trim()};
   }
   async function startWorker(){
@@ -392,7 +394,7 @@ export function createController({dir,secretBox=fileSecretBox,startSidecar=rawSi
     }
     const selected=fusionBuilderCache.model;
     const datasets=hasLab()?svc().coord.listDatasets().filter(d=>d.group_audited&&d.tokenizer_hash===selected?.tokenizer_sha256):[];
-    return {model:selected,datasets,runs:service?.fusionRuns()??[],reason:fusionBuilderCache.reason};
+    return {model:selected,datasets,runs:service?.fusionRuns()??[],composition_runs:service?.compositionRuns()??[],reason:fusionBuilderCache.reason};
   }
   const smokeRequests=new Map();
   function smokeReadiness(ids){
@@ -599,7 +601,11 @@ export function createController({dir,secretBox=fileSecretBox,startSidecar=rawSi
         return svc().startFusion(b);
       }
       case 'fusion/control':return svc().controlFusion(b.id,b.action);
-      case 'fusion/compose':return svc().evaluateComposition(b);
+      case 'fusion/composition-control':return svc().controlComposition(b.id,b.action);
+      case 'fusion/compose':
+        if((b.router_mode==='token'||b.fit_loop===true)&&!testMode()&&st.model?.provenance!=='verified')
+          fail('MODEL_UNVERIFIED','composition training requires an officially verified BF16 model');
+        return svc().evaluateComposition(b);
       case 'fusion/generate':return svc().generateFusion(b);
       case 'policy/preset':{
         if(!Object.hasOwn(participationProfiles,b.id))fail('INVALID_SCHEMA','unknown participation profile');

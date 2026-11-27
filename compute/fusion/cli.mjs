@@ -123,6 +123,25 @@ async function main(){
     if(command==='assess')return registry.assess(args[0],readJson(args[1]));
     if(command==='publish')return registry.publish(args[0]);
     if(command==='rollback')return registry.rollback(args[0]);
+    if(command==='export-composition-parameters'){
+      const {envelope,artifacts}=registry.exportCompositionParameters(args[0]);
+      fs.mkdirSync(args[1]);
+      for(const [kind,bytes] of Object.entries(artifacts))save(path.join(args[1],kind+'.safetensors'),bytes);
+      writeJson(path.join(args[1],'manifest.json'),envelope);
+      return {directory:args[1],sha256:hashJSON(envelope.manifest),artifacts:Object.keys(artifacts)};
+    }
+    if(command==='import-composition-parameters'){
+      const manifest=path.join(args[0],'manifest.json');
+      if(fs.statSync(manifest).size>1024**2)throw Error('composition parameter manifest exceeds its size limit');
+      const envelope=readJson(manifest),artifacts={};
+      for(const kind of ['router','loop']){
+        if(!envelope.manifest?.[kind]?.sha256)continue;
+        const file=path.join(args[0],kind+'.safetensors'),info=fs.lstatSync(file);
+        if(!info.isFile()||info.isSymbolicLink()||info.size>64*1024**2)throw Error('invalid composition parameter file');
+        artifacts[kind]=fs.readFileSync(file);
+      }
+      return registry.importCompositionParameters(envelope,artifacts,args[1]);
+    }
     if(command==='export-expert'){
       const artifact=registry.exportExpert(args[0],Number(args[1]));
       fs.mkdirSync(args[2]);

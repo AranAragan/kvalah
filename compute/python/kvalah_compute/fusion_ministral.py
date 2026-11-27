@@ -1,11 +1,13 @@
 """Install opt-in Fusion FFN slots in a local, trusted one-pass Mistral/Ministral model."""
 
 import contextvars
+from copy import deepcopy
 import re
 from contextlib import contextmanager
 
 import torch
 from torch import nn
+from transformers.cache_utils import DynamicCache
 
 from .fusion import ExpertMLP, FFN, LoRA, Router
 
@@ -94,6 +96,26 @@ class _IdentityLayer(nn.Module):
         return hidden
 
 
+class LoopCache(DynamicCache):
+    """Give each repeated pass a separate KV slot for every physical layer it reuses."""
+    def __init__(self,config,*,start,end,passes):
+        super().__init__(config=config)
+        self.physical_layers=len(self.layers)
+        if not 0<=start<end<=self.physical_layers or not 2<=passes<=4:
+            raise ValueError("invalid loop KV cache placement")
+        span=self.layers[start:end]
+        self.layers.extend(deepcopy(layer) for _ in range(passes-1) for layer in span)
+        self.start,self.end,self.passes=start,end,passes
+        self.iteration=0
+
+    def update(self,key_states,value_states,layer_idx,*args,**kwargs):
+        if self.iteration:
+            if not self.start<=layer_idx<self.end:
+                raise ValueError("attention layer exceeds current KV repeat span")
+            layer_idx=self.physical_layers+(self.iteration-1)*(self.end-self.start)+layer_idx-self.start
+        return super().update(key_states,value_states,layer_idx,*args,**kwargs)
+
+
 class _LoopSpan(nn.Module):
     def __init__(self,layers,gates):
         super().__init__()
@@ -101,12 +123,18 @@ class _LoopSpan(nn.Module):
         self.gates=gates
 
     def forward(self,hidden,**kwargs):
-        if any(kwargs.get(key) is not None for key in ("cache","past_key_values")) or kwargs.get("use_cache"):
-            raise ValueError("HF Fusion Loop requires uncached execution")
+        cache=kwargs.get("cache")
+        if cache is None:cache=kwargs.get("past_key_values")
+        if (cache is not None or kwargs.get("use_cache")) and not isinstance(cache,LoopCache):
+            raise ValueError("Fusion Loop requires its logical-layer KV cache")
         for iteration in range(self.gates.numel()+1):
             candidate=hidden
-            for layer in self.layers:
-                candidate=layer(candidate,**kwargs)
+            if cache is not None:cache.iteration=iteration
+            try:
+                for layer in self.layers:
+                    candidate=layer(candidate,**kwargs)
+            finally:
+                if cache is not None:cache.iteration=0
             if iteration:
                 old=(hidden.float().square().mean(-1,keepdim=True)+1e-8).sqrt()
                 new=(candidate.float().square().mean(-1,keepdim=True)+1e-8).sqrt()

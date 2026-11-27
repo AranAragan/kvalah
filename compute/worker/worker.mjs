@@ -19,6 +19,7 @@ import {ComputeError} from '../protocol/errors.mjs';
 import {isPrivateAddress} from '../../lan.mjs';
 import {verifyEnvelope} from '../fusion/registry.mjs';
 import {createStreamStore,indexArtifact,STREAM_CHUNK,checkStreamLayout} from '../fusion/stream.mjs';
+import {fitsFusionMemory} from '../fusion/admission.mjs';
 const sleep=(ms,signal)=>delay(ms,undefined,{signal}).catch(error=>{if(error.name!=='AbortError')throw error;});
 const jitter=ms=>ms*(0.8+Math.random()*0.4);
 const FINAL=['STALE','CONFLICT','DUPLICATE_DIFFERENT','LEASE_EXPIRED','INVALID_SCHEMA','INVALID_TENSOR','NONFINITE','UPDATE_NORM_LIMIT','TOKEN_MISMATCH','HASH_MISMATCH','NOT_OWNER','FORBIDDEN_SCOPE','UNSUPPORTED_PROTOCOL'];
@@ -50,6 +51,10 @@ export function createWorker({stateDir,identity,link,governor,runtime,capabiliti
     metrics.tasks_accepted++;
     metrics.accepted_tokens+=entry.meta.supervised_tokens||0;
     lastAccepted={at:entry.closed_at,round:entry.task.round,task_id:entry.task.task_id};
+  }
+  for(const entry of outbox.all().filter(e=>e.scope===fusionScope&&['accepted','committed'].includes(e.state))){
+    metrics.tasks_accepted++;
+    metrics.accepted_tokens+=entry.meta.tokens||0;
   }
   outbox.gc();
   function setState(s,r=null,extra){if(s!==state||r!==reason){state=s;reason=r;onState({state:s,reason:r,task:current?publicTask(current):null,...extra});}}
@@ -85,6 +90,7 @@ export function createWorker({stateDir,identity,link,governor,runtime,capabiliti
     const caps=capabilities();
     try{
       const admission=governor.decide({phase:'admission'}),network=networkDecision();
+      const disk=fs.statfsSync(stateDir);
       const r=await client.post('/v2/devices/heartbeat',{session_id:session.session_id,status:{state,pause_reason:reason,
         eligible:admission.run&&network.run&&state!=='BLOCKED_BY_TRAFFIC_POLICY',blocking_reason:admission.reason||network.reason||
           (state==='BLOCKED_BY_TRAFFIC_POLICY'?'traffic_cap':null)},
@@ -92,10 +98,13 @@ export function createWorker({stateDir,identity,link,governor,runtime,capabiliti
           ram_available_bytes:governor.sensors?.ram_available_bytes??governor.sensors?.ram_free_bytes??null,
           vram_used_bytes:governor.sensors?.gpu?.memory_used_bytes??null,power_w:governor.sensors?.gpu?.power_w??null,
           fusion_opt_in:Number(governor.policy.fusion_training===true),fusion_duty_pct:governor.policy.gpu_target_pct,
-          fusion_temp_limit:governor.policy.temp_limit_c,fusion_cache_bytes:governor.policy.cache_limit_gib*2**30},
+          fusion_temp_limit:governor.policy.temp_limit_c,fusion_cache_bytes:Math.min(governor.policy.cache_limit_gib*2**30,disk.bavail*disk.bsize)},
         capabilities:caps,runtime_version:caps.runtime_version},{signal:abort.signal});
       session.state=r.state;
-      if(!current&&session.state==='active')await reconcileAccepted();
+      if(!current&&session.state==='active'){
+        await reconcileAccepted();
+        if(client.features?.includes('fusion-work-v2'))await reconcileFusion();
+      }
     }catch(e){
       if(e.code==='SESSION_SUPERSEDED'||e.code==='REVOKED'){ev('session.'+e.code.toLowerCase(),{message:e.message});await halt(e.code==='REVOKED'?'revoked':'session_superseded');}
       if(!stopping)recordRpcError('heartbeat.error',e);
@@ -328,7 +337,7 @@ export function createWorker({stateDir,identity,link,governor,runtime,capabiliti
   async function closeSidecar(){
     clearInterval(idleWatch);idleWatch=null;
     if(sidecar){
-      const sc=sidecar;sidecar=null;metrics.resident_model=0;governor.setSensors?.({worker_memory_bytes:null});
+      const sc=sidecar;sidecar=null;metrics.resident_model=0;metrics.fusion_resident_bytes=0;governor.setSensors?.({worker_memory_bytes:null});
       sidecarClosing=sc.stop(10000).catch(()=>{});
     }
     await sidecarClosing;
@@ -359,7 +368,9 @@ export function createWorker({stateDir,identity,link,governor,runtime,capabiliti
       sidecarEvents=async e=>{
         if(e.type==='loaded'){
           metrics.model_load_s=e.model_load_s??null;metrics.model_cache_hits=(metrics.model_cache_hits||0)+(e.cache_hit?1:0);
-          metrics.resident_model=retain?1:0;setState('TRAINING');
+          metrics.resident_model=retain?1:0;
+          metrics.fusion_resident_bytes=fusionArgs&&retain&&Number.isSafeInteger(e.resident_bytes)?e.resident_bytes:0;
+          setState('TRAINING');
         }
         if(e.type==='step'){
           current.step=e.step;metrics.last_loss=e.loss;metrics.optimizer_steps++;metrics.busy_ms+=e.compute_ms||0;
@@ -415,8 +426,29 @@ export function createWorker({stateDir,identity,link,governor,runtime,capabiliti
       else monitorResident();
     }
   }
+  function recordFusionReceipt(entry,confirmed){
+    if(confirmed.id!==entry.task.task_id||!['accepted','committed','cancelled'].includes(confirmed.status)||
+      (confirmed.status!=='cancelled'&&confirmed.sha256!==entry.payload_sha256))
+      throw new ComputeError('HASH_MISMATCH','Fusion receipt does not match its outbox entry');
+    outbox.update(entry.key,{state:confirmed.status,result:confirmed,last_status_check:now(),closed_at:now()});
+    if(entry.state!=='accepted'&&confirmed.status!=='cancelled'){
+      metrics.tasks_accepted++;metrics.accepted_tokens+=entry.meta.tokens;
+      ev('fusion.accepted',{bytes:entry.bytes});
+    }
+    if(confirmed.status==='committed')ev('fusion.committed',{checkpoint:confirmed.checkpoint,round:confirmed.round});
+  }
+  async function reconcileFusion(){
+    const waiting=outbox.accepted().filter(e=>e.scope===fusionScope&&e.state==='accepted'&&now()-(e.last_status_check??0)>=10000);
+    for(const entry of waiting.slice(0,4)){
+      const status=await client.get(`/v2/fusion/work/${entry.task.task_id}/status`,{signal:abort.signal});
+      recordFusionReceipt(entry,status);
+    }
+  }
   async function deliverFusion(entry,signal){
-    const route=`/v2/fusion/work/${entry.task.task_id}/upload`;
+    const base=`/v2/fusion/work/${entry.task.task_id}`;
+    const status=await client.get(base+'/status',{signal});
+    if(status.status!=='pending'){recordFusionReceipt(entry,status);return;}
+    const route=base+'/upload';
     const source=outbox.file(entry.key);
     const artifact=await indexArtifact(source,{chunk:STREAM_CHUNK,expectedHash:entry.payload_sha256,signal});
     const started=await client.post(route+'/begin',{artifact,tokens:entry.meta.tokens},{signal});
@@ -432,11 +464,7 @@ export function createWorker({stateDir,identity,link,governor,runtime,capabiliti
       }});
       confirmed=await client.post(route+'/complete',{}, {signal});
     }
-    if(confirmed.status!=='accepted'||confirmed.id!==entry.task.task_id||confirmed.sha256!==entry.payload_sha256)
-      throw new ComputeError('HASH_MISMATCH','Fusion receipt does not match its outbox entry');
-    outbox.update(entry.key,{state:'committed',result:confirmed,closed_at:now()});
-    metrics.tasks_accepted++;metrics.accepted_tokens+=entry.meta.tokens;
-    ev('fusion.accepted',{bytes:entry.bytes});
+    recordFusionReceipt(entry,confirmed);
   }
   async function claimFusion(){
     const pending=fusionEntries()[0];
@@ -444,6 +472,10 @@ export function createWorker({stateDir,identity,link,governor,runtime,capabiliti
       try{await deliverFusion(pending,abort.signal);}
       catch(error){
         if(['LEASE_EXPIRED','STALE','NOT_OWNER','DUPLICATE_DIFFERENT'].includes(error.code))outbox.update(pending.key,{state:'expired',closed_at:now()});
+        else if(['HASH_MISMATCH','TOKEN_MISMATCH'].includes(error.code)){
+          outbox.update(pending.key,{state:'quarantined',last_error:{code:error.code},closed_at:now()});
+          ev('fusion.result_quarantined',{code:error.code,task_id:pending.task.task_id});
+        }
         else throw error;
       }
       return true;
@@ -454,9 +486,18 @@ export function createWorker({stateDir,identity,link,governor,runtime,capabiliti
     const f=verifyEnvelope(r.task,r.public_key);
     if(f.kind!=='worker-task'||f.device!==identity.device_id||!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(f.id)||
       f.model_sha256!==runtime.files_digest||f.artifacts?.length!==2||f.expires<=serverNow()||
+      !['backbone','ram','vram'].every(k=>Number.isSafeInteger(f.requirements?.[k])&&f.requirements[k]>=0)||
       f.artifacts.find(a=>a.kind==='expert')?.sha256!==f.parent||!f.artifacts.some(a=>a.kind==='train'))
       throw new ComputeError('INVALID_SCHEMA','Fusion assignment does not match this worker');
-    const m={task_id:f.id,lease_id:f.id,experiment_id:f.run,run_id:f.run,round:0,local_steps:f.training.local_steps,expected_supervised_tokens:f.expected_tokens,
+    const checkMemory=()=>{
+      const s=governor.sensors,g=s?.gpu??{},ram=s?.ram_available_bytes??s?.ram_free_bytes;
+      const local=governor.policy.max_worker_mem_gib;
+      const measured=runtime.backend==='cuda'?f.requirements.vram:f.requirements.ram;
+      if(!fitsFusionMemory(f.requirements,ram,g.memory_total_bytes-g.memory_used_bytes,metrics.fusion_resident_bytes??0,runtime.backend)||
+        (Number.isFinite(local)&&measured>local*2**30))throw new ComputeError('STOPPED','Fusion assignment exceeds current local memory limits');
+    };
+    checkMemory();
+    const m={task_id:f.id,lease_id:f.id,experiment_id:f.run,run_id:f.run,round:f.round??1,local_steps:f.training.local_steps,expected_supervised_tokens:f.expected_tokens,
       lease_expires_at:f.expires,round_deadline_at:f.expires+24*3600000};
     const lease=maintainLease({task:m,renew:async signal=>{
       const reply=await client.post(`/v2/fusion/work/${f.id}/renew`,{step:current?.step??0,bytes:metrics.bytes_in},{signal});
@@ -481,6 +522,7 @@ export function createWorker({stateDir,identity,link,governor,runtime,capabiliti
       lease.check();
       const pre=governor.decide({phase:'preflight'});
       if(!pre.run)throw new ComputeError('STOPPED','policy:'+pre.reason);
+      checkMemory();
       const resultPath=path.join(working,'result.safetensors');
       const trained=await train(m,null,working,lease,{backend:runtime.backend,model_files_digest:runtime.files_digest,expert:f.spec,
         checkpoint_sha256:f.parent,rows_sha256:files.train.hash,max_length:f.max_length,training:f.training,expected_supervised_tokens:f.expected_tokens,
@@ -489,7 +531,7 @@ export function createWorker({stateDir,identity,link,governor,runtime,capabiliti
         throw new ComputeError('TOKEN_MISMATCH','Fusion result differs from its supervised budget');
       const saved=outbox.putFile(m,resultPath,trained.sha256,{tokens:trained.supervised_tokens},{scope:fusionScope});
       setState('UPLOADING');
-      await deliverFusion(saved,signal);
+      await deliverFusion(saved,abort.signal);
       return true;
     }finally{
       lease.stop();current=null;
@@ -508,7 +550,7 @@ export function createWorker({stateDir,identity,link,governor,runtime,capabiliti
         const network=networkDecision();
         if(d.run&&!network.run){if(network.reason==='traffic_cap')blockedByTraffic();else setState('PAUSED',network.reason);await sleep(2000,abort.signal);continue;}
         if(!d.run){setState('PAUSED',d.reason);await sleep(2000,abort.signal);continue;}
-        if(governor.policy.fusion_training&&client.features?.includes('fusion-work-v1')&&await claimFusion()){backoff=2000;continue;}
+        if(governor.policy.fusion_training&&client.features?.includes('fusion-work-v2')&&await claimFusion()){backoff=2000;continue;}
         if(runtime.profile_id&&trafficRemaining()<trainableCount(getProfile(runtime.profile_id))*4+64*1024){
           blockedByTraffic();await sleep(3000,abort.signal);continue;
         }

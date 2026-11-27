@@ -5,6 +5,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.10.0-fusion.1.dev.2] - 2026-11-27
+
+Test build for Expert Fusion reacceptance. Physical Fusion‑01 remains open.
+
+- Added durable expert rounds, explicit sequential sampling, epoch and supervised-token budgets, and continuation from the latest aggregate.
+- Enforced scheduler admission for both manual and automatic assignments with model and expert memory accounting.
+- Separated staged and committed receipts and allowed bounded late delivery of unsuperseded results from the durable worker outbox.
+- Added separately scheduled learned Router and Loop stages, signed checkpoint export/import, trusted Validation and cached inference with saved parameters.
+- Added candidate expansion after expert Validation and exposed training and integration controls in the desktop laboratory.
+
 ## [0.10.0-fusion.1.dev.1] - 2026-11-27
 
 Draft branch builds for Expert Fusion acceptance. Three-device Fusion-01 and cross-host CUDA/MLX pipeline remain open.

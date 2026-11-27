@@ -16,6 +16,7 @@ from safetensors.numpy import load_file,save_file
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"compute"/"python"))
 from kvalah_compute import fusion_runtime,sidecar
+from kvalah_compute import fusion_composed
 from kvalah_compute.canonical import sha256_file
 from kvalah_compute.fusion_ministral import loop_text_layers
 
@@ -53,7 +54,97 @@ def input_row(archive):
     return digest,json.loads(path.read_bytes())["rows"][0]
 
 
+def composition_trial(args):
+    import torch
+
+    digest,_=input_row(args.archive)
+    assignments=json.loads((args.archive/"research"/"assignments.json").read_bytes())
+    context=128
+    held=[]
+    seen=set()
+    for assignment in assignments:
+        path=args.archive/"cas"/assignment["rows_sha"]
+        if sha256_file(path)!=assignment["rows_sha"]:
+            raise RuntimeError("archived Train shard digest mismatch")
+        for row in json.loads(path.read_bytes())["rows"]:
+            key=tuple(row["input_ids"])
+            if len(key)<=context and key not in seen:
+                seen.add(key)
+                held.append(row)
+        if len(held)>=20:break
+    if len(held)<20:raise RuntimeError("need twenty distinct archived Train rows")
+    rng=np.random.default_rng(934)
+    base={"backend":"cuda","model_files_digest":digest,"max_length":context,"paths":{"model_dir":str(args.model.resolve())}}
+    emit=lambda _event:None
+
+    def cold_guard():
+        for attempt in range(12):
+            try:return guard(args.coordinator_db,cold=True)
+            except RuntimeError as error:
+                if not str(error).startswith("GPU admission denied") or attempt==11:raise
+                time.sleep(1)
+
+    def permit(_id,step):
+        if step==0:return cold_guard()
+        if step and torch.cuda.is_initialized() and torch.cuda.mem_get_info()[0]<1280*1024**2:
+            torch.cuda.empty_cache()
+        guard(args.coordinator_db)
+
+    guarded=cold_guard()
+    with TemporaryDirectory(prefix="kvalah-fusion-compose-nf4-") as temp,args.out.open("x",encoding="utf-8") as output:
+        folder=Path(temp)
+
+        def record(stage,result,started):
+            out={"classification":"MEASURED","backend":"cuda-nf4","model_files_digest":digest,"stage":stage,"max_length":context,
+                 "initial_telemetry":guarded,"wall_s":time.perf_counter()-started,**result}
+            output.write(json.dumps(out)+"\n")
+            output.flush()
+
+        experts=[]
+        shared=folder/"integration-train.json"
+        shared.write_text(json.dumps({"split":"train","rows":held[15:20]}),encoding="utf-8")
+        for index,kind in enumerate(("ffa-lora","lora","ffn")):
+            spec={"key":kind.replace("-","_"),"kind":kind,"layers":[0],"rank":8,"alpha":16,"intermediate":128}
+            layout=fusion_runtime.schema_for(spec,3072,26)
+            initial={key:(np.zeros(shape,dtype=np.float32) if key.endswith((".B",".down.weight")) else
+                     rng.uniform(-.01,.01,shape).astype(np.float32)) for key,(shape,_) in layout.items()}
+            batch=held[index*5:index*5+5]
+            train,ck,updated,full=[folder/f"{kind}.{extension}" for extension in ("json","safetensors","update","full")]
+            train.write_text(json.dumps({"split":"train","rows":batch}),encoding="utf-8")
+            save_file(initial,ck)
+            started=time.perf_counter()
+            result=fusion_runtime.run({**base,"id":kind,"expert":spec,"checkpoint_sha256":sha256_file(ck),"rows_sha256":sha256_file(train),
+                "expected_supervised_tokens":sum(sum(r["target_mask"][1:]) for r in batch),"retain_model":True,
+                "training":{"optimizer":"sgd","lr":.01,"local_steps":5,"grad_accum":1,"clip":1},
+                "paths":{**base["paths"],"checkpoint":str(ck),"rows":str(train),"result":str(updated)}},
+                permit=lambda name,step:guard(args.coordinator_db) if step==0 and index else permit(name,step),emit=emit)
+            result.pop("update_path")
+            record(kind,result,started)
+            save_file({**initial,**load_file(updated)},full)
+            experts.append({"spec":spec,"checkpoint":str(full),"sha256":sha256_file(full),"train":str(shared),"train_sha256":sha256_file(shared)})
+        fusion_runtime.release()
+        shared_args={**base,"experts":experts,"steps":5,"lr":.005,"router":{"mode":"token","top_k":1},"loop":{"start":0,"end":2,"passes":2}}
+        for stage in ("router","loop"):
+            artifact=folder/f"{stage}.safetensors"
+            started=time.perf_counter()
+            result=fusion_composed.run({**shared_args,"id":stage,"stage":stage,"output":str(artifact)},fit=True,permit=permit,emit=emit)
+            record(stage,result,started)
+            shared_args[f"{stage}_weights"]={"file":str(artifact),"sha256":result["sha256"]}
+            shared_args[stage]={**shared_args[stage],"sha256":result["sha256"]}
+        started=time.perf_counter()
+        prompt="Explain what a checksum is in one sentence."
+        options={**shared_args,"id":"cached-reload","prompt":prompt,"max_new_tokens":8}
+        cached=fusion_composed.run(options,infer=True,permit=permit,emit=emit)
+        uncached=fusion_composed.run({**options,"id":"uncached-reload","use_cache":False},infer=True,permit=permit,emit=emit)
+        if not cached["generated_tokens"] or any(cached[k]!=uncached[k] for k in ("generated_tokens","text")):
+            raise RuntimeError("cached generation differs from uncached after reloading trained parameters")
+        torch.cuda.synchronize()
+        record("reload-cache-parity",{"cached":cached,"uncached":uncached,"router_sha256":shared_args["router"]["sha256"],
+            "loop_sha256":shared_args["loop"]["sha256"]},started)
+
+
 def main(args):
+    if args.composition_trial:return composition_trial(args)
     digest,row=input_row(args.archive)
     os.environ.setdefault("KVALAH_SIDECAR_THREADS","1")
     guarded=guard(args.coordinator_db,cold=True)
@@ -144,5 +235,6 @@ if __name__=="__main__":
     for opt in ("archive","model","coordinator-db","out"):
         parser.add_argument("--"+opt,type=Path,required=True)
     parser.add_argument("--loop-probe",action="store_true")
+    parser.add_argument("--composition-trial",action="store_true")
     try:main(parser.parse_args())
     finally:fusion_runtime.release()

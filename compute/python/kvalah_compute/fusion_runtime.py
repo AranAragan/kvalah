@@ -190,6 +190,9 @@ class TorchFusion:
         self.parts={}
         self.trainable=[]
         self.empty_expert()
+        if self.device=="cuda":
+            import torch
+            torch.cuda.empty_cache()
 
     def metrics(self):
         if self.device!="cuda":return {}
@@ -230,7 +233,14 @@ def acquire(msg,permit,emit):
             backend=TorchFusion(model,msg["model_files_digest"],"cuda" if mode=="cuda" else "cpu")
         _resident=(signature,backend)
     backend=_resident[1]
-    emit({"type":"loaded","id":cid,"cache_hit":warm,"model_load_s":(time.perf_counter()-t0)})
+    resident_bytes=0
+    if mode=="cuda":
+        import torch
+        resident_bytes=torch.cuda.memory_allocated()
+    elif mode=="mlx":
+        import mlx.core as mx
+        resident_bytes=int(getattr(mx,"get_active_memory",lambda:0)())
+    emit({"type":"loaded","id":cid,"cache_hit":warm,"model_load_s":(time.perf_counter()-t0),"resident_bytes":resident_bytes})
     return backend,warm
 
 

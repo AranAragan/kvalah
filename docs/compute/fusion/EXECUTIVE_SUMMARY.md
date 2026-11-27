@@ -6,7 +6,7 @@ The local reference run trained three independent low-rank experts, expanded wit
 
 Three fresh local CPU worker processes paired with a real HTTPS coordinator, fetched their own signed artifacts, trained separate experts and delivered persistent results. A repeated acknowledgement used the stored result and the coordinator committed a new expert checkpoint. This path uses the reference CPU runtime and has a 64 KiB result limit.
 
-The follow-up adds production single-expert training through Compute Worker, a visual builder, resumable file-backed transport and aggregation, an independent queue and trusted Validation. The local hardware smoke ran one FFA-LoRA, one LoRA and one FFN step on the RTX 5070 with Ministral NF4. Real three-device Fusion-01, cross-host CUDA/MLX backward, public peer serving and the extended quality panel remain open. [Latest acceptance and measurements](P0_ACCEPTANCE.md)
+Production Compute Worker runs independent experts with resumable file-backed transport and aggregation. The follow-up adds durable multi-round scheduling, a supervised-token budget and cursor, separate learned Router and Loop stages, signed parameter export and cached inference. The three-device Fusion‑01, inter-host CUDA/MLX backward, regional coordination, peer serving and specialized holdout quality remain open. [Current acceptance and measurements](REACCEPTANCE.md)
 
 - [Architecture and source audit](EXPERT_FUSION_ARCHITECTURE.md)
 - [Model sizing](MODEL_ARCHITECTURE.md) · [Registry](EXPERT_REGISTRY.md) · [Router](ROUTER_DESIGN.md) · [FFN](FFN_EXPERTS.md) · [Loop](LOOP_TRANSFORMER.md) · [Expansion](DYNAMIC_EXPANSION.md)

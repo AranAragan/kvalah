@@ -69,14 +69,19 @@ try{
   gov.setEnabled(true);gov.setSensors({ram_free_bytes:8*2**30});
   pulse=setInterval(()=>gov.setSensors({ram_free_bytes:8*2**30}),3000);pulse.unref();
   worker=createWorker({stateDir:workerRoot,identity,link,governor:gov,runtime:{python:py,backend:'torch-cpu-test',model_dir:model,files_digest:detected.id},
-    capabilities:()=>({backend:'torch-cpu-test',variants:[],runtime_version:'test'})});
+    capabilities:()=>({backend:'torch-cpu-test',preflight_ok:true,variants:[{profile_id:'tiny-test-ffa-r4',variant_id:'cpu-test',files_digest:detected.id}],runtime_version:'test'})});
   await app.click('[data-act=fusion-start-dialog]');
+  await set('fxRounds','2');
+  await app.shot(path.join(output,'fusion-training-plan.png'));
   await app.click('#fxShareTrain');
   await app.click('[data-act=fusion-start]');
   await until(async()=>(await state()).builder.runs[0]?.status==='RUNNING','real Fusion training scheduled');
   await app.shot(path.join(output,'fusion-queued.png'));
   worker.start();
-  await until(async()=>['VALIDATED','REJECTED'].includes((await state()).builder.runs[0]?.status),'checkpoint and trusted Validation',65000);
+  await until(async()=>['VALIDATED','REJECTED'].includes((await state()).builder.runs[0]?.status),'checkpoint and trusted Validation',95000);
+  const completed=(await state()).builder.runs[0];
+  assert.equal(completed.round,2);
+  assert.equal(completed.leases.filter(x=>x.state==='committed').length,2);
   await until(()=>app.evaluate('Boolean(document.querySelector("[data-fusion-status=VALIDATED],[data-fusion-status=REJECTED]"))'),'trusted result rendered');
   await app.shot(path.join(output,'fusion-evaluated.png'));
   assert.deepEqual(app.errors,[]);

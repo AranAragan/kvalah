@@ -1,5 +1,7 @@
 # Expert Fusion audit follow-up
 
+This report records the first audit follow-up at `d5a49d0`. The next acceptance and current component status are in [REACCEPTANCE.md](REACCEPTANCE.md).
+
 This branch extends the independent-expert CPU reference with supported Compute Worker entry points. The 3B GPU smoke, two-worker integration, transport stress test and Electron review are separate experiments. Their results do not establish three-device acceptance.
 
 | Audit items | Status | Evidence and remaining work |

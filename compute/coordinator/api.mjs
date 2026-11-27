@@ -47,7 +47,7 @@ export function createApi(coord,{cert,key,now=Date.now,maxConcurrent=32,ratePerS
     try{
       const url=new URL(req.url,'https://coordinator'),route=url.pathname+url.search,p=url.pathname;
       if(!p.startsWith('/v2/'))fail('NOT_FOUND','not found');
-      if(req.method==='GET'&&p==='/v2/health/live')return json(res,200,{ok:true,server_time:now(),protocol_version:'2.0',features:['chunked-update-v1',...(fusionWork?['fusion-work-v1']:[])]});
+      if(req.method==='GET'&&p==='/v2/health/live')return json(res,200,{ok:true,server_time:now(),protocol_version:'2.0',features:['chunked-update-v1',...(fusionWork?['fusion-work-v2']:[])]});
       if(req.method==='GET'&&p==='/v2/health/ready')return json(res,200,{ready:true});
       const isContent=req.method==='PUT'&&/^\/v2\/updates\/[\w-]+\/content$/.test(p);
       const part=req.method==='PUT'&&p.match(/^\/v2\/updates\/([\w-]+)\/parts\/(\d+)$/);
@@ -67,6 +67,7 @@ export function createApi(coord,{cert,key,now=Date.now,maxConcurrent=32,ratePerS
       if(fusionWork&&p.startsWith('/v2/fusion/work/')){
         coord.authDevice(dev);
         if(req.method==='POST'&&p==='/v2/fusion/work/claim')return json(res,200,fusionWork.claim(dev,parse()));
+        if(req.method==='GET'&&(m=p.match(/^\/v2\/fusion\/work\/([\w-]{36})\/status$/)))return json(res,200,fusionWork.status(dev,m[1]));
         if(req.method==='POST'&&(m=p.match(/^\/v2\/fusion\/work\/([\w-]{36})\/renew$/)))return json(res,200,fusionWork.renew(dev,m[1],parse()));
         if(req.method==='GET'&&(m=p.match(/^\/v2\/fusion\/work\/([\w-]{36})\/parts\/([0-9a-f]{64})$/))){
           const bytes=fusionWork.chunk(dev,m[1],m[2]);
