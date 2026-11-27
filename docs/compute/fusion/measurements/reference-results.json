@@ -1,0 +1,192 @@
+{
+  "classification": "MEASURED",
+  "fixture": "synthetic tokens",
+  "device": "cpu",
+  "seed": 934,
+  "baseline": {
+    "nll": 3.474872668584188,
+    "perplexity": 32.29371627019137,
+    "accuracy": 0.03125,
+    "tokens": 96,
+    "examples": 48,
+    "route_counts": {},
+    "route_entropy": null,
+    "router_accuracy": null,
+    "seconds": 0.04274910000094678
+  },
+  "experts": [
+    {
+      "key": "code",
+      "control": {
+        "nll": 3.5786798000335693,
+        "perplexity": 35.8262118483862,
+        "accuracy": 0.03125,
+        "tokens": 32,
+        "examples": 16,
+        "route_counts": {},
+        "route_entropy": null,
+        "router_accuracy": null,
+        "seconds": 0.002077800003462471
+      },
+      "validation": {
+        "nll": 2.5861976146698,
+        "perplexity": 13.279182914991305,
+        "accuracy": 0.5,
+        "tokens": 32,
+        "examples": 16,
+        "route_counts": {},
+        "route_entropy": null,
+        "router_accuracy": null,
+        "seconds": 0.0011836999983643182
+      },
+      "train": {
+        "steps": 32,
+        "tokens": 1024,
+        "last_nll": 1.7902443408966064,
+        "seconds": 1.8512436999953934
+      },
+      "sha256": "8a8444194f340b04bdfa26ffc8242eb3c4a425e14088bae15d19eae22c0d78bc"
+    },
+    {
+      "key": "math",
+      "control": {
+        "nll": 3.3137528896331787,
+        "perplexity": 27.48809191538938,
+        "accuracy": 0.0625,
+        "tokens": 32,
+        "examples": 16,
+        "route_counts": {},
+        "route_entropy": null,
+        "router_accuracy": null,
+        "seconds": 0.001141300002927892
+      },
+      "validation": {
+        "nll": 2.1390159130096436,
+        "perplexity": 8.491077557083816,
+        "accuracy": 0.53125,
+        "tokens": 32,
+        "examples": 16,
+        "route_counts": {},
+        "route_entropy": null,
+        "router_accuracy": null,
+        "seconds": 0.001316200003202539
+      },
+      "train": {
+        "steps": 32,
+        "tokens": 1024,
+        "last_nll": 1.8361389636993408,
+        "seconds": 0.06605589999526273
+      },
+      "sha256": "0a78f6c596d1c8796969640fb7b4bbafe4be7130f5a00245ffd1244d6700cb4d"
+    },
+    {
+      "key": "language",
+      "control": {
+        "nll": 3.5321853160858154,
+        "perplexity": 34.1986208108003,
+        "accuracy": 0.0,
+        "tokens": 32,
+        "examples": 16,
+        "route_counts": {},
+        "route_entropy": null,
+        "router_accuracy": null,
+        "seconds": 0.0011400000003050081
+      },
+      "validation": {
+        "nll": 1.7802884578704834,
+        "perplexity": 5.931567179075226,
+        "accuracy": 0.78125,
+        "tokens": 32,
+        "examples": 16,
+        "route_counts": {},
+        "route_entropy": null,
+        "router_accuracy": null,
+        "seconds": 0.0013074999951641075
+      },
+      "train": {
+        "steps": 32,
+        "tokens": 1024,
+        "last_nll": 1.7884372472763062,
+        "seconds": 0.0592772000018158
+      },
+      "sha256": "a1b37226e62d3ba8d45a33775c766711b841ffe5ec3e585c9d4b2657f14e8cb6"
+    }
+  ],
+  "ffn_initial": {
+    "nll": 3.474872668584188,
+    "perplexity": 32.29371627019137,
+    "accuracy": 0.03125,
+    "tokens": 96,
+    "examples": 48,
+    "route_counts": {},
+    "route_entropy": null,
+    "router_accuracy": null,
+    "seconds": 0.0032855000026756898
+  },
+  "ffn_training": {
+    "steps": 24,
+    "tokens": 768,
+    "last_nll": 1.9167968034744263,
+    "seconds": 0.047166699994704686
+  },
+  "ffn_validation": {
+    "nll": 2.194497267405192,
+    "perplexity": 8.975487652199563,
+    "accuracy": 0.5416666666666666,
+    "tokens": 96,
+    "examples": 48,
+    "route_counts": {},
+    "route_entropy": null,
+    "router_accuracy": null,
+    "seconds": 0.003277600000728853
+  },
+  "ffn_sha256": "a6cfa9ef8002a520b4bf2b25184e3041bbaeab41597d2f6b970d3af9132b4cb1",
+  "router": {
+    "steps": 48,
+    "tokens": 1536,
+    "last_nll": 2.0269346237182617,
+    "seconds": 0.21048939999309368
+  },
+  "routed": {
+    "nll": 2.3532049655914307,
+    "perplexity": 10.519229525341027,
+    "accuracy": 0.5833333333333334,
+    "tokens": 96,
+    "examples": 48,
+    "route_counts": {
+      "code": 127,
+      "math": 128,
+      "language": 185,
+      "reasoning": 40
+    },
+    "route_entropy": 0.5856839219729105,
+    "router_accuracy": 1.0,
+    "seconds": 0.007779300001857337
+  },
+  "loop": {
+    "steps": 8,
+    "tokens": 256,
+    "last_nll": 2.41770076751709,
+    "seconds": 0.04640110000036657
+  },
+  "integrated": {
+    "nll": 2.3346959749857583,
+    "perplexity": 10.326319992501258,
+    "accuracy": 0.5833333333333334,
+    "tokens": 96,
+    "examples": 48,
+    "route_counts": {
+      "code": 154,
+      "math": 204,
+      "language": 260,
+      "reasoning": 102
+    },
+    "route_entropy": 0.6903709769248962,
+    "router_accuracy": 1.0,
+    "seconds": 0.009870399997453205
+  },
+  "reload_max_error": 0.0,
+  "cached_max_error": 5.960464477539062e-07,
+  "frozen_backbone": true,
+  "old_experts_unchanged": true
+}

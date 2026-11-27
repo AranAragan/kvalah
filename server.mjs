@@ -24,6 +24,7 @@ import {createScheduler} from './scheduler.mjs';
 import {runSubagent,complete,batchPrompt,parseEdit} from './subagent.mjs';
 import {createComputeLink} from './compute-link.mjs';
 import {createComputeHost} from './compute/host-client.mjs';
+import {createFusionLab} from './compute/fusion/lab.mjs';
 
 const ROOT=path.dirname(fileURLToPath(import.meta.url));
 const VERSION=(()=>{try{return JSON.parse(readFileSync(path.join(ROOT,'package.json'),'utf8')).version;}catch{return '0.0.0';}})();
@@ -65,6 +66,7 @@ const desktopSecrets=new Map();let desktopSecretSeq=0;
 const computeV2=createComputeHost({dir:path.join(DATA,'compute-v2'),log:m=>console.error('[compute-v2] '+m),
   onSecret:process.send?(op,data)=>new Promise((resolve,reject)=>{const id=++desktopSecretSeq;const t=setTimeout(()=>{desktopSecrets.delete(id);reject(Error('no answer from the desktop secret store'));},10000);
     desktopSecrets.set(id,{resolve,reject,t});process.send({type:'compute-secret',id,op,data});}):null});
+const fusionLab=createFusionLab(path.join(DATA,'compute-v2','fusion'));
 process.on('message',m=>{
   if(m?.type==='compute-sensors')computeV2.sensors(m.sensors||{});
   else if(m?.type==='compute-secret-reply'){const w=desktopSecrets.get(m.id);if(w){desktopSecrets.delete(m.id);clearTimeout(w.t);m.ok?w.resolve(m.data):w.reject(Error(m.error||'secret store error'));}}
@@ -680,6 +682,16 @@ const server=http.createServer(async(req,res)=>{
     if(route==='/api/state'&&req.method==='GET')return json(res,{app:'kvalah',version:VERSION,chats:chats.map(chatSummary),settings:publicSettings(),platform:process.platform,active:[...active.values()].map(r=>({id:r.id,chatId:r.chatId}))});
     if(route==='/api/chats/get'&&req.method==='GET'){const chat=chats.find(c=>c.id===url.searchParams.get('id'));if(!chat)throw Error(tr('srv.chatNotFound'));return json(res,chat);}
     if(route==='/api/compute'&&req.method==='GET')return json(res,await compute.snapshot());
+    if(route.startsWith('/api/compute/fusion/')){
+      if(!settings.computeV2||!settings.expertFusion)return json(res,{code:'DISABLED'},409);
+      try{return json(res,fusionLab.handle(req.method,route.slice('/api/compute/fusion/'.length),req.method==='POST'?await body(req):{}));}
+      catch(e){return json(res,{code:e.code||'ERROR',error:e.message},e.status>=400&&e.status<600?e.status:400);}
+    }
+    if(route==='/api/compute/v2/fusion-feature'&&req.method==='POST'){
+      if(!settings.computeV2)return json(res,{code:'DISABLED'},409);
+      settings={...settings,expertFusion:(await body(req)).enabled===true};await persistSettings();
+      return json(res,{enabled:settings.expertFusion});
+    }
     if(route==='/api/compute/v2/feature'&&req.method==='POST'){
       const b=await body(req),on=b.enabled===true;
       if(!on&&computeV2.running){await computeV2.request('POST','participation',{enabled:false}).catch(()=>{});await computeV2.close();}
@@ -692,7 +704,7 @@ const server=http.createServer(async(req,res)=>{
       const sub=route.slice('/api/compute/v2/'.length);
       try{
         const data=await computeV2.request(req.method,sub,req.method==='POST'?await body(req):Object.fromEntries(url.searchParams));
-        return json(res,sub==='state'?{feature_enabled:true,...data}:data);
+        return json(res,sub==='state'?{feature_enabled:true,expert_fusion_enabled:settings.expertFusion===true,...data}:data);
       }catch(e){return json(res,{error:e.message,code:e.code||'ERROR'},e.status&&e.status>=400&&e.status<600?e.status:400);}
     }
     if(route==='/api/models'){const backend=provider();return json(res,{provider:backend.kind,label:backend.label,models:await backend.models()});}

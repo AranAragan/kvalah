@@ -5,6 +5,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+- Added an opt-in Expert Fusion research laboratory with immutable expert and composition versions, signed artifact grants and a local architecture calculator.
+- Added deterministic PyTorch reference experiments for independent LoRA and FFN training, sparse routing, looped depth, logical KV caching and staged backward across local worker processes.
+- Added an offline expert aggregation path for FedAvg, FedProx, FedAvgM, FedAdam, FedYogi and a DiLoCo-inspired outer update.
+
 ## [0.10.0-compute.4.dev.1] - 2026-11-27
 
 Compute v0.3 development preview focused on performance and recovery.

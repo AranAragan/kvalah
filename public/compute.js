@@ -20,8 +20,11 @@
   const when=ts=>ts?new Date(ts).toLocaleString(lang()):ct('none');
   const desktop=()=>window.kvalahDesktop;
   const call=(route,body)=>api('/api/compute/v2/'+route,body);
+  const fusionCall=(route,body)=>api('/api/compute/fusion/'+route,body);
+  const fx=(ru,en)=>lang()==='ru'?ru:en;
   let form={},planInput=null;
   let S=null,tab='overview',open=false,busy=false,timer=null,selExp=null,expData=null,coordEvents=[],plan=null,pairing=null,lastResult={};
+  let fusionState=null,fusionTab='summary',fusionEstimate=null,fusionError=null;
   let mode=localStorage.getItem('kvalah-compute-mode')==='laboratory'?'laboratory':'contribution';
   let refreshId=0,stale=false,hardware=null,smoke=null,requestId=null,smokeIds=[],expanded=new Set(),invitationEpoch=0;
   const presets={gentle:10,balanced:25,productive:50};
@@ -43,6 +46,13 @@
     }
     if(id!==refreshId)return;
     S=next;stale=false;
+    if(S.expert_fusion_enabled&&mode==='laboratory'&&tab==='fusion'){
+      try{
+        const current=await fusionCall('state');
+        if(id!==refreshId)return;
+        fusionState=current;fusionError=null;
+      }catch(error){if(id!==refreshId)return;fusionError=error.message;}
+    }
     if(S.feature_enabled&&S.lab&&mode==='laboratory'&&tab==='monitor'){
       const exps=S.lab.experiments||[];
       if(!selExp||!exps.some(e=>e.id===selExp))selExp=exps[0]?.id||null;
@@ -476,10 +486,11 @@
   function laboratory(){
     const l=S.lab,ready=l?.smoke,online=l?.info?.running&&!stale;
     const n=stale?0:ready?.devices?.filter(d=>!d.reason).length||0;
-    const nav='<nav class="kc-lab-tabs" aria-label="'+esc(tx('nav'))+'">'+[['overview','overview'],['devices','devices'],['experiments','experiments'],['data','models']].map(([id,key])=>{
+    const nav='<nav class="kc-lab-tabs" aria-label="'+esc(tx('nav'))+'">'+[['overview','overview'],['devices','devices'],['experiments','experiments'],['data','models'],['fusion','Expert Fusion']].map(([id,key])=>{
       const selected=tab===id||(tab==='monitor'&&id==='experiments');
-      return '<button type="button" data-act="lab-nav" data-arg="'+id+'"'+(selected?' aria-current="page"':'')+'>'+esc(tx(key))+'</button>';
+      return '<button type="button" data-act="lab-nav" data-arg="'+id+'"'+(selected?' aria-current="page"':'')+'>'+esc(id==='fusion'?key:tx(key))+'</button>';
     }).join('')+'</nav>';
+    if(tab==='fusion')return nav+renderFusion();
     const top=title(tx('laboratory'),tx('labIntro'),online?btn('new-experiment',tx('newExperiment'),{primary:true}):btn('auto-lab',tx('createNetwork'),{primary:true}))+nav;
     const networkControls=row(btn('lab-pairing',tx('inviteDevice'),{primary:tab==='devices'})+
       (!S.link?btn('lab-join-ux',tx('joinSelf')):'')+btn('lab-stop',ct('lab.stop')));
@@ -497,6 +508,60 @@
       (ready?.reason?plain(friendly(ready.reason),'kc-caption'):'')+msg('lab'),'kc-hero')+labDevices()+'</div><div class="kc-stack">'+
       panel(tx('networkStats'),scores([[tx('deviceReady'),n+' / 3'],[tx('experiments'),l.experiments.length],
       [tx('completedRounds'),l.experiments.reduce((a,r)=>a+r.committed_rounds,0)],[tx('devices'),l.devices.length]]))+'</div></div>';
+  }
+  function renderFusion(){
+    if(!S.expert_fusion_enabled)return panel('Expert Fusion',plain(fx('Исследовательская лаборатория для экспертов, маршрутизации и циклических слоёв.','A research lab for experts, routing and looped layers.'))+
+      row(S.feature_enabled?btn('fusion-enable',fx('Включить лабораторию','Enable laboratory'),{primary:true}):btn('feature-on',fx('Включить Compute','Enable Compute'),{primary:true}))+msg('fusion'));
+    const entries=[['summary',fx('Обзор','Overview')],['architecture',fx('Архитектура','Architecture')],['experts',fx('Эксперты','Experts')],
+      ['devices',fx('Устройства','Devices')],['models',fx('Версии моделей','Model versions')],['diagnostics',fx('Диагностика','Diagnostics')]];
+    const nav='<nav class="kc-lab-tabs" aria-label="Expert Fusion">'+entries.map(([id,label])=>'<button type="button" data-act="fusion-nav" data-arg="'+id+'"'+
+      (id===fusionTab?' aria-current="page"':'')+'>'+esc(label)+'</button>').join('')+'</nav>';
+    const controls=title('Expert Fusion',fx('Независимые эксперты на общей модели','Independent experts on a shared model'),btn('fusion-disable',fx('Выключить','Disable')))+nav+msg('fusion');
+    if(fusionError)return controls+notice(fusionError,'warn');
+    if(!fusionState)return controls+plain(tx('checking'));
+    const {experts,models,active}=fusionState;
+    const published=models.find(m=>m.hash===active)?.envelope?.manifest;
+    const stats=published?.stats;
+    const fmtN=value=>value==null?'—':value.toLocaleString(lang());
+    if(fusionTab==='summary')return controls+panel('',scores([
+      [fx('Эксперты','Experts'),experts.length],[fx('Устройства Compute','Compute devices'),S.lab?.devices?.length??0],
+      [fx('Уникальные параметры','Unique parameters'),fmtN(stats?.parameters)],
+      [fx('Обучаемые параметры','Trainable parameters'),fmtN(stats?.trainable)],
+      [fx('Верхняя граница активных параметров','Active parameter upper bound'),fmtN(stats?.active_upper_bound)],
+      [fx('Выполнения слоёв','Layer executions'),fmtN(stats?.logical_layers)]])+plain(published?.base?.revision??fx('Активная композиция ещё не опубликована','No active composition has been published')));
+    if(fusionTab==='architecture')return controls+panel(fx('Оценка по формам тензоров','Tensor-based sizing'),'<div class="kc-experience-grid">'+
+      field('fxLayers',fx('Слои основы','Backbone layers'),26,{type:'number'})+field('fxWidth',fx('Размер скрытого состояния','Hidden width'),3072,{type:'number'})+
+      field('fxBase',fx('Параметры основы','Backbone parameters'),3000000000,{type:'number'})+field('fxContext',fx('Контекст','Context'),256,{type:'number'})+
+      field('fxExperts',fx('Число дополнительных FFN','Additional FFNs'),1,{type:'number'})+field('fxInner',fx('Внутренний размер FFN','FFN intermediate width'),9216,{type:'number'})+
+      field('fxExpertLayer',fx('Слой для экспертов, с нуля','Expert layer, zero-based'),3,{type:'number'})+field('fxTopK','Top‑K',1,{type:'number'})+
+      field('fxLoopStart',fx('Начало цикла, включительно','Loop start, inclusive'),2,{type:'number'})+field('fxLoopEnd',fx('Конец цикла, исключительно','Loop end, exclusive'),10,{type:'number'})+
+      field('fxPasses',fx('Проходы','Passes'),1,{type:'number'})+field('fxKv',fx('Ширина ключей и значений','Key and value width'),1024,{type:'number'})+'</div>'+
+      row(btn('fusion-estimate',fx('Рассчитать','Estimate'),{primary:true}))+(fusionEstimate?scores([
+        [fx('Уникальные параметры','Unique parameters'),fmtN(fusionEstimate.parameters)],
+        [fx('Верхняя граница активных','Active upper bound'),fmtN(fusionEstimate.active_upper_bound)],
+        [fx('Выполнения слоёв','Layer executions'),fmtN(fusionEstimate.logical_layers)],
+        ['FP16 checkpoint',fmtB(fusionEstimate.fp16_checkpoint_bytes)],['KV FP16',fmtB(fusionEstimate.fp16_kv_bytes)],
+        [fx('Градиенты FP32','FP32 gradients'),fmtB(fusionEstimate.gradient_bytes)],['AdamW',fmtB(fusionEstimate.adamw_state_bytes)]
+      ]):''));
+    if(fusionTab==='experts'){
+      const expertRows=experts.map(e=>card(e.name,kv([[fx('Специализация','Domain'),esc(e.domain)],[fx('Тип','Type'),esc(e.kind)],
+        [fx('Версия','Version'),e.version],[fx('Параметры','Parameters'),fmtN(e.parameters)],[fx('Размер весов','Weights size'),fmtB(e.bytes)],
+        [fx('Статус','Status'),esc(e.status)],[fx('Датасет','Dataset'),esc(short(e.dataset_sha256))],[fx('Checkpoint','Checkpoint'),esc(short(e.checkpoint?.hash))]])+
+        (['CREATED','READY','PAUSED','VALIDATED','PUBLISHED','REJECTED'].includes(e.status)?row(btn('fusion-archive',fx('Архивировать','Archive'),{arg:e.id})):''))).join('');
+      return controls+panel(fx('Реестр экспертов','Expert registry'),expertRows||plain(fx('Пока нет экспертов','No experts yet')))+
+        panel(fx('Новый эксперт','New expert'),'<label class="kc-field">'+esc(fx('Манифест JSON','JSON manifest'))+
+        '<textarea id="fxSpec" rows="5" spellcheck="false"></textarea></label>'+row(btn('fusion-create',fx('Создать запись','Create record'),{primary:true})));
+    }
+    if(fusionTab==='devices')return controls+labDevices();
+    if(fusionTab==='models')return controls+panel(fx('Композиции','Compositions'),models.map(m=>card(short(m.hash),kv([
+      [fx('Статус','Status'),esc(m.status)], [fx('Эксперты','Experts'),m.envelope.manifest.experts.length],
+      [fx('Маршрутизатор','Router'),esc(m.envelope.manifest.router.mode)],[fx('Проходы','Passes'),m.envelope.manifest.loop.passes],
+      ['Validation NLL',m.assessment?.candidate_nll??'—']])+row(m.hash===active?pill(fx('Активна','Active'),'good'):
+        m.status==='VALIDATED'?btn('fusion-publish',fx('Опубликовать','Publish'),{arg:m.hash}):
+        m.status==='PUBLISHED'?btn('fusion-rollback',fx('Вернуться к версии','Roll back to version'),{arg:m.hash}):''))).join('')||
+      plain(fx('Композиции создаются после проверки экспертных checkpoint','Create compositions after validating expert checkpoints')));
+    return controls+panel(fx('Диагностика','Diagnostics'),kv([[fx('Ключ подписания','Signing public key'),esc(fusionState.public_key)],
+      [fx('Связь с координатором Compute','Compute coordinator'),esc(S.lab?.info?.endpoint??ct('none'))]]));
   }
   function labModels(){
     const l=S.lab,variants=l?.variants||[];
@@ -609,6 +674,21 @@
     goto:el=>{tab=el.dataset.arg==='devices'?'devices':'data';setMode('laboratory');},
     'switch-lab':()=>{tab='overview';setMode('laboratory');},
     'lab-nav':el=>{tab=el.dataset.arg;lastResult={};scroll().scrollTop=0;render(true);void refresh(true);},
+    'fusion-enable':()=>run(()=>call('fusion-feature',{enabled:true}),'fusion'),
+    'fusion-disable':()=>run(async()=>{await call('fusion-feature',{enabled:false});fusionState=null;},'fusion'),
+    'fusion-nav':el=>{fusionTab=el.dataset.arg;render(true);},
+    'fusion-create':()=>run(()=>fusionCall('expert/create',JSON.parse(val('fxSpec'))),'fusion'),
+    'fusion-archive':el=>{const e=fusionState?.experts.find(x=>x.id===el.dataset.arg);if(e)run(()=>fusionCall('expert/archive',{id:e.id,from:e.status}),'fusion');},
+    'fusion-publish':el=>run(()=>fusionCall('models/publish',{hash:el.dataset.arg}),'fusion'),
+    'fusion-rollback':el=>run(()=>fusionCall('models/rollback',{hash:el.dataset.arg}),'fusion'),
+    'fusion-estimate':()=>run(async()=>{
+      const n=numv('fxExperts');
+      if(!Number.isInteger(n)||n<0||n>4096)throw Error(fx('Допустимо от 0 до 4096 экспертов','Choose between 0 and 4096 experts'));
+      fusionEstimate=await fusionCall('estimate',{base:{revision:'estimate',layers:numv('fxLayers'),width:numv('fxWidth'),parameters:numv('fxBase'),
+        backbone_sha256:'0'.repeat(64),tokenizer_sha256:'0'.repeat(64),architecture_sha256:'0'.repeat(64)},
+        experts:Array.from({length:n},()=>({kind:'ffn',intermediate:numv('fxInner'),layers:[numv('fxExpertLayer')]})),context:numv('fxContext'),
+        top_k:numv('fxTopK'),kv_width:numv('fxKv'),loop:{start:numv('fxLoopStart'),end:numv('fxLoopEnd'),passes:numv('fxPasses')}});
+    },'fusion'),
     'join-wizard':()=>run(async()=>{await rememberFeature();inviteDialog();},'join'),
     'close-dialog':clearDialog,
     'submit-invitation':()=>run(async()=>{

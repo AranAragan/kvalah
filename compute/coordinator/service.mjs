@@ -16,6 +16,8 @@ import {fail,ComputeError} from '../protocol/errors.mjs';
 import {exportReport} from '../report.mjs';
 import {PINNED,verifyAgainstHub} from '../registry.mjs';
 import {verifyLocalConversion} from '../mlx-conversion.mjs';
+import {openFusion} from '../fusion/registry.mjs';
+import {createGrantStore} from '../fusion/provision.mjs';
 export const DEFAULT_PORT=8765;
 export const FIXTURE=fileURLToPath(new URL('../fixtures/smoke-sft-v1.jsonl',import.meta.url));
 const isPrivateV4=ip=>/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|127\.|169\.254\.)/.test(ip);
@@ -26,7 +28,7 @@ export function lanAddresses(){
 }
 export function createCoordinatorService({dir,startSidecar=defaultSidecar,evaluator=()=>null,canRunHeavy=()=>({run:true}),log=()=>{},now=Date.now,tickMs=1000}){
   fs.mkdirSync(dir,{recursive:true});
-  let server=null,timer=null,bind=null,cert=null,evalBusy=false,closed=false;
+  let server=null,timer=null,bind=null,cert=null,evalBusy=false,closed=false,fusionRegistry=null;
   const work=path.join(dir,'work');fs.mkdirSync(work,{recursive:true});
   async function withSidecar(rt,fn,{heavy=false}={}){
     if(!rt?.python)fail('RUNTIME_REQUIRED','configure a Python compute runtime on this coordinator first');
@@ -73,7 +75,17 @@ export function createCoordinatorService({dir,startSidecar=defaultSidecar,evalua
     if(!addrs.includes(bindIp))fail('INVALID_SCHEMA','choose one of this computer\'s addresses: '+addrs.join(', '));
     if(!isPrivateV4(bindIp)&&!allowPublic)fail('FORBIDDEN_SCOPE','the coordinator binds to private LAN addresses only');
     cert=coordinatorCertificate(path.join(dir,'tls'),[...new Set([bindIp,'127.0.0.1'])]);
-    const srv=createApi(coord,{cert:cert.cert,key:cert.key,now,log});
+    const fusionDir=path.join(dir,'..','fusion');
+    const grantMarker=path.join(fusionDir,'serve-grants');
+    let fusion=null;
+    // Artifact serving is separately enabled by the local administrator and private-LAN only.
+    if(isPrivateV4(bindIp)&&fs.existsSync(grantMarker)){
+      fusionRegistry??=openFusion(fusionDir);
+      const grants=createGrantStore(fusionRegistry,path.join(fusionDir,'grants'));
+      const check=()=>{if(!fs.existsSync(grantMarker))fail('FORBIDDEN_SCOPE','Fusion grants are disabled');};
+      fusion={manifest(dev){check();return grants.manifest(dev);},chunk(dev,id,hash){check();return grants.chunk(dev,id,hash);}};
+    }
+    const srv=createApi(coord,{cert:cert.cert,key:cert.key,now,log,fusion});
     await new Promise((resolve,reject)=>{srv.once('error',reject);srv.listen(port,bindIp,()=>{srv.off('error',reject);resolve();});}).catch(e=>{
       fail('UNAVAILABLE',e.code==='EADDRINUSE'?`port ${port} is already in use on ${bindIp}`:'cannot listen: '+e.message);});
     server=srv;bind={ip:bindIp,port:srv.address().port};
@@ -154,5 +166,5 @@ export function createCoordinatorService({dir,startSidecar=defaultSidecar,evalua
     }finally{fs.rmSync(d,{recursive:true,force:true});}
   }
   return {coord,start,stop,info,createPairing,verifyModel,registerModel,checkProvenance,importMlxConversion,importDataset,evaluate,
-    exportReport:o=>exportReport(coord,o),close:async()=>{closed=true;await stop();coord.close();}};
+    exportReport:o=>exportReport(coord,o),close:async()=>{closed=true;await stop();fusionRegistry?.close();coord.close();}};
 }

@@ -9,7 +9,7 @@ import {sha256} from '../protocol/hash.mjs';
 import {requestPayload,verifyBytes} from '../protocol/sign.mjs';
 import {MAX_UPDATE_BYTES} from './coordinator.mjs';
 export const MAX_JSON=64*1024,SKEW_MS=120*1000;
-export function createApi(coord,{cert,key,now=Date.now,maxConcurrent=32,ratePerSec=20,log=()=>{}}){
+export function createApi(coord,{cert,key,now=Date.now,maxConcurrent=32,ratePerSec=20,log=()=>{},fusion=null}){
   let inflight=0,payloads=0;const buckets=new Map();
   function rate(id){
     const t=now(),b=buckets.get(id)||{tokens:ratePerSec*2,at:t};
@@ -62,6 +62,16 @@ export function createApi(coord,{cert,key,now=Date.now,maxConcurrent=32,ratePerS
       if(req.method==='POST'&&p==='/v2/pair/complete')return json(res,200,coord.pairComplete(parse()));
       const dev=authenticate(req,route,body);
       let m;
+      if(fusion&&req.method==='GET'&&p==='/v2/fusion/assignment'){
+        coord.authDevice(dev);
+        return json(res,200,fusion.manifest(dev));
+      }
+      if(fusion&&req.method==='GET'&&(m=p.match(/^\/v2\/fusion\/parts\/([0-9a-f]{8}(?:-[0-9a-f]+){4})\/([0-9a-f]{64})$/))){
+        coord.authDevice(dev);
+        const bytes=fusion.chunk(dev,m[1],m[2]);
+        res.writeHead(200,{'content-type':'application/octet-stream','content-length':bytes.length,'cache-control':'no-store'});
+        return res.end(bytes);
+      }
       if(req.method==='POST'&&p==='/v2/devices/session')return json(res,200,coord.startSession(dev));
       if(req.method==='GET'&&p==='/v2/devices/state')return json(res,200,{state:coord.authDevice(dev,{allowPending:true}).state});
       if(req.method==='POST'&&p==='/v2/devices/heartbeat')return json(res,200,coord.heartbeat(dev,parse()));

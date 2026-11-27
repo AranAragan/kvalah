@@ -1,0 +1,5 @@
+# Fusion artifact provisioning
+
+A signed grant binds one expert version and artifact list to an approved device and expiry. The grant CLI binds Train bytes to an approved dataset manifest and sends no Validation/Test shard. The receiving CLI uses the existing Compute device identity and pinned TLS certificate, and a separately pinned Fusion signing key. It validates size, SHA-256 and chunk maps, obeys explicit local consent and byte quotas, and writes content-addressed artifacts. The coordinator checks its serving marker on every request. Removing it stops subsequent grant reads without restarting Compute.
+
+Receipt survives process restarts because verified chunks remain in the local cache. Existing bytes are detected before applying the traffic gate to missing chunks. The initial per-artifact limit is 64 MiB and the lab supports pre-chunked reference artifacts. Live runtime bootstrap, automatic official base resolution across model shards and automatic start of Fusion training are still open.

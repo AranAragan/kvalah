@@ -1,0 +1,60 @@
+{
+  "format": "kvalah-fusion-reference/v1",
+  "model": {
+    "vocab": 32,
+    "width": 24,
+    "heads": 4,
+    "layers": 4,
+    "intermediate": 48,
+    "context": 32,
+    "router": {
+      "top_k": 1
+    },
+    "loop": {
+      "start": 1,
+      "end": 3,
+      "passes": 2
+    }
+  },
+  "experts": [
+    {
+      "key": "code",
+      "kind": "ffa-lora",
+      "layers": [
+        2,
+        3
+      ],
+      "rank": 6,
+      "alpha": 12
+    },
+    {
+      "key": "math",
+      "kind": "lora",
+      "layers": [
+        2,
+        3
+      ],
+      "rank": 6,
+      "alpha": 12
+    },
+    {
+      "key": "language",
+      "kind": "ffa-lora",
+      "layers": [
+        2,
+        3
+      ],
+      "rank": 6,
+      "alpha": 12
+    },
+    {
+      "key": "reasoning",
+      "kind": "ffn",
+      "layers": [
+        2
+      ],
+      "intermediate": 32
+    }
+  ],
+  "weights_sha256": "35438266b7e61d3cb989c39a992a60a7e80ad0a57b16de2924c1a96e4f35ee83"
+}
