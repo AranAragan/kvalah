@@ -181,11 +181,15 @@ export function createGrantStore(registry,root){
     manifest(device){const envelope=find(device);validateAssignment(envelope,{device,publicKey:registry.publicKey});return {envelope,publicKey:registry.publicKey};},
     chunk(device,assignment,hash){
       const m=active(device,assignment);
-      const part=m.artifacts.flatMap(a=>a.parts).find(p=>p.sha256===hash);
-      if(!part)fail('FORBIDDEN_SCOPE','chunk is outside the active assignment');
-      const result=registry.cas.get(hash,{maxBytes:part.bytes});
-      if(result.length!==part.bytes)fail('HASH_MISMATCH','chunk length does not match assignment');
-      return result;
+      for(const a of m.artifacts){
+        const index=a.parts.findIndex(p=>p.sha256===hash);
+        if(index<0)continue;
+        const part=a.parts[index];
+        const result=a.stream&&registry.weightLayout(a.sha256)?registry.weightPart(a.sha256,a,index):registry.cas.get(hash,{maxBytes:part.bytes});
+        if(result.length!==part.bytes)fail('HASH_MISMATCH','chunk length does not match assignment');
+        return result;
+      }
+      fail('FORBIDDEN_SCOPE','chunk is outside the active assignment');
     },
     result(device,assignment,hash,tokens,payload){
       const m=active(device,assignment);

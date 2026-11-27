@@ -17,10 +17,35 @@ import {detectBase,buildExpert} from '../compute/fusion/builder.mjs';
 import {createFusionLab} from '../compute/fusion/lab.mjs';
 import {sha256} from '../compute/protocol/hash.mjs';
 import {decode,encode} from '../compute/protocol/safetensors.mjs';
+import {aggregateTensorFiles,checkUpdateFile,createTensorFile,verifyTensorFile} from '../compute/fusion/tensor-file.mjs';
 
 const py=python(['torch','transformers','safetensors','numpy']);
 const training={optimizer:'sgd',lr:.01,local_steps:2,grad_accum:1,clip:1};
 const rows=[{input_ids:[1,5,7,9],target_mask:[0,0,1,1]},{input_ids:[1,6,8,9],target_mask:[0,0,0,1]}];
+
+test('disk FedAvg keeps canonical frozen tensors and rejects duplicate, non-finite or off-schema updates',()=>{
+  const root=tmp('fusion-disk-numeric-');
+  const A={name:'layers.0.fusion.A',shape:[2,4],dtype:'F32',trainable:false};
+  const B={name:'layers.0.fusion.B',shape:[4,2],dtype:'F32',trainable:true};
+  const [base,one,two,result]=['base','one','two','result'].map(n=>path.join(root,n+'.safetensors'));
+  try{
+    createTensorFile(base,[A,B],(k,v)=>v.fill(k===A.name?1:0));
+    createTensorFile(one,[B],(_k,v)=>v.fill(1));
+    createTensorFile(two,[B],(_k,v)=>v.fill(3));
+    const first={id:'one',device:'one',tokens:1,file:one},second={id:'two',device:'two',tokens:3,file:two};
+    const opts={base,output:result,schema:[A,B],minDevices:2,updates:[first,second]};
+    const r=aggregateTensorFiles(opts);
+    assert.equal(r.frozen,verifyTensorFile(base,[A,B]).frozen);
+    assert.equal(r.frozen,sha256(encode({[A.name]:{shape:A.shape,data:new Float32Array(8).fill(1)}})));
+    assert.deepEqual([...decode(fs.readFileSync(result)).tensors[B.name].data],new Array(8).fill(2.5));
+    assert.throws(()=>aggregateTensorFiles({...opts,updates:[first,{...second,device:'one'}]}),{code:'CONFLICT'});
+    assert.throws(()=>checkUpdateFile(base,one,[A,B],1),{code:'UPDATE_NORM_LIMIT'});
+    const fd=fs.openSync(one,'r+');
+    try{const bad=Buffer.alloc(4);bad.writeFloatLE(Infinity);fs.writeSync(fd,bad,0,4,fs.fstatSync(fd).size-4);}finally{fs.closeSync(fd);}
+    assert.throws(()=>checkUpdateFile(base,one,[A,B]),{code:'NONFINITE'});
+    assert.throws(()=>checkUpdateFile(base,two,[A,{...B,shape:[8,1]}]),{code:'INVALID_TENSOR'});
+  }finally{for(const file of fs.readdirSync(root))fs.unlinkSync(path.join(root,file));fs.rmdirSync(root);}
+});
 
 test('detected architecture drives the builder and the live sidecar trains, evaluates and reuses a local backbone',{
   skip:!py,timeout:120000
@@ -111,7 +136,7 @@ test('production Compute Worker requests signed Fusion leases, resumes upload an
     const detected=detectBase({...rt,architecture_ok:true});
     const data=await svc.importDataset({fixture:true,dataset_id:'fusion-auto',revision:'1',profile_id:'tiny-test-ffa-r4',max_length:96,runtime:rt});
     const dataset=svc.coord.listDatasets().find(d=>d.id===data.id);
-    const e=reg.create(buildExpert({model_id:detected.id,key:'math',name:'Math',kind:'ffa-lora',domain:'math',layers:[0],rank:4,alpha:8,training},detected,dataset));
+    const e=reg.create({...buildExpert({model_id:detected.id,key:'math',name:'Math',kind:'ffa-lora',domain:'math',layers:[0],rank:4,alpha:8,training},detected,dataset),storage:'file'});
     await svc.start({bindIp:'127.0.0.1',port:0});
     for(const alias of ['a','b']){
       const local=path.join(root,'worker-'+alias),identity=await createIdentity(path.join(local,'id'),fileSecretBox);
@@ -146,6 +171,9 @@ test('production Compute Worker requests signed Fusion leases, resumes upload an
     assert.ok(['VALIDATED','REJECTED'].includes(run.status),JSON.stringify({run,failures:failures.slice(0,4),states:workers.map(x=>x.w.state.state)}));
     assert.ok(ready.checkpoint.assessment);
     assert.equal(ready.version,2);
+    assert.ok(reg.weightLayout(ready.checkpoint.hash));
+    const exported=reg.exportExpert(ready.id,2);
+    assert.equal(reg.importExpertFile(exported.envelope,exported.weight_file,reg.publicKey).checkpoint.hash,ready.checkpoint.hash);
     assert.equal(ready.checkpoint.frozen,reg.get(e.id,1).checkpoint.frozen);
     assert.equal(run.leases.filter(l=>l.state==='accepted').length,2);
     assert.equal(new Set(run.leases.filter(l=>l.state==='accepted').map(l=>l.device)).size,2);

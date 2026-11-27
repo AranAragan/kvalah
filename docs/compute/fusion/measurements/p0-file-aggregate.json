@@ -1,0 +1,17 @@
+{
+  "classification": "MEASURED",
+  "shape": [
+    3072,
+    9216
+  ],
+  "tensor_payload_bytes": 339738624,
+  "artifact_bytes": 339738936,
+  "chunks": 82,
+  "exact_expected_sha256": "580f6ecb68e302c83fceae180c4da259003a47a8e977e64067f64bb5b9b676b2",
+  "frozen_sha256": "a87031f68c71e0cc38c080def1e8256df444a3d4018511c2e6709a3977b3d568",
+  "reducer_ms": 2714,
+  "setup_ms": 2100,
+  "rss_before_bytes": 95514624,
+  "rss_after_bytes": 91602944,
+  "memory_scope": "process samples immediately before and after the bounded file reducer"
+}

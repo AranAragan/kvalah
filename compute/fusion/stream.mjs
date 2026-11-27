@@ -56,6 +56,34 @@ export function hashFile(file,{limit=MAX_STREAM_BYTES,expectedBytes}={}){
   }finally{fs.closeSync(fd);}
 }
 
+export function indexStoredFile(file,{chunk=STREAM_CHUNK,maxBytes=MAX_STREAM_BYTES}={}){
+  const info=stat(file);
+  if(!info||!partLength(info.size,chunk,0)||info.size>maxBytes||Math.ceil(info.size/chunk)>MAX_PARTS)fail('TOO_LARGE','artifact exceeds the configured limits');
+  const whole=createHash('sha256'),parts=[];
+  const fd=fs.openSync(file,'r');
+  try{
+    for(let p=0;p<info.size;p+=chunk){
+      const data=readAt(fd,Math.min(chunk,info.size-p),p);
+      whole.update(data);parts.push({sha256:sha256(data),bytes:data.length});
+    }
+    const after=fs.fstatSync(fd);
+    if(info.size!==after.size||info.mtimeMs!==after.mtimeMs)fail('HASH_MISMATCH','stored checkpoint was modified while indexing');
+    return {sha256:whole.digest('hex'),bytes:info.size,chunk_bytes:chunk,parts};
+  }finally{fs.closeSync(fd);}
+}
+
+export function readStoredPart(file,artifact,index){
+  const part=artifact.parts[index];
+  if(!part||part.bytes!==partLength(artifact.bytes,artifact.chunk_bytes,index)||stat(file)?.size!==artifact.bytes)
+    fail('HASH_MISMATCH','invalid stored checkpoint part');
+  const fd=fs.openSync(file,'r');
+  try{
+    const bytes=readAt(fd,part.bytes,index*artifact.chunk_bytes);
+    if(sha256(bytes)!==part.sha256)fail('HASH_MISMATCH','stored checkpoint part digest mismatch');
+    return bytes;
+  }finally{fs.closeSync(fd);}
+}
+
 // The callback persists each chunk to CAS or hands it to a transport. It never receives the entire file.
 export async function indexArtifact(file,{onChunk=()=>{},chunk=STREAM_CHUNK,maxBytes=MAX_STREAM_BYTES,expectedHash,signal}={}){
   const info=stat(file);

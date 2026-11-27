@@ -17,7 +17,7 @@ import {hashJSON,sha256} from '../protocol/hash.mjs';
 import {exportReport} from '../report.mjs';
 import {PINNED,verifyAgainstHub} from '../registry.mjs';
 import {researchProvenance,verifyLocalConversion} from '../mlx-conversion.mjs';
-import {openFusion} from '../fusion/registry.mjs';
+import {MAX_FILE_EXPERT_BYTES,openFusion} from '../fusion/registry.mjs';
 import {createGrantStore} from '../fusion/provision.mjs';
 import {createFusionQueue} from '../fusion/queue.mjs';
 import {createDiskUploads} from '../fusion/upload.mjs';
@@ -30,7 +30,7 @@ export function lanAddresses(){
   return out;
 }
 export function createCoordinatorService({dir,startSidecar=defaultSidecar,evaluator=()=>null,canRunHeavy=()=>({run:true}),log=()=>{},now=Date.now,tickMs=1000,
-  fusionQuotaBytes=2*1024**3}){
+  fusionQuotaBytes=12*1024**3}){
   fs.mkdirSync(dir,{recursive:true});
   let server=null,timer=null,bind=null,cert=null,evalBusy=false,closed=false,fusionRegistry=null,fusionQueue=null,fusionUploads=null,fusionEvalBusy=false,fusionRetryAt=0;
   const fusionDir=path.join(dir,'..','fusion');
@@ -41,7 +41,7 @@ export function createCoordinatorService({dir,startSidecar=defaultSidecar,evalua
     return fusionQueue;
   }
   function workUploads(){
-    return fusionUploads??=createDiskUploads(path.join(fusionDir,'uploads'),{quotaBytes:fusionQuotaBytes,maxArtifact:65*1024**2,
+    return fusionUploads??=createDiskUploads(path.join(fusionDir,'uploads'),{quotaBytes:fusionQuotaBytes,maxArtifact:MAX_FILE_EXPERT_BYTES+1024**2,
       authorize:(...args)=>managed().limits(...args),seal:(...args)=>managed().result(...args)});
   }
   const work=path.join(dir,'work');fs.mkdirSync(work,{recursive:true});
@@ -92,7 +92,7 @@ export function createCoordinatorService({dir,startSidecar=defaultSidecar,evalua
     const d=fs.mkdtempSync(path.join(work,'fusion-eval-'));
     try{
       const ck=path.join(d,'candidate.safetensors'),rows=path.join(d,'validation.json'),e=item.expert;
-      fs.writeFileSync(ck,fusionRegistry.cas.get(item.checkpoint));fs.writeFileSync(rows,fusionRegistry.cas.get(item.config.validation));
+      fs.copyFileSync(fusionRegistry.weightFile(item.checkpoint),ck);fs.writeFileSync(rows,fusionRegistry.cas.get(item.config.validation));
       const spec={key:e.key,kind:e.kind,layers:e.layers,rank:e.rank,alpha:e.alpha,
         intermediate:e.tensors.find(t=>t.name.endsWith('.gate.weight'))?.shape[0]??null,
         training_mode:e.tensors.find(t=>t.name.endsWith('.gate.weight'))?.trainable===false?'down':'full'};
@@ -281,7 +281,7 @@ export function createCoordinatorService({dir,startSidecar=defaultSidecar,evalua
     try{
       const specs=experts.map((e,i)=>{
         const ck=path.join(d,'expert-'+i+'.safetensors'),validation=path.join(d,'val-'+i+'.json'),sample=byDataset.get(e.dataset_sha256);
-        fs.writeFileSync(ck,fusionRegistry.cas.get(e.checkpoint.hash));
+        fs.copyFileSync(fusionRegistry.weightFile(e.checkpoint.hash),ck);
         if(sample)fs.writeFileSync(validation,sample);
         return {checkpoint:ck,sha256:e.checkpoint.hash,validation:sample?validation:null,validation_sha256:sample?sha256(sample):null,
           spec:{key:e.key,kind:e.kind,layers:e.layers,rank:e.rank,alpha:e.alpha,intermediate:e.tensors.find(t=>t.name.endsWith('.gate.weight'))?.shape[0]??null,

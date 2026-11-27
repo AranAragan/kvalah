@@ -103,11 +103,12 @@ export function buildExpert(input,detected,dataset){
     return [{name:stem+'A',shape:[rank,width],dtype:'F32',trainable:input.kind==='lora'},
       {name:stem+'B',shape:[width,rank],dtype:'F32'}];
   });
+  const weightBytes=tensors.reduce((n,t)=>n+t.shape.reduce((a,b)=>a*b,1)*4,0);
   return {key:input.key,name:input.name,domain:input.domain,kind:input.kind,rank,alpha:input.alpha??2*rank,layers:uniqueLayers,tensors,
     base:{revision:detected.source_revision??('local-'+detected.id.slice(0,12)),backbone_sha256:detected.id,
       architecture_sha256:detected.architecture_sha256,tokenizer_sha256:dataset.tokenizer_hash,layers,width,parameters},
     dataset_sha256:dataset.manifest_hash,license:dataset.license,runtimes:detected.variant_id==='cuda-nf4'?
       (detected.source_revision?['cuda-nf4','mlx']:['cuda-nf4']):['torch-cpu'],
-    quantization:detected.variant_id==='cuda-nf4'?'nf4':'fp32',
+    quantization:detected.variant_id==='cuda-nf4'?'nf4':'fp32',storage:weightBytes>32*1024**2?'file':'buffer',
     training:input.training??{optimizer:'adamw',lr:.001,local_steps:4,grad_accum:1,clip:1}};
 }

@@ -126,12 +126,18 @@ async function main(){
     if(command==='export-expert'){
       const artifact=registry.exportExpert(args[0],Number(args[1]));
       fs.mkdirSync(args[2]);
-      save(path.join(args[2],'weights.safetensors'),artifact.weights);
+      const weights=path.join(args[2],'weights.safetensors');
+      if(artifact.weight_file)fs.copyFileSync(artifact.weight_file,weights,fs.constants.COPYFILE_EXCL);
+      else save(weights,artifact.weights);
       writeJson(path.join(args[2],'manifest.json'),artifact.envelope);
-      return {directory:args[2],sha256:sha256(artifact.weights)};
+      return {directory:args[2],sha256:artifact.envelope.manifest.expert.checkpoint.hash};
     }
-    if(command==='import-expert')return registry.importExpert(readJson(path.join(args[0],'manifest.json')),
-      fs.readFileSync(path.join(args[0],'weights.safetensors')),args[1]);
+    if(command==='import-expert'){
+      const envelope=readJson(path.join(args[0],'manifest.json')),weights=path.join(args[0],'weights.safetensors');
+      if(envelope.manifest?.expert?.storage==='file')return registry.importExpertFile(envelope,weights,args[1]);
+      if(fs.statSync(weights).size>65*1024**2)throw Error('large expert bundles require the signed file storage profile');
+      return registry.importExpert(envelope,fs.readFileSync(weights),args[1]);
+    }
     if(command==='grants-enable'){
       save(path.join(dir,'serve-grants'),'1\n');
       return {enabled:true,restart_coordinator:true};
@@ -139,7 +145,10 @@ async function main(){
     if(command==='grant'){
       const {device,expert,ttl,items,datasetManifest,cpuReference,streamQuotaBytes}=readJson(args[0]);
       const current=registry.get(expert);
-      const records=[putArtifact(registry.cas,'expert',registry.cas.get(current.checkpoint.hash),current.checkpoint.hash)];
+      if(!current.checkpoint)throw Error('expert has no checkpoint');
+      const layout=registry.weightLayout(current.checkpoint.hash);
+      const records=[layout?{...layout,kind:'expert',stream:true,source:current.checkpoint.hash}:
+        putArtifact(registry.cas,'expert',registry.cas.get(current.checkpoint.hash),current.checkpoint.hash)];
       const manifest=fs.readFileSync(datasetManifest);
       let referenceJob=null;
       for(const {kind,file,source,stream,expectedHash} of items){

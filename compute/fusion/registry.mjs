@@ -7,9 +7,12 @@ import {decode,encode} from '../protocol/safetensors.mjs';
 import {canonicalJSON,hashJSON,isHex64,sha256} from '../protocol/hash.mjs';
 import {newKeyPair,signJSON,verifyJSON} from '../protocol/sign.mjs';
 import {fail} from '../protocol/errors.mjs';
+import {hashFile,indexStoredFile,readStoredPart} from './stream.mjs';
+import {verifyTensorFile} from './tensor-file.mjs';
 
 export const FORMAT='kvalah-expert-fusion/v1';
 export const MAX_EXPERT_BYTES=64*1024*1024;
+export const MAX_FILE_EXPERT_BYTES=4*1024**3;
 const ENTITY=/^[a-z][a-z0-9_]{0,47}$/;
 const TENSOR=/^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*$/;
 const unsafeKeys=new Set(['constructor','prototype','__proto__']);
@@ -59,7 +62,8 @@ export function normalizeExpert(input){
     const frozen=input.kind==='ffa-lora'&&t.name.endsWith('.A');
     return {name:t.name,shape:t.shape,dtype:'F32',trainable:!frozen&&t.trainable!==false};
   }).sort((a,b)=>a.name<b.name?-1:a.name>b.name?1:0);
-  requireCondition(size<=MAX_EXPERT_BYTES&&new Set(tensors.map(t=>t.name)).size===tensors.length&&tensors.some(t=>t.trainable),'expert exceeds tensor limits or has duplicate/no trainable weights');
+  const storage=input.storage==='file'?'file':'buffer';
+  requireCondition(size<=(storage==='file'?MAX_FILE_EXPERT_BYTES:MAX_EXPERT_BYTES)&&new Set(tensors.map(t=>t.name)).size===tensors.length&&tensors.some(t=>t.trainable),'expert exceeds tensor limits or has duplicate/no trainable weights');
   if(input.kind.endsWith('lora')){
     requireCondition(positive(input.rank,512)&&Number.isFinite(input.alpha)&&input.alpha>0&&input.alpha<=1024,'invalid LoRA scale');
     const names=new Map(tensors.map(t=>[t.name,t]));
@@ -80,7 +84,7 @@ export function normalizeExpert(input){
     license:input.license.trim(),dataset_sha256:input.dataset_sha256,runtimes:[...new Set(runtimes)].sort(),
     quantization:String(input.quantization??'fp32').slice(0,32),rank:input.kind==='ffn'?null:input.rank,alpha:input.kind==='ffn'?null:input.alpha,
     training:{optimizer:training.optimizer,lr:training.lr,local_steps:training.local_steps,grad_accum:training.grad_accum,clip:training.clip},
-    parameters:size/4,bytes:size,schema_sha256:hashJSON(tensors)};
+    parameters:size/4,bytes:size,storage,schema_sha256:hashJSON(tensors)};
 }
 
 export function verifyEnvelope(envelope, trustedKey){
@@ -109,9 +113,12 @@ export function compositionStats(base, experts, loop, topK){
     fp32_trainable_bytes:(trainable+overhead)*4,adamw_state_bytes:(trainable+overhead)*8};
 }
 
-export function openFusion(root){
+export function openFusion(root,{weightQuotaBytes=16*1024**3}={}){
   fs.mkdirSync(root,{recursive:true,mode:0o700});
   const cas=createCAS(path.join(root,'artifacts'));
+  const weights=path.join(root,'weights');
+  if(!Number.isSafeInteger(weightQuotaBytes)||weightQuotaBytes<1)fail('INVALID_SCHEMA','invalid expert weight disk quota');
+  fs.mkdirSync(weights,{recursive:true,mode:0o700});
   const db=new DatabaseSync(path.join(root,'fusion.sqlite'));
   db.exec(`PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
     CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
@@ -122,7 +129,8 @@ export function openFusion(root){
       PRIMARY KEY(expert,version),FOREIGN KEY(expert,version) REFERENCES checkpoints(expert,version));
     CREATE TABLE IF NOT EXISTS expert_events(id INTEGER PRIMARY KEY,expert TEXT NOT NULL, status TEXT NOT NULL,created INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS compositions(hash TEXT PRIMARY KEY,envelope TEXT NOT NULL,status TEXT NOT NULL,parent TEXT,created INTEGER NOT NULL);
-    CREATE TABLE IF NOT EXISTS assessments(hash TEXT PRIMARY KEY REFERENCES compositions(hash),metrics TEXT NOT NULL,passed INTEGER NOT NULL);`);
+    CREATE TABLE IF NOT EXISTS assessments(hash TEXT PRIMARY KEY REFERENCES compositions(hash),metrics TEXT NOT NULL,passed INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS weight_files(hash TEXT PRIMARY KEY,bytes INTEGER NOT NULL,layout TEXT NOT NULL);`);
   let transactionDepth=0;
   function txn(fn){
     const savepoint=transactionDepth?`fusion_nested_${transactionDepth}`:null;
@@ -162,12 +170,47 @@ export function openFusion(root){
   function version(id,expert,bytes,expected,metrics){
     const tensors=validateTensors(bytes,expert.tensors);
     const frozen=sha256(encode(Object.fromEntries(expert.tensors.filter(t=>!t.trainable).map(t=>[t.name,tensors[t.name]]))));
+    checkLineage(expert,frozen,expected);
+    return recordVersion(id,expert,cas.put(bytes),frozen,expected,metrics);
+  }
+  function checkLineage(expert,frozen,expected){
     if(expert.checkpoint&&expert.checkpoint.frozen!==frozen)fail('CONFLICT','frozen expert tensors changed');
     if((expert.checkpoint?.hash??null)!==expected)fail('CONFLICT','stale expert checkpoint');
-    const hash=cas.put(bytes),number=expert.version+1;
+  }
+  function recordVersion(id,expert,hash,frozen,expected,metrics){
+    checkLineage(expert,frozen,expected);
+    const number=expert.version+1;
     db.prepare('INSERT INTO checkpoints VALUES (?,?,?,?,?,?,?)').run(id,number,hash,frozen,expected,metrics?canonicalJSON(metrics):null,Date.now());
     db.prepare('UPDATE experts SET version=? WHERE id=?').run(number,id);
     return get(id);
+  }
+  function fileName(hash){
+    if(!isHex64(hash))fail('INVALID_SCHEMA','invalid checkpoint hash');
+    return path.join(weights,hash);
+  }
+  const lookup=hash=>db.prepare('SELECT layout FROM weight_files WHERE hash=?').get(hash);
+  function weightLayout(hash){const found=lookup(hash);return found?JSON.parse(found.layout):null;}
+  function weightFile(hash){return lookup(hash)?fileName(hash):cas.file(hash);}
+  function rememberFile(file,layout){
+    const dest=fileName(layout.sha256);
+    if(!lookup(layout.sha256)){
+      const used=db.prepare('SELECT coalesce(sum(bytes),0) AS n FROM weight_files').get().n;
+      if(used+layout.bytes>weightQuotaBytes)fail('DISK_SPACE','Fusion checkpoint quota is exhausted');
+      if(!fs.existsSync(dest)){
+        const {bavail,bsize}=fs.statfsSync(weights);
+        if(layout.bytes>bavail*bsize)fail('DISK_SPACE','not enough free space for an immutable checkpoint');
+        const temp=dest+'.'+randomUUID()+'.tmp';
+        try{
+          fs.copyFileSync(file,temp,fs.constants.COPYFILE_EXCL);
+          const fd=fs.openSync(temp,'r+');try{fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
+          if(hashFile(temp,{expectedBytes:layout.bytes})!==layout.sha256)fail('HASH_MISMATCH','checkpoint changed while copying');
+          fs.linkSync(temp,dest);
+        }finally{fs.rmSync(temp,{force:true});}
+      }
+      if(hashFile(dest,{expectedBytes:layout.bytes})!==layout.sha256)fail('HASH_MISMATCH','stored file does not match its content address');
+      db.prepare('INSERT INTO weight_files VALUES (?,?,?)').run(layout.sha256,layout.bytes,canonicalJSON(layout));
+    }
+    return layout.sha256;
   }
   function composition(hash){
     const row=db.prepare('SELECT * FROM compositions WHERE hash=?').get(hash);
@@ -176,7 +219,10 @@ export function openFusion(root){
     return {hash,status:row.status,parent:row.parent,envelope:JSON.parse(row.envelope),assessment:assessment&&{...JSON.parse(assessment.metrics),passed:!!assessment.passed}};
   }
   return {
-    close:()=>db.close(), db,transaction:txn, publicKey:keys.publicKey, cas, get, change:(id,from,to)=>txn(()=>{
+    close:()=>db.close(), db,transaction:txn, publicKey:keys.publicKey, cas, get, weightFile,weightLayout,
+    weightPart:(hash,layout,index)=>readStoredPart(weightFile(hash),layout,index),
+    stageWeight:(file,layout)=>txn(()=>rememberFile(file,layout)),
+    change:(id,from,to)=>txn(()=>{
       if(['VALIDATED','INTEGRATING','PUBLISHED'].includes(to))fail('CONFLICT','expert acceptance requires a pinned Validation result');
       change(id,from,to);return get(id);
     }),
@@ -197,7 +243,8 @@ export function openFusion(root){
         db.prepare('INSERT INTO expert_events(expert,status,created) VALUES (?,?,?)').run(newId,'CREATED',Date.now());
         if(!original.checkpoint)return get(newId);
         change(newId,'CREATED','PROVISIONING');
-        version(newId,get(newId),cas.get(original.checkpoint.hash),null,null);
+        if(weightLayout(original.checkpoint.hash))recordVersion(newId,get(newId),original.checkpoint.hash,original.checkpoint.frozen,null,null);
+        else version(newId,get(newId),cas.get(original.checkpoint.hash),null,null);
         change(newId,'PROVISIONING','READY');
         return get(newId);
       });
@@ -207,6 +254,18 @@ export function openFusion(root){
         const expert=get(id);
         if(!['PROVISIONING','TRAINING','AGGREGATING'].includes(expert.status))fail('CONFLICT','checkpoint cannot be written in this expert state');
         return version(id,expert,bytes,parent,metrics);
+      });
+    },
+    checkpointFile(id,file,{parent=null,metrics=null}={}){
+      return txn(()=>{
+        const expert=get(id);
+        if(expert.storage!=='file'||!['PROVISIONING','TRAINING','AGGREGATING'].includes(expert.status))
+          fail('CONFLICT','expert cannot accept a file-backed checkpoint in its current state');
+        const scanned=verifyTensorFile(file,expert.tensors);
+        const layout=indexStoredFile(file,{maxBytes:MAX_FILE_EXPERT_BYTES+MAX_EXPERT_BYTES});
+        if(scanned.sha256!==layout.sha256)fail('HASH_MISMATCH','checkpoint changed while indexing');
+        checkLineage(expert,scanned.frozen,parent);
+        return recordVersion(id,expert,rememberFile(file,layout),scanned.frozen,parent,metrics);
       });
     },
     assessExpert(id,{version:expected,dataset_sha256,control_nll,candidate_nll}){
@@ -226,7 +285,8 @@ export function openFusion(root){
     exportExpert(id,v){
       const e=get(id,v);
       if(!e.checkpoint)fail('CONFLICT','expert has no trained or initialized checkpoint');
-      return {envelope:signed({kind:'expert',expert:e}),weights:cas.get(e.checkpoint.hash)};
+      const envelope=signed({kind:'expert',expert:e});
+      return weightLayout(e.checkpoint.hash)?{envelope,weight_file:weightFile(e.checkpoint.hash)}:{envelope,weights:cas.get(e.checkpoint.hash)};
     },
     importExpert(envelope,weights,trustedKey){
       const m=verifyEnvelope(envelope,trustedKey);
@@ -236,6 +296,23 @@ export function openFusion(root){
         db.prepare('INSERT INTO experts VALUES (?,?,?,0)').run(id,canonicalJSON(spec),'CREATED');
         change(id,'CREATED','PROVISIONING');
         version(id,get(id),weights,null,null);
+        change(id,'PROVISIONING','READY');
+        return get(id);
+      });
+    },
+    importExpertFile(envelope,file,trustedKey){
+      const m=verifyEnvelope(envelope,trustedKey);
+      requireCondition(m.kind==='expert'&&m.expert?.storage==='file','invalid streamed expert bundle');
+      const spec=normalizeExpert(m.expert),id=randomUUID();
+      const identity=verifyTensorFile(file,spec.tensors);
+      if(identity.sha256!==m.expert.checkpoint?.hash||identity.frozen!==m.expert.checkpoint.frozen)
+        fail('HASH_MISMATCH','streamed expert bundle differs from its signature');
+      const layout=indexStoredFile(file,{maxBytes:MAX_FILE_EXPERT_BYTES+MAX_EXPERT_BYTES});
+      if(layout.sha256!==identity.sha256)fail('HASH_MISMATCH','expert bundle changed while indexing');
+      return txn(()=>{
+        db.prepare('INSERT INTO experts VALUES (?,?,?,0)').run(id,canonicalJSON(spec),'CREATED');
+        change(id,'CREATED','PROVISIONING');
+        recordVersion(id,get(id),rememberFile(file,layout),identity.frozen,null,null);
         change(id,'PROVISIONING','READY');
         return get(id);
       });

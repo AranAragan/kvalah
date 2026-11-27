@@ -1,4 +1,6 @@
 import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
 import {randomUUID} from 'node:crypto';
 import {canonicalJSON,hashJSON,isHex64,sha256} from '../protocol/hash.mjs';
 import {fail} from '../protocol/errors.mjs';
@@ -6,21 +8,27 @@ import {encode} from '../protocol/safetensors.mjs';
 import {aggregateExpert} from './aggregate.mjs';
 import {putArtifact} from './provision.mjs';
 import {scheduleExperts} from './scheduler.mjs';
+import {aggregateTensorFiles,checkUpdateFile,createTensorFile} from './tensor-file.mjs';
+import {hashFile} from './stream.mjs';
 
 const ttl=2*60*1000;
 const decode=x=>JSON.parse(x);
 
-function initial(expert){
+function initializer(expert){
   let seed=Number.parseInt(hashJSON(expert.id).slice(0,8),16)>>>0;
   function sample(){seed=(Math.imul(seed,1664525)+1013904223)>>>0;return seed/2**32-.5;}
-  return encode(Object.fromEntries(expert.tensors.map(t=>{
-    const data=new Float32Array(t.shape.reduce((a,b)=>a*b,1));
-    if(!t.name.endsWith('.B')&&!t.name.endsWith('.down.weight')){
-      const scale=2/Math.sqrt(t.shape.at(-1));
-      for(let i=0;i<data.length;i++)data[i]=sample()*scale;
-    }
-    return [t.name,{shape:t.shape,data}];
-  })));
+  const scale=new Map(expert.tensors.map(t=>[t.name,2/Math.sqrt(t.shape.at(-1))]));
+  return (name,data)=>{
+    if(name.endsWith('.B')||name.endsWith('.down.weight'))return;
+    const s=scale.get(name);
+    for(let i=0;i<data.length;i++)data[i]=sample()*s;
+  };
+}
+
+function withTemporaryFile(fn){
+  const root=fs.realpathSync(os.tmpdir()),dir=fs.mkdtempSync(path.join(root,'fusion-reduction-'));
+  try{return fn(path.join(dir,'candidate.safetensors'));}
+  finally{if(path.dirname(dir)===root)fs.rmSync(dir,{recursive:true,force:true});}
 }
 
 export function createFusionQueue(registry,{now=Date.now,devices=()=>[]}={}){
@@ -62,9 +70,19 @@ export function createFusionQueue(registry,{now=Date.now,devices=()=>[]}={}){
       const per=expert.training.local_steps*expert.training.grad_accum;
       if(!Array.isArray(rows)||rows.length<quorum*per||!Array.isArray(validation)||!validation.length)fail('DATASET_REQUIRED','not enough Train and Validation data for this run');
       if(expert.status==='CREATED'){
-        registry.change(expertId,'CREATED','PROVISIONING');
-        registry.checkpoint(expertId,initial(expert));
-        expert=registry.change(expertId,'PROVISIONING','READY');
+        expert=tx(()=>{
+          registry.change(expertId,'CREATED','PROVISIONING');
+          const fill=initializer(expert);
+          if(expert.storage==='file')withTemporaryFile(file=>{
+            createTensorFile(file,expert.tensors,fill);
+            registry.checkpointFile(expertId,file);
+          });
+          else registry.checkpoint(expertId,encode(Object.fromEntries(expert.tensors.map(t=>{
+            const data=new Float32Array(t.shape.reduce((a,b)=>a*b,1));fill(t.name,data);
+            return [t.name,{shape:t.shape,data}];
+          }))));
+          return registry.change(expertId,'PROVISIONING','READY');
+        });
       }
       const id=randomUUID();
       const tasks=Array.from({length:quorum},(_,i)=>{
@@ -80,7 +98,8 @@ export function createFusionQueue(registry,{now=Date.now,devices=()=>[]}={}){
       if(!['cuda','mlx','torch-cpu-test'].includes(backend)||!Array.isArray(modelVariants)||modelVariants.some(v=>!isHex64(v.digest)||!['cuda','mlx','torch-cpu-test'].includes(v.backend)))
         fail('MODEL_UNVERIFIED','invalid Fusion model variants');
       const config={devices,tasks,group,modelDigest,backend,modelVariants,maxLength,validation:registry.cas.put(validationBytes),parent:expert.checkpoint.hash};
-      const weight=putArtifact(registry.cas,'expert',registry.cas.get(config.parent),config.parent);
+      const layout=registry.weightLayout(config.parent);
+      const weight=layout?{...layout,stream:true,kind:'expert',source:config.parent}:putArtifact(registry.cas,'expert',registry.cas.get(config.parent),config.parent);
       config.weight=weight;
       tx(()=>{
         if(db.prepare("SELECT id FROM runs WHERE expert=? AND status IN ('RUNNING','PAUSED','AGGREGATING','EVALUATING')").get(expertId))fail('CONFLICT','expert already has an active run');
@@ -146,9 +165,11 @@ export function createFusionQueue(registry,{now=Date.now,devices=()=>[]}={}){
     },
     chunk(device,id,hash){
       const {m}=authorize(device,id);
-      const p=m.manifest.artifacts.flatMap(x=>x.parts).find(item=>item.sha256===hash);
-      if(!p)fail('FORBIDDEN_SCOPE','part is outside the Fusion assignment');
-      return registry.cas.get(hash,{maxBytes:p.bytes});
+      for(const artifact of m.manifest.artifacts){
+        const index=artifact.parts.findIndex(p=>p.sha256===hash);
+        if(index>=0)return artifact.stream?registry.weightPart(artifact.sha256,artifact,index):registry.cas.get(hash,{maxBytes:artifact.parts[index].bytes});
+      }
+      fail('FORBIDDEN_SCOPE','part is outside the Fusion assignment');
     },
     limits(device,id){
       const {l,m,r}=authorize(device,id),expert=registry.get(r.expert);
@@ -163,13 +184,36 @@ export function createFusionQueue(registry,{now=Date.now,devices=()=>[]}={}){
           return prior;
         }
         if(tokens!==manifest.expected_tokens||artifact.bytes>e.bytes+1024**2||e.checkpoint?.hash!==manifest.parent)fail('STALE','Fusion result no longer matches its assignment');
-        const bytes=fs.readFileSync(file);
-        if(sha256(bytes)!==artifact.sha256)fail('HASH_MISMATCH','Fusion result differs from its staged artifact');
         const cfg=decode(r.config),round={id:r.id,algorithm:'fedavg',expert:e.id,parent:cfg.parent,schema:e.schema_sha256,frozen:e.checkpoint.frozen};
         const result={status:'accepted',id,device,sha256:artifact.sha256,tokens,expert:e.id};
+        const previous=db.prepare("SELECT result FROM leases WHERE run=? AND state='accepted'").all(r.id).map(row=>decode(row.result));
+        if(e.storage==='file'){
+          const base=registry.weightFile(round.parent);
+          if(hashFile(file,{expectedBytes:artifact.bytes})!==artifact.sha256||hashFile(base)!==round.parent)fail('HASH_MISMATCH','file-backed result or parent digest mismatch');
+          checkUpdateFile(base,file,e.tensors);
+          registry.stageWeight(file,artifact);
+          db.prepare("UPDATE leases SET state='accepted',result=? WHERE id=? AND state='leased'").run(canonicalJSON(result),id);
+          if(previous.length+1===cfg.tasks.length){
+            withTemporaryFile(output=>{
+              const updates=[...previous,result].map(x=>{
+                const file=registry.weightFile(x.sha256);
+                if(hashFile(file)!==x.sha256)fail('HASH_MISMATCH','accepted Fusion result is corrupt');
+                return {id:x.id,device:x.device,tokens:x.tokens,file};
+              });
+              const reduced=aggregateTensorFiles({base,updates,output,schema:e.tensors,minDevices:cfg.tasks.length});
+              if(reduced.frozen!==round.frozen)fail('FROZEN_A_CHANGED','streamed reducer changed frozen weights');
+              registry.change(e.id,'TRAINING','AGGREGATING');
+              const final=registry.checkpointFile(e.id,output,{parent:round.parent,metrics:{total_tokens:reduced.tokens,updates:reduced.updates}});
+              registry.change(e.id,'AGGREGATING','EVALUATING');
+              db.prepare("UPDATE runs SET checkpoint=?,status='EVALUATING' WHERE id=?").run(final.checkpoint.hash,r.id);
+            });
+          }
+          return result;
+        }
+        const bytes=fs.readFileSync(file);
+        if(sha256(bytes)!==artifact.sha256)fail('HASH_MISMATCH','Fusion result differs from its staged artifact');
         const toUpdate=(receipt,payload)=>({id:receipt.id,device:receipt.device,tokens:receipt.tokens,round:r.id,expert:e.id,schema:round.schema,
           parent:round.parent,frozen:round.frozen,config:hashJSON({algorithm:'fedavg',config:{}}),payload,payload_sha256:receipt.sha256});
-        const previous=db.prepare("SELECT result FROM leases WHERE run=? AND state='accepted'").all(r.id).map(row=>decode(row.result));
         const update=toUpdate(result,bytes),agg=receipts=>aggregateExpert({expert:e,base:registry.cas.get(round.parent),round,
           assignments:receipts.map(u=>({id:u.id,device:u.device,tokens:u.tokens,group:cfg.group})),updates:receipts});
         agg([update]);

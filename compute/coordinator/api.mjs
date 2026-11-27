@@ -52,12 +52,13 @@ export function createApi(coord,{cert,key,now=Date.now,maxConcurrent=32,ratePerS
       const isContent=req.method==='PUT'&&/^\/v2\/updates\/[\w-]+\/content$/.test(p);
       const part=req.method==='PUT'&&p.match(/^\/v2\/updates\/([\w-]+)\/parts\/(\d+)$/);
       const fusionPart=fusionWork&&req.method==='PUT'&&p.match(/^\/v2\/fusion\/work\/([\w-]{36})\/upload\/parts\/(\d+)$/);
+      const fusionBegin=fusionWork&&req.method==='POST'&&/^\/v2\/fusion\/work\/[\w-]{36}\/upload\/begin$/.test(p);
       if(isContent||part||fusionPart){
         if(payloads>=Math.max(1,Math.floor(maxConcurrent/2)))return json(res,503,errorBody(new ComputeError('UNAVAILABLE','payload queue busy'),cid),{'retry-after':'2'});
         payloads++;
         reservedPayload=true;
       }
-      const body=await readBody(req,(part||fusionPart)?4*1024*1024:isContent?MAX_UPDATE_BYTES:MAX_JSON);
+      const body=await readBody(req,(part||fusionPart)?4*1024*1024:isContent?MAX_UPDATE_BYTES:fusionBegin?256*1024:MAX_JSON);
       const parse=()=>{if(!body.length)return {};try{const v=JSON.parse(body.toString('utf8'));if(!v||typeof v!=='object'||Array.isArray(v))throw 0;return v;}catch{fail('INVALID_SCHEMA','body must be a JSON object');}};
       if(req.method==='POST'&&p==='/v2/pair/start')return json(res,200,coord.pairStart());
       if(req.method==='POST'&&p==='/v2/pair/complete')return json(res,200,coord.pairComplete(parse()));
