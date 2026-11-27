@@ -1,0 +1,12 @@
+{
+  "class": "MEASURED",
+  "gpu": "RTX 5070 Laptop",
+  "warm_jobs": 50,
+  "cache_hits": 49,
+  "cold_load_s": 15.943,
+  "warm_initial_load_s": 16.899,
+  "median_cache_hit_wall_s": 0.3583617999975104,
+  "peak_reserved_bytes": 3256877056,
+  "same_cold_and_cache_hit_sha256": true,
+  "frozen_A_sha256": "2792a76f54aad26dca51e1d18e7a25a898549df9148695549ce11648bd100cdc"
+}

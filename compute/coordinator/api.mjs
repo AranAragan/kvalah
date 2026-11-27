@@ -47,15 +47,16 @@ export function createApi(coord,{cert,key,now=Date.now,maxConcurrent=32,ratePerS
     try{
       const url=new URL(req.url,'https://coordinator'),route=url.pathname+url.search,p=url.pathname;
       if(!p.startsWith('/v2/'))fail('NOT_FOUND','not found');
-      if(req.method==='GET'&&p==='/v2/health/live')return json(res,200,{ok:true,server_time:now(),protocol_version:'2.0'});
+      if(req.method==='GET'&&p==='/v2/health/live')return json(res,200,{ok:true,server_time:now(),protocol_version:'2.0',features:['chunked-update-v1']});
       if(req.method==='GET'&&p==='/v2/health/ready')return json(res,200,{ready:true});
       const isContent=req.method==='PUT'&&/^\/v2\/updates\/[\w-]+\/content$/.test(p);
-      if(isContent){
+      const part=req.method==='PUT'&&p.match(/^\/v2\/updates\/([\w-]+)\/parts\/(\d+)$/);
+      if(isContent||part){
         if(payloads>=Math.max(1,Math.floor(maxConcurrent/2)))return json(res,503,errorBody(new ComputeError('UNAVAILABLE','payload queue busy'),cid),{'retry-after':'2'});
         payloads++;
         reservedPayload=true;
       }
-      const body=await readBody(req,isContent?MAX_UPDATE_BYTES:MAX_JSON);
+      const body=await readBody(req,part?4*1024*1024:isContent?MAX_UPDATE_BYTES:MAX_JSON);
       const parse=()=>{if(!body.length)return {};try{const v=JSON.parse(body.toString('utf8'));if(!v||typeof v!=='object'||Array.isArray(v))throw 0;return v;}catch{fail('INVALID_SCHEMA','body must be a JSON object');}};
       if(req.method==='POST'&&p==='/v2/pair/start')return json(res,200,coord.pairStart());
       if(req.method==='POST'&&p==='/v2/pair/complete')return json(res,200,coord.pairComplete(parse()));
@@ -68,6 +69,8 @@ export function createApi(coord,{cert,key,now=Date.now,maxConcurrent=32,ratePerS
       if(req.method==='POST'&&(m=p.match(/^\/v2\/tasks\/([\w-]+)\/(renew|progress|abandon)$/)))return json(res,200,coord[m[2]](dev,m[1],parse()));
       if(req.method==='GET'&&(m=p.match(/^\/v2\/artifacts\/([0-9a-f]{64})$/))){const b=coord.artifactFor(dev,m[1]);res.writeHead(200,{'content-type':'application/octet-stream','content-length':b.length,'x-kc-sha256':m[1]});return res.end(b);}
       if(req.method==='POST'&&p==='/v2/updates')return json(res,200,coord.declareUpdate(dev,parse()));
+      if(req.method==='POST'&&(m=p.match(/^\/v2\/updates\/([\w-]+)\/transfer\/(begin|complete)$/)))return json(res,200,coord.transfer[m[2]](dev,m[1],parse()));
+      if(part)return json(res,200,coord.transfer.put(dev,part[1],Number(part[2]),url.searchParams.get('sha256'),body,url.searchParams.get('session_id')));
       if(isContent){m=p.match(/^\/v2\/updates\/([\w-]+)\/content$/);return json(res,200,coord.putContent(dev,m[1],body,url.searchParams.get('session_id')));}
       if(req.method==='POST'&&(m=p.match(/^\/v2\/updates\/([\w-]+)\/commit$/)))return json(res,200,coord.commitUpdate(dev,m[1],parse()));
       if(req.method==='GET'&&(m=p.match(/^\/v2\/updates\/([\w-]+)\/status$/)))return json(res,200,coord.updateStatus(dev,m[1]));

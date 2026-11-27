@@ -16,6 +16,8 @@ const HELP=`kvalah-compute <command> [options]
                 Coordinator + dataset + experiment; waits until COMPLETED/BLOCKED and exports the report.
   worker        --pairing STR --python P --model-dir D [--variant V] [--alias NAME] --i-consent
                 [--gpu 10] [--cpu 10] [--hours 4] [--no-idle] [--no-ac] [--no-games]
+                [--runtime-mode cold|warm|adaptive] [--runtime-idle SECONDS]
+                [--transfer-mode auto|legacy] [--chunk-kib 1024] [--activity-mode cooperative|strict]
   export        --experiment ID --out DIR [--weights] [--peft]
   import-mlx    --manifest FILE --source-dir DIR --output-dir DIR --reviewed
   evaluate-test --experiment ID [--python P --backend B --model-dir D --variant V]
@@ -50,6 +52,10 @@ async function setup({preflight=true}={}){
 async function policyFromFlags(){
   const s=await h('state',{},'GET'),p={...s.policy};
   if(opt('gpu'))p.gpu_target_pct=Number(opt('gpu'));if(opt('cpu'))p.cpu_target_pct=Number(opt('cpu'));if(opt('hours'))p.daily_hours=Number(opt('hours'));
+  for(const [flag,key] of [['runtime-mode','runtime_mode'],['transfer-mode','transfer_mode'],['activity-mode','activity_mode']])
+    if(opt(flag))p[key]=opt(flag);
+  if(opt('runtime-idle'))p.runtime_idle_s=Number(opt('runtime-idle'));
+  if(opt('chunk-kib'))p.update_chunk_bytes=Number(opt('chunk-kib'))*1024;
   if(flag('no-idle'))p.only_idle=false;if(flag('no-ac'))p.only_ac=false;if(flag('no-games'))p.pause_on_games=false;if(flag('full'))p.profile='full';
   return h('policy',{policy:p,revision:s.policy.revision});
 }

@@ -31,7 +31,7 @@ export function createGovernor({stateDir,now=Date.now,mono=()=>performance.now()
   }
   const budgetMs=()=>pol.daily_hours*3600e3;
   // Decision in the spec's priority order. Returns {run, reason, resume}.
-  function decide({phase='compute',localAction=false}={}){
+  function decide({phase='compute',localAction=false,scope}={}){
     const s=sensors,t=now();
     if(disabled&&!localAction)return {run:false,reason:'disabled',resume:'enable participation'};
     if(manualPause)return {run:false,reason:'manual_pause',resume:'press Resume'};
@@ -47,11 +47,16 @@ export function createGovernor({stateDir,now=Date.now,mono=()=>performance.now()
       if(s.on_battery===true)return {run:false,reason:'on_battery',resume:'connect to mains power'};
       if(s.on_battery==null)return {run:false,reason:'sensor_unavailable_power',resume:'power state unknown; untick "only on mains power" to allow'};
     }else if(s.on_battery===true&&Number.isFinite(s.battery_pct)&&s.battery_pct<pol.battery_floor_pct)return {run:false,reason:'battery_floor',resume:`battery above ${pol.battery_floor_pct}%`};
-    if(pol.min_free_ram_gib>0&&['preflight','admission'].includes(phase)){
+    if(pol.min_free_ram_gib>0&&['preflight','admission','resident'].includes(phase)){
       const ram=s.ram_available_bytes??s.ram_free_bytes;
       if(!Number.isFinite(ram)||!Number.isFinite(s.ram_observed_at)||t-s.ram_observed_at>20000)return {run:false,reason:'sensor_unavailable_memory',resume:'wait for a fresh RAM sample'};
       if(ram<pol.min_free_ram_gib*2**30)return {run:false,reason:'low_memory',resume:`at least ${pol.min_free_ram_gib} GiB available RAM`};
     }
+    const total=s.gpu?.memory_total_bytes,used=s.gpu?.memory_used_bytes;
+    if(['resident','admission','preflight'].includes(phase)&&Number.isFinite(total)&&Number.isFinite(used)&&
+      total-used<pol.min_free_vram_gib*2**30)return {run:false,reason:'low_vram',resume:'release GPU memory'};
+    if(pol.max_worker_mem_gib!=null&&Number.isFinite(s.worker_memory_bytes)&&
+      s.worker_memory_bytes>pol.max_worker_mem_gib*2**30)return {run:false,reason:'worker_memory_limit',resume:'lower context or stop the worker'};
     if(s.memory_pressure==='critical')return {run:false,reason:'memory_pressure',resume:'memory pressure back to normal'};
     // Resource broker: Kvalah's own agent/chat and the Offload service have priority.
     if(pol.pause_on_local_ai&&[...broker.values()].some(Boolean))return {run:false,reason:'local_ai',resume:'local AI request finished'};
@@ -68,7 +73,9 @@ export function createGovernor({stateDir,now=Date.now,mono=()=>performance.now()
     }
     if(pol.pause_on_fullscreen&&s.fullscreen===true)return {run:false,reason:'fullscreen',resume:'full-screen app or call ended'};
     if(!pol.allow_metered&&s.metered===true&&phase==='network')return {run:false,reason:'metered_network',resume:'unmetered network'};
-    if(day().bytes>=pol.daily_traffic_mb*1e6&&phase==='network')return {run:false,reason:'traffic_cap',resume:'next day'};
+    if(phase==='network'&&trafficRemaining(scope)<=0)return {run:false,reason:'traffic_cap',resume:'increase limit or wait until next day'};
+    if(pol.activity_mode==='strict'&&phase!=='network')
+      return {run:false,reason:'strict_operation_unbounded',resume:'current runtime cannot certify the maximum duration of a GPU operation'};
     if(pol.gpu_target_pct===0)return {run:false,reason:'gpu_zero',resume:'raise the GPU time share above 0%'};
     if(pol.cpu_target_pct===0)return {run:false,reason:'cpu_zero',resume:'raise the CPU thread allowance above 0%'};
     return {run:true,reason:null};
@@ -92,8 +99,17 @@ export function createGovernor({stateDir,now=Date.now,mono=()=>performance.now()
     return Math.max(0,Math.min(Math.max(base,corr),activeMs*(1-f)/f*3+1000));
   }
   function account({wallMs=0,gpuMs=0,cpuMs=0,bytes=0}){const d=day();d.wall_ms+=wallMs;d.gpu_ms+=gpuMs;d.cpu_ms+=cpuMs;d.bytes+=bytes;dirty=true;save(false);}
-  function trafficRemaining(){return Math.max(0,Math.floor(pol.daily_traffic_mb*1e6-day().bytes));}
-  function accountTraffic(bytes){day().bytes+=bytes;dirty=true;save(true);}
+  function trafficRemaining(scope){
+    const d=day(),limit=scope==='lan'?pol.lan_traffic_mb:scope==='wan'?pol.wan_traffic_mb:null;
+    const remaining=pol.daily_traffic_mb*1e6-d.bytes;
+    return Math.max(0,Math.floor(limit==null?remaining:Math.min(remaining,limit*1e6-(d[scope+'_bytes']||0))));
+  }
+  function accountTraffic(bytes,direction,scope){
+    const d=day();d.bytes+=bytes;
+    if(direction==='in'||direction==='out')d['bytes_'+direction]=(d['bytes_'+direction]||0)+bytes;
+    if(scope==='lan'||scope==='wan')d[scope+'_bytes']=(d[scope+'_bytes']||0)+bytes;
+    dirty=true;save(true);
+  }
   return {
     decide,afterStep,account,trafficRemaining,accountTraffic,save:()=>save(true),
     get policy(){return pol;},
@@ -112,7 +128,10 @@ export function createGovernor({stateDir,now=Date.now,mono=()=>performance.now()
     setManualPause(v){manualPause=!!v;},get manualPause(){return manualPause;},
     setEnabled(v){disabled=!v;},
     setServerOffset(ms){if(Number.isFinite(ms))serverOffset=ms;},
-    budget(){const d=day();return {day:today(),used_wall_ms:d.wall_ms,used_gpu_ms:d.gpu_ms,used_cpu_ms:d.cpu_ms,bytes:d.bytes,limit_ms:budgetMs(),remaining_ms:Math.max(0,budgetMs()-d.wall_ms)};},
+    budget(){const d=day();return {day:today(),used_wall_ms:d.wall_ms,used_gpu_ms:d.gpu_ms,used_cpu_ms:d.cpu_ms,bytes:d.bytes,
+      bytes_in:d.bytes_in||0,bytes_out:d.bytes_out||0,lan_bytes:d.lan_bytes||0,wan_bytes:d.wan_bytes||0,
+      traffic_remaining:trafficRemaining(),lan_remaining:trafficRemaining('lan'),wan_remaining:trafficRemaining('wan'),
+      limit_ms:budgetMs(),remaining_ms:Math.max(0,budgetMs()-d.wall_ms)};},
     month(){const k=today().slice(0,7);let wall=0,gpu=0,bytes=0;for(const [d,v] of Object.entries(ledger.days))if(d.startsWith(k)){wall+=v.wall_ms;gpu+=v.gpu_ms;bytes+=v.bytes;}return {month:k,wall_ms:wall,gpu_ms:gpu,bytes};},
     measured(){return {active_fraction_60s:fraction(MIN),active_fraction_5m:fraction(5*MIN)};},
     cpuThreads(logical){return Math.max(1,Math.floor(pol.cpu_target_pct/100*logical));}

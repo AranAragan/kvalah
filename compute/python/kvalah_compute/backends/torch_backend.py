@@ -243,3 +243,10 @@ class TorchBackend:
         gc.collect()
         if self.device == "cuda":
             _torch().cuda.empty_cache()
+
+    def reset_task(self):
+        if self.opt is not None:
+            self.opt.zero_grad(set_to_none=True)
+        self.opt = None
+        if self.device == "cuda":
+            _torch().cuda.empty_cache()

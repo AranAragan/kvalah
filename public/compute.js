@@ -13,7 +13,7 @@
   };
   const friendly=code=>X[code]?tx(code):code&&D[lang()]['r.'+code]?ct('r.'+code):tx('errorDefault');
   const trust=p=>tx(p==='locally_attested'?'trustLocal':p==='verified'?'trustReady':'trustUnknown');
-  const reason=r=>r?(D[lang()]['r.'+r]?ct('r.'+r):String(r)):'';
+  const reason=r=>r?(X[r]?tx(r):D[lang()]['r.'+r]?ct('r.'+r):String(r)):'';
   const short=h=>h?String(h).slice(0,12):ct('none');
   const fmtMs=ms=>{if(ms==null)return ct('none');const s=Math.round(ms/1000);return s<60?s+' s':s<3600?Math.floor(s/60)+' min '+(s%60)+' s':Math.floor(s/3600)+' h '+Math.floor(s%3600/60)+' min';};
   const fmtB=b=>b==null?ct('none'):b<1024?b+' B':b<1048576?(b/1024).toFixed(1)+' KB':b<1073741824?(b/1048576).toFixed(1)+' MB':(b/1073741824).toFixed(2)+' GB';
@@ -143,7 +143,7 @@
     if(S.missing?.size||S.missing?.length)return pill(tx('temporary'),'warn')+h2(tx('actionNeeded'))+
       row(btn('review-consent',tx('finishSetup'),{primary:true})+btn('expert-open',tx('expert')));
     if(!S.participation)return pill(tx('stopped'))+h2(tx('stopped'))+plain(tx('readyText'))+row(btn('start-participation',tx('resume'),{primary:true}));
-    const blocked=stale||['PAUSED','ERROR_RECOVERABLE'].includes(S.state);
+    const blocked=stale||['PAUSED','BLOCKED_BY_TRAFFIC_POLICY','ERROR_RECOVERABLE'].includes(S.state);
     const moving={TRAINING:'busyTraining',UPLOADING:'busyUpload',PREPARING:'preparing',CONNECTING:'checking',STOPPING:'stopped'}[S.state];
     const head=blocked?(S.state==='ERROR_RECOVERABLE'||stale?tx('reconnecting'):tx('paused')):tx(moving||'ready');
     const reasonCode=S.worker?.last_rpc_error?.code&&S.state==='ERROR_RECOVERABLE'?S.worker.last_rpc_error.code:S.reason;
@@ -158,13 +158,20 @@
       plain(tx('powerNote'),'kc-caption')+'</details>';
     const slider=(key,label,max,unit='%')=>'<label class="kc-slider"><span>'+esc(label)+' <b id="v_'+key+'">'+p[key]+esc(unit)+'</b></span><input type="range" min="'+(key==='daily_hours'?1:0)+'" max="'+max+'" step="'+(key==='daily_hours'?1:5)+'" value="'+p[key]+'" data-pol="'+key+'" data-unit="'+esc(unit)+'"></label>';
     const checkbox=key=>'<label class="kc-check"><input type="checkbox" data-pol="'+key+'"'+(p[key]?' checked':'')+'> '+esc(ct(key))+'</label>';
-    const input=(key,min,max,step=1)=>'<label class="kc-field"><span>'+esc(ct(key))+'</span><input type="number" data-pol="'+key+'" min="'+min+'" max="'+max+'" step="'+step+'" value="'+esc(p[key])+'"></label>';
+    const input=(key,min,max,step=1,label=ct(key))=>'<label class="kc-field"><span>'+esc(label)+'</span><input type="number" data-pol="'+key+'" min="'+min+'" max="'+max+'" step="'+step+'" value="'+esc(p[key])+'"></label>';
+    const select=(key,label,choices)=>'<label class="kc-field"><span>'+esc(label)+'</span><select data-pol="'+key+'">'+
+      choices.map(([value,name])=>'<option value="'+esc(value)+'"'+(p[key]===value?' selected':'')+'>'+esc(name)+'</option>').join('')+'</select></label>';
     const quiet='<div class="kc-quiet"><label class="kc-check"><input type="checkbox" data-pol="quiet_hours.enabled"'+(p.quiet_hours.enabled?' checked':'')+'> '+esc(ct('quiet'))+'</label>'+
       ['from','to'].map(k=>'<label>'+esc(ct('quiet.'+k))+' <input type="time" data-pol="quiet_hours.'+k+'" value="'+esc(p.quiet_hours[k])+'"></label>').join('')+'</div>';
     return '<details class="kc-extra" data-expand="policy"><summary>'+esc(tx('advanced'))+'</summary>'+
       slider('gpu_target_pct',ct('gpu'),p.profile==='full'?100:50)+slider('cpu_target_pct',ct('cpu'),100)+slider('daily_hours',ct('hours'),p.extended_hours?24:12,lang()==='ru'?' ч':' h')+
       '<div class="kc-detail-grid">'+['only_idle','only_ac','pause_on_games','pause_on_local_ai','pause_on_fullscreen','allow_metered','extended_hours'].map(checkbox).join('')+'</div>'+
-      '<div class="kc-detail-grid">'+input('idle_minutes',1,120)+input('min_free_ram_gib',0,256,.5)+input('temp_limit_c',50,95)+input('daily_traffic_mb',10,1000000,10)+'</div>'+quiet+
+      '<div class="kc-detail-grid">'+input('idle_minutes',1,120)+input('min_free_ram_gib',0,256,.5)+input('temp_limit_c',50,95)+input('daily_traffic_mb',10,1000000,10)+
+      input('lan_traffic_mb',10,1000000,1,tx('lanTraffic'))+input('wan_traffic_mb',10,1000000,1,tx('wanTraffic'))+
+      select('runtime_mode',tx('residentPolicy'),[['cold',tx('residentCold')],['warm',tx('residentWarm')],['adaptive',tx('residentAdaptive')]])+
+      input('runtime_idle_s',5,3600,1,tx('idleTimeout'))+
+      select('activity_mode',tx('resourceMode'),[['cooperative',tx('cooperativeMode')],['strict',tx('strictMode')]])+
+      select('update_chunk_bytes',tx('chunkSize'),[256,512,1024,2048,4096].map(k=>[k*1024,k+' KiB']))+'</div>'+quiet+
       plain(tx('powerNote'),'kc-caption')+(S.platform==='darwin'?plain(ct('pause_on_games')+' · '+tx('unsupported'),'kc-caption'):'')+
       row(btn('full-profile',ct('profile.full'))+btn('diag',tx('diag'))+btn('expert-open',tx('expert'))+(S.link?btn('link-forget',tx('leave'))+btn('consent-revoke',ct('consent.revoke')):''))+
       '<details data-expand="sensors"><summary>'+esc(tx('technicalDetails'))+'</summary>'+sensorsBlock()+measuredBlock()+'</details>'+msg('policy')+msg('diag')+'</details>';
@@ -172,7 +179,8 @@
   function measuredBlock(){
     const w=S.worker?.metrics,b=S.budget;
     return kv([[ct('measured.tasks'),esc(w?.tasks_accepted??'—')],[ct('measured.tokens'),esc(w?.supervised_tokens??'—')],
-      [ct('measured.acceptedTokens'),esc(w?.accepted_tokens??'—')],[ct('measured.bytes'),esc(fmtB(b?.bytes))]]);
+      [ct('measured.acceptedTokens'),esc(w?.accepted_tokens??'—')],[ct('measured.bytes'),esc(fmtB(b?.bytes))],
+      [tx('trafficRemaining'),esc(fmtB(b?.traffic_remaining))]]);
   }
   function sensorsBlock(){
     const s=S.governor?.sensors;
@@ -196,7 +204,8 @@
   function collectPolicy(){
     const p=JSON.parse(JSON.stringify(S.policy));
     body().querySelectorAll('[data-pol]').forEach(el=>{
-      const k=el.dataset.pol;let v=el.type==='checkbox'?el.checked:el.type==='range'||el.type==='number'?Number(el.value):el.value;
+      const k=el.dataset.pol;let v=el.type==='checkbox'?el.checked:el.type==='range'||el.type==='number'||k==='update_chunk_bytes'?Number(el.value):el.value;
+      if((k==='lan_traffic_mb'||k==='wan_traffic_mb')&&!el.value)v=null;
       if(k.startsWith('quiet_hours.'))p.quiet_hours[k.slice(12)]=v;else p[k]=v;
     });
     if(p.daily_hours>(p.extended_hours?24:12))p.daily_hours=p.extended_hours?24:12;
@@ -271,7 +280,9 @@
       return '<li><span><strong>'+esc(d.alias)+'</strong>'+(d.id===lab.self_device?' <span class="badge">'+esc(ct('dev.self'))+'</span>':'')+' <span class="badge'+(d.state==='active'?' ok':'')+'">'+esc(d.state)+'</span> <span class="badge'+(d.online?' ok':'')+'">'+esc(ct(d.online?'dev.online':'dev.offline'))+'</span>'
         +'<small>'+esc(d.id)+' · '+esc(d.key_fingerprint)+(d.duplicate_alias?' · '+ct('dev.dup'):'')+'</small>'
         +'<small>'+esc([c.backend,c.device_name,c.memory_total_bytes?fmtB(c.memory_total_bytes):null,c.runtime_version].filter(Boolean).join(' · '))+'</small>'
-        +'<small>'+esc([d.heartbeat_age_ms!=null?ct('dev.hb',{s:Math.round(d.heartbeat_age_ms/1000)}):null,s.state?s.state+(s.reason?' ('+reason(s.reason)+')':''):null,ct('measured.tasks')+': '+(d.accepted_count||0),m.tokens_per_s?m.tokens_per_s.toFixed(1)+' tok/s':null,m.step_s?m.step_s.toFixed(2)+' s/step':null].filter(Boolean).join(' · '))+'</small></span><span class="kc-actions">'+acts+'</span></li>';
+        +'<small>'+esc([d.heartbeat_age_ms!=null?ct('dev.hb',{s:Math.round(d.heartbeat_age_ms/1000)}):null,s.state?s.state+(s.pause_reason?' ('+reason(s.pause_reason)+')':''):null,ct('measured.tasks')+': '+(d.accepted_count||0),m.tokens_per_s?m.tokens_per_s.toFixed(1)+' tok/s':null,m.step_s?m.step_s.toFixed(2)+' s/step':null].filter(Boolean).join(' · '))+'</small>'
+        +'<small>'+esc([m.resident_model?tx('modelResident'):null,m.total_chunks?tx('sentChunks')+' '+m.uploaded_chunks+'/'+m.total_chunks:null,
+          m.traffic_remaining!=null?tx('trafficRemaining')+' '+fmtB(m.traffic_remaining):null].filter(Boolean).join(' · '))+'</small></span><span class="kc-actions">'+acts+'</span></li>';
     }).join('')+'</ul>';
   }
   function labInfo(){

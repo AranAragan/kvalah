@@ -271,7 +271,7 @@ test('N06 fault-tolerant quorum: 2 of 3 commit at the deadline; the third update
 });
 test('N07 below quorum at the deadline → BLOCKED with blocker; retry is a new attempt from the same parent',async()=>{
   const {c,now}=await setup();const ds=[enroll(c,'a'),enroll(c,'b'),enroll(c,'c')];
-  const e=c.createExperiment(cfg({preset:'pilot',rounds:2,quorum:{mode:'fault_tolerant',min:2,target:3}}));const st=c.startExperiment(e.id);
+  const e=c.createExperiment(cfg({preset:'pilot',rounds:2,reuse_accepted_updates:false,quorum:{mode:'fault_tolerant',min:2,target:3}}));const st=c.startExperiment(e.id);
   const t=claim(c,ds[0]).task;submit(c,ds[0],t);
   now.add(601e3);c.tick();
   const s=c.status(e.id);assert.equal(s.state,'BLOCKED');assert.equal(s.blocker.reason,'below_quorum_at_deadline');assert.equal(s.blocker.accepted,1);
@@ -279,6 +279,56 @@ test('N07 below quorum at the deadline → BLOCKED with blocker; retry is a new 
   const r=c.resumeExperiment(e.id);assert.equal(r.state,'RUNNING');assert.equal(r.round.idx,0);assert.equal(r.round.attempt,2);assert.equal(r.round.parent_hash,st.initial_hash);
   const ts=ds.map(d=>claim(c,d).task);assert.ok(ts.every(Boolean));ts.forEach((x,i)=>submit(c,ds[i],x));
   assert.equal(c.rounds(e.id).find(x=>x.idx===0&&x.attempt===2).state,'COMMITTED');
+});
+test('strict retry preserves two accepted payloads and only leases the missing slot',async()=>{
+  const {c,now,dir}=await setup();
+  const ds=[enroll(c,'a'),enroll(c,'b'),enroll(c,'c')];
+  try{
+    const e=c.createExperiment(cfg({rounds:1}));c.startExperiment(e.id);
+    const accepted=ds.slice(0,2).map(d=>submit(c,d,claim(c,d).task));
+    now.add(601e3);c.tick();
+    assert.equal(c.status(e.id).state,'BLOCKED');
+    const resumed=c.resumeExperiment(e.id);
+    assert.equal(resumed.round.accepted,2);
+    assert.ok(ds.slice(0,2).every(d=>claim(c,d).task===null));
+    const missing=claim(c,ds[2]).task;
+    assert.ok(missing);assert.equal(missing.round_attempt,2);
+    const final=submit(c,ds[2],missing);
+    const r=c.rounds(e.id).find(x=>x.state==='COMMITTED');
+    assert.equal(final.round_state,'COMMITTED');
+    assert.deepEqual(new Set(r.accepted.map(x=>x.update_id)),new Set([...accepted.map(x=>x.update_id),final.update_id]));
+    assert.equal(c.updateStatus(ds[0].id,accepted[0].update_id).round_checkpoint,r.checkpoint_hash);
+    const file=path.join(dir,'retry.zip');exportReport(c,{experiment_id:e.id,out:file,include_weights:true});
+    assert.equal(verifyReport(file).ok,true);
+  }finally{c.close();}
+});
+test('adaptive slot plan keeps the example and token budgets and needs explicit quorum opt-in',async()=>{
+  const {c}=await setup();
+  try{
+    const ds=['a','b','c'].map(x=>enroll(c,x));
+    const planned=cfg({rounds:1,adaptive_scheduler:true,slot_steps:[1,2,3]});
+    const regular=c.dryRun(cfg({rounds:1})),adaptive=c.dryRun(planned);
+    assert.equal(adaptive.supervised_tokens_total,regular.supervised_tokens_total);
+    assert.deepEqual(adaptive.slots.map(s=>s.rows),[1,2,3]);
+    assert.throws(()=>c.dryRun({...planned,slot_steps:[1,1,3]}),{code:'INVALID_SCHEMA'});
+    assert.throws(()=>c.dryRun({...planned,quorum:{mode:'minimum',min:2,target:3,min_tokens:1}}),{code:'INVALID_SCHEMA'});
+    const e=c.createExperiment({...planned,experimental_quorum:true,quorum:{mode:'minimum',min:2,target:3,min_tokens:1}});
+    c.startExperiment(e.id);
+    const tasks=ds.map(d=>claim(c,d).task);
+    assert.deepEqual(tasks.map(t=>t.local_steps).sort(),[1,2,3]);
+    submit(c,ds[0],tasks[0]);assert.equal(c.status(e.id).committed_rounds,0);
+    submit(c,ds[1],tasks[1]);assert.equal(c.status(e.id).committed_rounds,1);
+  }finally{c.close();}
+});
+test('large finite adapter deltas are rejected before aggregation',async()=>{
+  const {c}=await setup();
+  try{
+    const d=enroll(c),e=c.createExperiment(cfg({rounds:1}));
+    c.startExperiment(e.id);
+    const task=claim(c,d).task;
+    assert.throws(()=>submit(c,d,task,{bytes:makeUpdate(c,task,1e9)}),{code:'UPDATE_NORM_LIMIT'});
+    assert.equal(c.status(e.id).committed_rounds,0);
+  }finally{c.close();}
 });
 test('N08 lease expiry reopens the slot for an eligible device; revoked device loses its lease',async()=>{
   const {c,now}=await setup();const ds=[enroll(c,'a'),enroll(c,'b'),enroll(c,'c'),enroll(c,'d')];

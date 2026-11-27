@@ -201,6 +201,10 @@ class MLXBackend:
     def release(self):
         self.lm = None
         self.mods = {}
+        self.reset_task()
+
+    def reset_task(self):
+        self.opt = None
         try:
             self.mx.clear_cache()
         except Exception:

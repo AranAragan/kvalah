@@ -25,7 +25,7 @@ import {createSetup,describeHardware,localCandidates,participationProfiles} from
 import {createManagedRuntime,downloadAssets,modelAssets,runtimeAssets} from './setup-assets.mjs';
 import {parsePairing} from './worker/client.mjs';
 export const CONSENT_REVISION='kc2-consent-2026-11-1';
-export const VERSION='0.2.0';
+export const VERSION='0.3.0';
 const PROD_PROFILE='ministral3b-ffa-r8-v1';
 const DEFAULT_STATE={schema:1,participation:false,consents:[],policy:{...DEFAULT_POLICY},manual_pause:false,profile_id:PROD_PROFILE,
   runtime:null,model:null,preflight:null,link:null,lab:{bind_ip:null,port:DEFAULT_PORT,was_running:false}};

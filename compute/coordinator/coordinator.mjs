@@ -6,9 +6,10 @@ import fs from 'node:fs';
 import {randomBytes,randomUUID,createHmac,timingSafeEqual} from 'node:crypto';
 import {openDB,tx} from './db.mjs';
 import {createCAS} from './cas.mjs';
+import {createTransferStore} from './transfer.mjs';
 import {fail,ComputeError} from '../protocol/errors.mjs';
 import {sha256,hashJSON,canonicalJSON,isHex64} from '../protocol/hash.mjs';
-import {getProfile,schemaHash,frozenAHash,verifyTensors,PROTOCOL_VERSION,tensorSchema} from '../protocol/schema.mjs';
+import {getProfile,schemaHash,frozenAHash,verifyTensors,PROTOCOL_VERSION,tensorSchema,trainableCount} from '../protocol/schema.mjs';
 import {decode,encode} from '../protocol/safetensors.mjs';
 import {canonicalAdapter} from '../protocol/canonical.mjs';
 import {fedavg} from '../protocol/aggregate.mjs';
@@ -18,6 +19,7 @@ import {auditSplitGroups,PREPROCESSING_VERSION} from '../datasets/engine.mjs';
 import {researchProvenance,verifiedConversionImport} from '../mlx-conversion.mjs';
 
 export const MAX_UPDATE_BYTES=8*1024*1024;
+const MAX_ADAPTER_L2=1024;
 const PAIR_TTL_MS=10*60*1000,PAIR_ATTEMPTS=5,HEARTBEAT_OFFLINE_MS=30*1000;
 const J=v=>v==null?null:JSON.stringify(v),P=s=>s==null?null:JSON.parse(s);
 const alias=s=>{const a=String(s||'').normalize('NFKC').replace(/[\u0000-\u001f<>"'`\\]/g,'').trim().slice(0,40);if(!a)fail('INVALID_SCHEMA','device alias is required');return a;};
@@ -136,7 +138,7 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
   function checkSession(d,sid){if(!d.session_id||sid!==d.session_id){event('warn','device.session_conflict',{device:d.id});fail('SESSION_SUPERSEDED','another session of this installation is active');}}
   function heartbeat(id,{session_id,status,metrics,capabilities,runtime_version}={}){
     const d=authDevice(id,{allowPending:true});checkSession(d,session_id);
-    const s=status&&typeof status==='object'?{state:String(status.state||'').slice(0,24),pause_reason:status.pause_reason?String(status.pause_reason).slice(0,60):null,
+    const s=status&&typeof status==='object'?{state:String(status.state||'').slice(0,40),pause_reason:status.pause_reason?String(status.pause_reason).slice(0,60):null,
       eligible:status.eligible===true,blocking_reason:typeof status.blocking_reason==='string'?status.blocking_reason.slice(0,60):null,drain:!!(P(d.status)||{}).drain}:P(d.status);
     db.prepare('update devices set last_heartbeat=?,status=?,metrics=?,capabilities=coalesce(?,capabilities),runtime_version=coalesce(?,runtime_version) where id=?')
       .run(now(),J(s),J(sanitizeMetrics(metrics)),capabilities?J(sanitizeCaps(capabilities)):null,runtime_version?String(runtime_version).slice(0,40):null,id);
@@ -213,6 +215,10 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
 
   // ---------- experiments ----------
   const rowsPerRound=cfg=>cfg.quorum.target*cfg.local_steps*cfg.batch_size*cfg.grad_accum;
+  const rowsAtSlot=(cfg,plan,round,slot)=>{
+    const start=round*rowsPerRound(cfg)+plan.widths.slice(0,slot).reduce((sum,n)=>sum+n,0);
+    return plan.order.slice(start,start+plan.widths[slot]);
+  };
   function startingAdapter(cfg,p,models){
     const source=cfg.initial_checkpoint;
     if(!source){
@@ -244,7 +250,8 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
       const perm=rows.map(r=>({r,k:sha256(`${cfg.seed}|${epoch}|${r.id}`)})).sort((a,b)=>a.k<b.k?-1:1).map(x=>({...x.r,epoch}));
       order.push(...perm.slice(skip,skip+need-order.length));epoch++;skip=0;
     }
-    return {per,epochs:epoch,order:order.slice(0,need)};
+    const widths=cfg.slot_steps?.map(n=>n*cfg.batch_size*cfg.grad_accum)??Array(cfg.quorum.target).fill(per);
+    return {per,widths,epochs:epoch,order:order.slice(0,need)};
   }
   const supervised=r=>{let n=0;for(let i=1;i<r.target_mask.length;i++)n+=r.target_mask[i]?1:0;return n;};
   function dryRun(input){
@@ -255,7 +262,7 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
     const init=startingAdapter(cfg,p,vs);
     if(cfg.initial_checkpoint)Object.assign(cfg.initial_checkpoint,{source_round:init.lineage.source_round,row_offset:init.lineage.row_offset});
     const plan=planRows(cfg,m),slots=[];
-    for(let r=0;r<cfg.rounds;r++)for(let s=0;s<cfg.quorum.target;s++){const rows=plan.order.slice((r*cfg.quorum.target+s)*plan.per,(r*cfg.quorum.target+s+1)*plan.per);slots.push({round:r,slot:s,rows:rows.length,supervised_tokens:rows.reduce((a,x)=>a+supervised(x),0)});}
+    for(let r=0;r<cfg.rounds;r++)for(let s=0;s<cfg.quorum.target;s++){const rows=rowsAtSlot(cfg,plan,r,s);slots.push({round:r,slot:s,rows:rows.length,supervised_tokens:rows.reduce((a,x)=>a+supervised(x),0)});}
     return {config:cfg,config_hash:configHash(cfg),schema_hash:schemaHash(p),frozen_a_hash:frozenAHash(init.tensors),initial_adapter_sha256:sha256(init.bytes),
       trainable_params:Object.values(tensorSchema(p,false)).reduce((a,[o,r])=>a+o*r,0),targets:p.layers*Object.keys(p.targets).length,rank:p.rank,alpha:p.alpha,
       dataset:{id:cfg.dataset_id,license:m.license,split_counts:m.split_counts,tokens_by_split:m.tokens_by_split,synthetic:!!m.synthetic,tokenizer_hash:m.tokenizer_hash},
@@ -284,7 +291,7 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
   function makeAssignments(e,cfg,roundIdx,attempt){
     const m=datasetManifest(cfg.dataset_id),plan=planRows(cfg,m);
     for(let s=0;s<cfg.quorum.target;s++){
-      const off=(roundIdx*cfg.quorum.target+s)*plan.per,rows=plan.order.slice(off,off+plan.per);
+      const rows=rowsAtSlot(cfg,plan,roundIdx,s);
       const body={assignment_kind:'sft_rows',dataset_id:cfg.dataset_id,round:roundIdx,slot:s,rows:rows.map(r=>({id:r.id,epoch:r.epoch,input_ids:r.input_ids,target_mask:r.target_mask}))};
       const bytes=Buffer.from(canonicalJSON(body)),h=cas.put(bytes);
       db.prepare('insert or ignore into artifacts(sha256,kind,bytes,created_at) values(?,?,?,?)').run(h,'assignment',bytes.length,now());
@@ -317,17 +324,44 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
     return status(id);
   }
   function pauseExperiment(id){const e=experiment(id);if(e.state!=='RUNNING')fail('INVALID_TRANSITION','only a running experiment can be paused');db.prepare("update experiments set state='PAUSED' where id=?").run(id);event('info','experiment.paused',{experiment:id},{note:'no new leases; running tasks may finish'});return status(id);}
+  function carryAccepted(e,r,cfg){
+    const p=getProfile(cfg.profile_id),models=P(e.model_snapshot)||[],used=new Set();
+    const slots=db.prepare('select * from assignments where experiment_id=? and round_idx=? and round_attempt=? order by slot').all(e.id,r.idx,r.attempt+1);
+    const possible=db.prepare(`select u.*, t.manifest, a.slot from updates u
+      join tasks t on t.task_id=u.task_id join assignments a on a.id=t.assignment_id join devices d on d.id=u.device_id
+      where u.state='accepted' and a.experiment_id=? and a.round_idx=? and a.round_attempt<=? and d.state='active'
+      order by a.round_attempt desc,u.accepted_at desc,u.update_id`).all(e.id,r.idx,r.attempt);
+    for(const slot of slots){
+      for(const u of possible){
+        if(u.slot!==slot.slot||used.has(u.device_id)||cfg.target_device_ids&&!cfg.target_device_ids.includes(u.device_id))continue;
+        const m=P(u.manifest),v=models.find(v=>v.variant_id===m.model_variant_id),meta=P(u.meta);
+        if(m.experiment_id!==e.id||m.round!==r.idx||m.base_adapter_hash!==r.parent_hash||
+          m.config_hash!==e.config_hash||m.optimizer_hash!==optimizerHash(cfg)||m.schema_hash!==schemaHash(p)||m.frozen_A_hash!==e.frozen_a_hash||
+          m.dataset_shard_hash!==slot.rows_sha||m.mask_checksum!==slot.mask_checksum||m.expected_supervised_tokens!==slot.expected_tokens||
+          meta.supervised_tokens!==slot.expected_tokens||meta.steps!==(cfg.slot_steps?.[slot.slot]??cfg.local_steps)||
+          !cfg.variants.includes(m.model_variant_id)||(!p.test_only&&!v?.files_digest)||m.model_files_digest!==(v?.files_digest??null))continue;
+        try{cas.get(u.payload_sha);}catch{continue;}
+        db.prepare("update assignments set state='accepted' where id=?").run(slot.id);
+        db.prepare('insert into round_reuse values(?,?)').run(slot.id,u.update_id);
+        used.add(u.device_id);
+        break;
+      }
+    }
+    return used.size;
+  }
   function resumeExperiment(id){
     const e=experiment(id);if(!['PAUSED','BLOCKED'].includes(e.state))fail('INVALID_TRANSITION','experiment is not paused');
     const cfg=JSON.parse(e.config),r=currentRound(e);
     if(!getProfile(cfg.profile_id).test_only&&!e.model_snapshot)fail('MODEL_UNVERIFIED','this experiment predates model snapshots; create a new experiment with verified model digests');
     if(e.state==='BLOCKED'||r.state==='BLOCKED'||r.deadline_at<=now()){
       // Retry: new attempt from the same parent checkpoint, same planned rows; nothing partial is committed.
-      tx(db,()=>{db.prepare("update rounds set state='FAILED' where experiment_id=? and idx=? and attempt=?").run(e.id,r.idx,r.attempt);
+      const retained=tx(db,()=>{db.prepare("update rounds set state='FAILED' where experiment_id=? and idx=? and attempt=?").run(e.id,r.idx,r.attempt);
         db.prepare("update assignments set state='void' where experiment_id=? and round_idx=? and round_attempt=? and state<>'accepted'").run(e.id,r.idx,r.attempt);
         db.prepare("update tasks set state='void' where state='leased' and assignment_id in (select id from assignments where experiment_id=? and round_idx=? and round_attempt=?)").run(e.id,r.idx,r.attempt);
-        openRound(e,cfg,r.idx,r.attempt+1,r.parent_hash);});
-      event('info','round.retry',{experiment:id},{round:r.idx,attempt:r.attempt+1});
+        openRound(e,cfg,r.idx,r.attempt+1,r.parent_hash);
+        return cfg.reuse_accepted_updates===true?carryAccepted(e,r,cfg):0;});
+      event('info','round.retry',{experiment:id},{round:r.idx,attempt:r.attempt+1,retained});
+      if(retained)maybeSeal(id);
     }else{
       db.prepare("update experiments set state='RUNNING' where id=?").run(id);
       event('info','experiment.resumed',{experiment:id});
@@ -346,8 +380,20 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
   const finishAfterRound=id=>{const e=experiment(id);const cfg=JSON.parse(e.config);db.prepare('update experiments set blocker=? where id=?').run(J({finish_after_round:true}),id);event('info','experiment.finish_after_round',{experiment:id});return status(id);};
 
   // ---------- tasks ----------
-  function claim(deviceId,{session_id,capabilities}={}){
+  function selectAssignment(rows,d,cfg){
+    if(!cfg.adaptive_scheduler||rows.length<2)return rows[0];
+    const m=P(d.metrics)||{};
+    const speed=Math.max(0,m.tokens_per_s||0);
+    const other=listDevices().filter(x=>x.id!==d.id&&x.online&&x.state==='active'&&x.status?.eligible===true);
+    const target=other.reduce((sum,x)=>sum+(x.metrics?.tokens_per_s||0),0)/Math.max(1,other.length);
+    const readySpeed=speed/(1+Math.max(0,m.tasks_rejected||0)/Math.max(1,m.tasks_accepted||0));
+    const order=readySpeed>target&&readySpeed>0?-1:1;
+    return rows.sort((a,b)=>order*(a.expected_tokens-b.expected_tokens)||a.slot-b.slot)[0];
+  }
+  function claim(deviceId,{session_id,capabilities,available_payload_bytes}={}){
     const d=authDevice(deviceId);checkSession(d,session_id);
+    if(available_payload_bytes!==undefined&&(!Number.isSafeInteger(available_payload_bytes)||available_payload_bytes<0))
+      fail('INVALID_SCHEMA','invalid traffic budget');
     if(capabilities)db.prepare('update devices set capabilities=? where id=?').run(J(sanitizeCaps(capabilities)),deviceId);
     const caps=sanitizeCaps(capabilities)||P(d.capabilities)||{};
     if((P(d.status)||{}).drain)return {task:null,reason:'drained',retry_after_s:30};
@@ -371,11 +417,18 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
         return {task,signature:signJSON(key.privateKey,task),resumed:true};
       }
       if(mine?.state==='accepted')return {task:null,reason:'waiting_round',retry_after_s:5};
+      if(db.prepare(`select 1 from round_reuse x join assignments a on a.id=x.assignment_id join updates u on u.update_id=x.update_id
+          where a.experiment_id=? and a.round_idx=? and a.round_attempt=? and u.device_id=?`).get(e.id,r.idx,r.attempt,deviceId))
+        return {task:null,reason:'waiting_round',retry_after_s:5};
       const remaining=(r.deadline_at-now())/1000;
       if(remaining<cfg.lease_ttl_s/2)return {task:null,reason:'round_closing',retry_after_s:5};
       const out=tx(db,()=>{
-        const a=db.prepare("select * from assignments where experiment_id=? and round_idx=? and round_attempt=? and state='open' order by slot limit 1").get(e.id,r.idx,r.attempt);
+        const a=selectAssignment(db.prepare("select * from assignments where experiment_id=? and round_idx=? and round_attempt=? and state='open' order by slot").all(e.id,r.idx,r.attempt),d,cfg);
         if(!a)return null;
+        const size=h=>db.prepare('select bytes from artifacts where sha256=?').get(h)?.bytes??null;
+        const baseBytes=size(r.parent_hash),rowsBytes=size(a.rows_sha);
+        const required=(baseBytes??0)+(rowsBytes??0)+trainableCount(profile)*4+65536;
+        if(available_payload_bytes!==undefined&&required>available_payload_bytes)return {required};
         const attempt=(db.prepare('select max(attempt) m from tasks where assignment_id=?').get(a.id).m||0)+1;
         const taskId='task-'+randomUUID(),leaseId='lease-'+randomBytes(12).toString('hex'),exp=Math.min(now()+cfg.lease_ttl_s*1000,r.deadline_at);
         const p=getProfile(cfg.profile_id);
@@ -383,16 +436,16 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
           experiment_id:e.id,run_id:e.run_id,round:r.idx,round_attempt:r.attempt,device_id:deviceId,model_profile:p.id,model_variant_id:variant.variant_id,
           model_files_digest:reg?.files_digest??null,
           base_adapter_hash:r.parent_hash,frozen_A_hash:e.frozen_a_hash,schema_hash:schemaHash(p),dataset_shard_hash:a.rows_sha,row_ids:P(a.row_ids),
-          base_adapter_bytes:db.prepare('select bytes from artifacts where sha256=?').get(r.parent_hash)?.bytes??null,
-          dataset_shard_bytes:db.prepare('select bytes from artifacts where sha256=?').get(a.rows_sha)?.bytes??null,
+          base_adapter_bytes:baseBytes,dataset_shard_bytes:rowsBytes,
           expected_supervised_tokens:a.expected_tokens,mask_checksum:a.mask_checksum,config_hash:e.config_hash,optimizer_hash:optimizerHash(cfg),
-          local_steps:cfg.local_steps,batch_size:cfg.batch_size,grad_accum:cfg.grad_accum,max_length:cfg.max_length,optimizer:cfg.optimizer,
+          local_steps:cfg.slot_steps?.[a.slot]??cfg.local_steps,batch_size:cfg.batch_size,grad_accum:cfg.grad_accum,max_length:cfg.max_length,optimizer:cfg.optimizer,
           rank:p.rank,alpha:p.alpha,update_kind:'absolute_b',lease_ttl_seconds:cfg.lease_ttl_s,lease_expires_at:exp,round_deadline_at:r.deadline_at,issued_at:now()};
         db.prepare("insert into tasks(task_id,lease_id,attempt,assignment_id,device_id,state,leased_at,lease_expires_at,manifest) values(?,?,?,?,?,'leased',?,?,?)").run(taskId,leaseId,attempt,a.id,deviceId,now(),exp,canonicalJSON(manifest));
         db.prepare("update assignments set state='leased' where id=?").run(a.id);
         if(r.state==='OPEN')db.prepare("update rounds set state='COLLECTING' where experiment_id=? and idx=? and attempt=?").run(e.id,r.idx,r.attempt);
         return manifest;
       });
+      if(out?.required)return {task:null,reason:'insufficient_traffic_budget',required_bytes:out.required,retry_after_s:20};
       if(out){event('info','task.leased',{experiment:e.id,device:deviceId,task:out.task_id},{round:r.idx,slot_tokens:out.expected_supervised_tokens,attempt:out.attempt});return {task:out,signature:signJSON(key.privateKey,out)};}
       return {task:null,reason:'all_assignments_leased',retry_after_s:5};
     }
@@ -405,11 +458,13 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
     if(leaseId!==undefined&&t.lease_id!==leaseId)fail('STALE','lease id does not match');
     return t;
   }
-  function renew(deviceId,taskId,{lease_id,session_id}){
+  function renew(deviceId,taskId,{lease_id,session_id,phase}){
     const d=authDevice(deviceId);checkSession(d,session_id);const t=ownTask(deviceId,taskId,lease_id);
     const server_time=now();
     if(t.state!=='leased'||t.lease_expires_at<=server_time)fail('LEASE_EXPIRED','lease expired');
-    const m=P(t.manifest),exp=Math.min(server_time+m.lease_ttl_seconds*1000,m.round_deadline_at);
+    const m=P(t.manifest);
+    const multiplier=['upload','finalize'].includes(phase)?1.5:1;
+    const exp=Math.min(Math.max(t.lease_expires_at,server_time+m.lease_ttl_seconds*multiplier*1000),m.round_deadline_at);
     if(exp<=server_time)fail('LEASE_EXPIRED','round deadline reached');
     db.prepare('update tasks set lease_expires_at=?,renewed_at=? where task_id=?').run(exp,server_time,taskId);
     return {lease_expires_at:exp,round_deadline_at:m.round_deadline_at,server_time};
@@ -469,6 +524,7 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
     return updateStatus(deviceId,id);
   }
   function putContent(deviceId,updateId,bytes,sessionId){
+    const start=performance.now();
     const device=authDevice(deviceId);
     const u=db.prepare('select * from updates where update_id=?').get(String(updateId));if(!u)fail('NOT_FOUND','update not found');
     if(u.device_id!==deviceId)fail('NOT_OWNER','update belongs to another device');
@@ -479,8 +535,11 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
     if(u.state!=='declared')return updateStatus(deviceId,updateId);
     try{verifyTensors(decode(bytes,{maxBytes:MAX_UPDATE_BYTES}).tensors,p,false);}
     catch(e){db.prepare("update updates set state='rejected',reason=? where update_id=?").run(e.code||'INVALID_TENSOR',updateId);event('warn','update.rejected',{device:deviceId,task:u.task_id},{reason:e.code,message:e.message});throw e;}
+    const checked=performance.now();
     const h=cas.put(bytes);db.prepare('insert or ignore into artifacts(sha256,kind,bytes,created_at) values(?,?,?,?)').run(h,'update',bytes.length,now());
     db.prepare("update updates set state='uploaded' where update_id=?").run(updateId);
+    event('info','update.uploaded',{experiment:m.experiment_id,device:deviceId,task:t.task_id},{bytes:bytes.length,
+      validation_ms:Math.round(checked-start),persist_ms:Math.round(performance.now()-checked)});
     return updateStatus(deviceId,updateId);
   }
   function commitUpdate(deviceId,updateId,{session_id}={}){
@@ -501,6 +560,8 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
     if(meta.steps!==m.local_steps)reject('INVALID_SCHEMA',`completed ${meta.steps} of ${m.local_steps} optimizer steps; only complete tasks are accepted`);
     const base=decode(cas.get(r.parent_hash)).tensors,upd=decode(cas.get(u.payload_sha)).tensors;
     let norm=0,delta=0;for(const k of Object.keys(upd)){const x=upd[k].data,b=base[k].data;for(let i=0;i<x.length;i++){norm+=x[i]*x[i];const dd=x[i]-b[i];delta+=dd*dd;}}
+    if(!Number.isFinite(norm+delta)||Math.max(norm,delta)>MAX_ADAPTER_L2**2)
+      reject('UPDATE_NORM_LIMIT','adapter or update delta exceeds the numerical safety bound');
     const accepted=tx(db,()=>{
       const fresh=db.prepare('select state from rounds where experiment_id=? and idx=? and attempt=?').get(e.id,r.idx,r.attempt);
       if(!['OPEN','COLLECTING'].includes(fresh.state))return false;
@@ -519,19 +580,42 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
     const u=db.prepare('select * from updates where update_id=?').get(String(updateId));if(!u)fail('NOT_FOUND','update not found');
     if(u.device_id!==deviceId)fail('NOT_OWNER','update belongs to another device');
     const t=db.prepare('select * from tasks where task_id=?').get(u.task_id),m=P(t.manifest);
-    const r=db.prepare('select state,checkpoint_hash from rounds where experiment_id=? and idx=? and attempt=?').get(m.experiment_id,m.round,m.round_attempt);
+    const carried=db.prepare(`select r.state,r.checkpoint_hash from round_reuse x join assignments a on a.id=x.assignment_id
+      join rounds r on (r.experiment_id,r.idx,r.attempt)=(a.experiment_id,a.round_idx,a.round_attempt)
+      where x.update_id=? and r.state='COMMITTED'`).get(updateId);
+    const r=carried||db.prepare('select state,checkpoint_hash from rounds where experiment_id=? and idx=? and attempt=?').get(m.experiment_id,m.round,m.round_attempt);
     return {update_id:u.update_id,task_id:u.task_id,state:u.state,reason:u.reason,payload_sha256:u.payload_sha,round:m.round,round_state:r?.state,round_checkpoint:r?.checkpoint_hash||null};
   }
+  function authorizeTransfer(deviceId,id,sid){
+    const d=authDevice(deviceId);checkSession(d,sid);
+    const u=db.prepare('select * from updates where update_id=?').get(id);
+    if(!u)fail('NOT_FOUND','update not found');
+    if(u.device_id!==deviceId)fail('NOT_OWNER','update belongs to another device');
+    const t=ownTask(deviceId,u.task_id);
+    const deadline=P(t.manifest).round_deadline_at;
+    if(u.state==='declared'&&(t.state!=='leased'||t.lease_expires_at<=now()||deadline<=now()))
+      fail('LEASE_EXPIRED','partial upload lease is no longer valid');
+    return {update:u,deadline};
+  }
+  const transfer=createTransferStore(db,{now,authorize:authorizeTransfer,store:putContent,status:updateStatus});
 
   // ---------- sealing / aggregation / recovery ----------
   function maybeSeal(expId,{deadline=false}={}){
     const e=experiment(expId),cfg=JSON.parse(e.config),r=currentRound(e);
     if(!r||!['OPEN','COLLECTING'].includes(r.state))return;
     const acc=db.prepare("select u.update_id,u.payload_sha,t.task_id,a.expected_tokens,t.device_id from updates u join tasks t on t.task_id=u.task_id join assignments a on a.id=t.assignment_id where a.experiment_id=? and a.round_idx=? and a.round_attempt=? and u.state='accepted'").all(e.id,r.idx,r.attempt);
+    acc.push(...db.prepare(`select u.update_id,u.payload_sha,u.task_id,a.expected_tokens,u.device_id from round_reuse x
+      join assignments a on a.id=x.assignment_id join updates u on u.update_id=x.update_id
+      where (a.experiment_id,a.round_idx,a.round_attempt)=(?,?,?)`).all(e.id,r.idx,r.attempt));
     const devices=new Set(acc.map(x=>x.device_id));
+    const minTokens=cfg.quorum.min_tokens??0;
+    const enoughTokens=acc.reduce((sum,x)=>sum+x.expected_tokens,0)>=minTokens;
+    const minimum=acc.length>=cfg.quorum.min&&devices.size>=cfg.quorum.min&&enoughTokens;
     const full=acc.length>=cfg.quorum.target&&devices.size>=cfg.quorum.target;
-    const atDeadline=deadline&&cfg.quorum.mode==='fault_tolerant'&&acc.length>=cfg.quorum.min&&devices.size>=cfg.quorum.min;
-    if(!full&&!atDeadline)return;
+    const adaptiveWindow=cfg.quorum.mode==='adaptive'&&now()>=r.opened_at+(r.deadline_at-r.opened_at)*0.8;
+    const canSealMinimum=cfg.quorum.mode==='minimum'||adaptiveWindow||
+      (deadline&&['fault_tolerant','deadline','adaptive'].includes(cfg.quorum.mode));
+    if(!(full&&enoughTokens)&&!(canSealMinimum&&minimum))return;
     const frozen=acc.map(x=>({update_id:x.update_id,task_id:x.task_id,payload_sha:x.payload_sha,weight:x.expected_tokens,device_id:x.device_id})).sort((a,b)=>a.task_id<b.task_id?-1:1);
     const excluded=db.prepare("select a.slot,a.state,a.id from assignments a where a.experiment_id=? and a.round_idx=? and a.round_attempt=? and a.state<>'accepted'").all(e.id,r.idx,r.attempt).map(x=>({assignment:x.id,slot:x.slot,reason:'not completed before deadline'}));
     const sealed=tx(db,()=>{
@@ -624,6 +708,7 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
     return job;
   }
   function tick(){
+    transfer.prune();
     // Expire leases (assignment returns to open → replacement possible, no double counting).
     for(const t of db.prepare("select * from tasks where state='leased' and lease_expires_at<=?").all(now())){
       tx(db,()=>{db.prepare("update tasks set state='expired',reason='lease expired' where task_id=? and state='leased'").run(t.task_id);db.prepare("update assignments set state='open' where id=? and state='leased'").run(t.assignment_id);});
@@ -632,6 +717,8 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
     for(const e of db.prepare("select * from experiments where state in ('RUNNING','PAUSED')").all()){
       const r=currentRound(e);if(!r)continue;
       if(['SEALING','AGGREGATING'].includes(r.state)){aggregateRound(e.id,r.idx,r.attempt);continue;}
+      if(e.state==='RUNNING'&&P(e.config).quorum.mode==='adaptive'&&now()<r.deadline_at&&
+          now()>=r.opened_at+(r.deadline_at-r.opened_at)*0.8)maybeSeal(e.id);
       if(['OPEN','COLLECTING'].includes(r.state)&&r.deadline_at<=now()&&e.state==='RUNNING'){
         maybeSeal(e.id,{deadline:true});
         const after=db.prepare('select state from rounds where experiment_id=? and idx=? and attempt=?').get(e.id,r.idx,r.attempt).state;
@@ -667,7 +754,8 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
       checkpoint:checkpoint?{sha256:checkpoint.hash,round:checkpoint.round_idx}:null,test_pending:testJobs.has(e.id),
       round:r?{idx:r.idx,attempt:r.attempt,state:r.state,parent_hash:r.parent_hash,opened_at:r.opened_at,deadline_at:r.deadline_at,remaining_ms:Math.max(0,r.deadline_at-now()),blocker:P(r.blocker),
         accepted:asg.filter(a=>a.state==='accepted').length,leased:asg.filter(a=>a.state==='leased').length,min_quorum:cfg.quorum.min,target:cfg.quorum.target,
-        slots:asg.map(a=>({slot:a.slot,state:a.state,device_id:a.dev,task_state:a.tstate,expected_tokens:a.expected_tokens,progress:P(a.prog)}))}:null};
+        slots:asg.map(a=>({slot:a.slot,state:a.state,device_id:a.dev??db.prepare('select u.device_id from round_reuse x join updates u on u.update_id=x.update_id where x.assignment_id=?').get(a.id)?.device_id??null,
+          task_state:a.tstate,expected_tokens:a.expected_tokens,progress:P(a.prog)}))}:null};
   }
   function rounds(id){
     experiment(id);
@@ -683,6 +771,6 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
   const latestCheckpoint=id=>{const e=experiment(id);return db.prepare('select * from checkpoints where experiment_id=? order by round_idx desc limit 1').get(e.id);};
   return {db,cas,projectId,coordinatorKey:key.publicKey,createPairing,pairStart,pairComplete,approveDevice,revokeDevice,drainDevice,renameDevice,authDevice,useNonce,startSession,heartbeat,listDevices,
     registerVariant,variants,registerDataset,datasetManifest,listDatasets,dryRun,createExperiment,startExperiment,pauseExperiment,resumeExperiment,cancelExperiment,finishAfterRound,
-    claim,renew,progress,abandon,artifactFor,declareUpdate,putContent,commitUpdate,updateStatus,tick,recover,status,rounds,listExperiments,events,latestEvents,checkpoint,latestCheckpoint,evaluateTest,
+    claim,renew,progress,abandon,artifactFor,declareUpdate,putContent,commitUpdate,updateStatus,transfer,tick,recover,status,rounds,listExperiments,events,latestEvents,checkpoint,latestCheckpoint,evaluateTest,
     onEvent:fn=>{listeners.add(fn);return ()=>listeners.delete(fn);},close:()=>{closed=true;db.close();}};
 }

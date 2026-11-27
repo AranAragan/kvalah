@@ -3,7 +3,7 @@
 import {DatabaseSync} from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
-export const SCHEMA_VERSION=2;
+export const SCHEMA_VERSION=3;
 const MIGRATIONS=[
 `create table meta(key text primary key, value text not null);
 create table devices(id text primary key, public_key text not null unique, alias text not null, state text not null,
@@ -49,7 +49,10 @@ insert or ignore into checkpoints
 insert or ignore into checkpoints
   select checkpoint_hash,experiment_id,idx+1,coalesce(committed_at,opened_at),json_object('parent',parent_hash,'round',idx,'attempt',attempt)
   from rounds where state='COMMITTED' and checkpoint_hash is not null;
-drop table checkpoints_v1;`
+drop table checkpoints_v1;`,
+`create table upload_sessions(update_id text primary key, device_id text not null, chunk_bytes integer not null, expires_at integer not null);
+create table upload_chunks(update_id text not null, idx integer not null, digest text not null, data blob not null, primary key(update_id,idx));
+create table round_reuse(assignment_id text primary key, update_id text not null);`
 ];
 export function openDB(file){
   fs.mkdirSync(path.dirname(file),{recursive:true});

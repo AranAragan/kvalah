@@ -8,7 +8,9 @@ export const DEFAULT_POLICY=Object.freeze({
   only_idle:true,idle_minutes:5,only_ac:true,pause_on_games:true,pause_on_local_ai:true,pause_on_fullscreen:false,
   min_free_vram_gib:1.5,min_free_ram_gib:2,max_worker_mem_gib:null,temp_limit_c:80,temp_hysteresis_c:5,
   battery_floor_pct:50,cache_limit_gib:20,daily_traffic_mb:1024,allow_metered:false,
-  quiet_hours:{enabled:false,from:'23:00',to:'07:00'},background_after_close:false,keep_warm:false
+  quiet_hours:{enabled:false,from:'23:00',to:'07:00'},background_after_close:false,keep_warm:false,
+  runtime_mode:'adaptive',runtime_idle_s:60,activity_mode:'cooperative',transfer_mode:'auto',update_chunk_bytes:1048576,
+  lan_traffic_mb:null,wan_traffic_mb:null
 });
 const step5=(v,name)=>{if(!Number.isInteger(v)||v<0||v>100||v%5)fail('INVALID_SCHEMA',name+' must be 0–100 in steps of 5');return v;};
 const range=(v,lo,hi,name,nullable=false)=>{if(nullable&&v===null)return null;if(typeof v!=='number'||!Number.isFinite(v)||v<lo||v>hi)fail('INVALID_SCHEMA',`${name} must be between ${lo} and ${hi}`);return v;};
@@ -29,7 +31,14 @@ export function validatePolicy(input,current=DEFAULT_POLICY){
     daily_traffic_mb:range(p.daily_traffic_mb,10,1e6,'daily_traffic_mb'),allow_metered:!!p.allow_metered,
     quiet_hours:{enabled:!!p.quiet_hours?.enabled,from:hhmm(p.quiet_hours?.from??'23:00','quiet_hours.from'),to:hhmm(p.quiet_hours?.to??'07:00','quiet_hours.to')},
     background_after_close:false,   // tray/background mode is not implemented in v0.2: closing the app stops Compute
-    keep_warm:!!p.keep_warm
+    keep_warm:!!p.keep_warm,
+    runtime_mode:['cold','warm','adaptive'].includes(p.runtime_mode)?p.runtime_mode:fail('INVALID_SCHEMA','invalid runtime mode'),
+    runtime_idle_s:range(p.runtime_idle_s,5,3600,'runtime_idle_s'),
+    activity_mode:['cooperative','strict'].includes(p.activity_mode)?p.activity_mode:fail('INVALID_SCHEMA','invalid activity mode'),
+    transfer_mode:['auto','legacy'].includes(p.transfer_mode)?p.transfer_mode:fail('INVALID_SCHEMA','invalid transfer mode'),
+    update_chunk_bytes:[262144,524288,1048576,2097152,4194304].includes(p.update_chunk_bytes)?p.update_chunk_bytes:fail('INVALID_SCHEMA','invalid update chunk size'),
+    lan_traffic_mb:range(p.lan_traffic_mb,10,1e6,'lan_traffic_mb',true),
+    wan_traffic_mb:range(p.wan_traffic_mb,10,1e6,'wan_traffic_mb',true)
   };
   out.daily_hours=range(p.daily_hours,1,out.extended_hours?24:12,'daily_hours');
   // An aggressive profile must be chosen explicitly (spec §4.1 "Установка агрессивного профиля требует явного выбора").

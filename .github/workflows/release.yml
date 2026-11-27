@@ -48,6 +48,15 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm test
+      - name: Package Compute audit
+        if: contains(steps.version.outputs.version, 'compute.4.')
+        run: node scripts/compute-v03/audit-archive.mjs audit/kvalah-compute-v0.3-audit.zip
+      - uses: actions/upload-artifact@v7
+        if: contains(steps.version.outputs.version, 'compute.4.')
+        with:
+          name: dist-audit
+          path: audit/*.zip
+          if-no-files-found: error
 
   linux:
     needs: verify

@@ -23,8 +23,14 @@ export function normalizeConfig(input){
   const optimizer={name:optName,lr:num(opt.lr??(optName==='sgd'?1e-3:1e-4),1e-7,1e-1,'lr'),clip_norm:num(opt.clip_norm??1.0,0.01,100,'clip_norm'),reset:'per_round'};
   if(optName==='adamw')Object.assign(optimizer,{beta1:num(opt.beta1??0.9,0,0.9999,'beta1'),beta2:num(opt.beta2??0.999,0,0.99999,'beta2'),eps:num(opt.eps??1e-8,1e-12,1e-3,'eps'),weight_decay:num(opt.weight_decay??0,0,1,'weight_decay')});
   const q=input.quorum||base.quorum;
-  const quorum={mode:q.mode==='fault_tolerant'?'fault_tolerant':'all',target:int(q.target??3,1,32,'quorum.target'),min:0};
+  const experimentalModes=['minimum','deadline','adaptive'];
+  if(experimentalModes.includes(q.mode)&&input.experimental_quorum!==true)fail('INVALID_SCHEMA','experimental quorum requires explicit opt-in');
+  const quorum={mode:experimentalModes.includes(q.mode)||q.mode==='fault_tolerant'?q.mode:'all',target:int(q.target??3,1,32,'quorum.target'),min:0};
   quorum.min=quorum.mode==='all'?quorum.target:int(q.min??Math.max(1,quorum.target-1),1,quorum.target,'quorum.min');
+  if(experimentalModes.includes(quorum.mode)){
+    if(quorum.min<2)fail('INVALID_SCHEMA','experimental quorum needs at least two independent participants');
+    quorum.min_tokens=int(q.min_tokens,1,100000000,'quorum.min_tokens');
+  }
   const cfg={
     protocol_version:'2.0',task_type:'ffa_lora_sft',update_kind:'absolute_b',
     name,preset,profile_id:profile.id,variants,dataset_id:String(input.dataset_id||''),
@@ -41,6 +47,15 @@ export function normalizeConfig(input){
     research_confirmed:input.research_confirmed===true
   };
   if(!cfg.dataset_id)fail('DATASET_REQUIRED','choose an approved dataset');
+  cfg.reuse_accepted_updates=input.reuse_accepted_updates!==false;
+  if(input.adaptive_scheduler===true){
+    const steps=input.slot_steps;
+    if(!Array.isArray(steps)||steps.length!==quorum.target)fail('INVALID_SCHEMA','adaptive scheduler needs one slot_steps entry per participant');
+    cfg.slot_steps=steps.map(s=>int(s,1,200,'slot_steps'));
+    if(cfg.slot_steps.reduce((sum,s)=>sum+s,0)!==cfg.local_steps*quorum.target)
+      fail('INVALID_SCHEMA','adaptive scheduler must preserve the configured example budget');
+    cfg.adaptive_scheduler=true;
+  }
   if(input.initial_checkpoint!=null){
     const c=input.initial_checkpoint;
     if(typeof c.experiment_id!=='string'||!/^exp-[a-f0-9]{12}$/.test(c.experiment_id)||!isHex64(c.sha256)){

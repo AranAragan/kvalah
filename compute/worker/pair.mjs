@@ -4,7 +4,7 @@ import {createHash,createHmac} from 'node:crypto';
 import {parsePairing,createClient} from './client.mjs';
 import {signBytes} from '../protocol/sign.mjs';
 const normCode=c=>String(c||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
-export async function pairWithCoordinator({pairing,identity,alias,capabilities=null,runtime_version='0.2.0'}){
+export async function pairWithCoordinator({pairing,identity,alias,capabilities=null,runtime_version='0.3.0'}){
   const p=parsePairing(pairing);
   const client=createClient({endpoint:p.endpoint,fingerprint:p.fingerprint,identity});
   try{

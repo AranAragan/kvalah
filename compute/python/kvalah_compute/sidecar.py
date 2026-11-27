@@ -11,6 +11,16 @@ from .sft import check_row
 
 OUT = sys.stdout
 _pending = []
+_resident = None
+
+
+def release_model(_msg=None):
+    global _resident
+    if _resident is not None:
+        _, model, _ = _resident
+        _resident = None
+        model.release()
+    return {"resident": False}
 
 def emit(obj):
     OUT.write(json.dumps(obj, separators=(",", ":")) + "\n")
@@ -207,20 +217,32 @@ def _restore_checkpoint(directory, task, backend, base, model, cid):
 
 def train(msg):
     from .backends import make_backend
+    global _resident
     task, d, base, rows, k = _load_task(msg)
     cid = msg.get("id")
     wait_permit(cid, 0)
     model_dir = msg["paths"].get("model_dir")
-    if task.get("model_files_digest"):
+    warm = msg.get("retain_model") is True
+    key = (msg["backend"], os.path.realpath(model_dir) if model_dir else None, task.get("model_files_digest"),
+           task.get("profile"), task["layers"], task["rank"], task["alpha"], json.dumps(task["targets"], sort_keys=True))
+    hit = warm and _resident is not None and _resident[0] == key
+    if not hit:
+        release_model()
+    if task.get("model_files_digest") and not hit:
         verified = verify_model({"model_dir": model_dir})
         if verified["files_digest"] != task["model_files_digest"]:
             raise SidecarError("HASH_MISMATCH", "model files differ from the signed task")
         wait_permit(cid, 0)
-    b = make_backend(msg["backend"])
     t0 = time.perf_counter()
-    info = b.load(_safe_dir(model_dir) if model_dir else "", task)
-    load_s = time.perf_counter() - t0
-    emit({"type": "loaded", "id": cid, "model_load_s": round(load_s, 3), "info": info, **b.metrics()})
+    if hit:
+        _, b, info = _resident
+    else:
+        b = make_backend(msg["backend"])
+        info = b.load(_safe_dir(model_dir) if model_dir else "", task)
+        if warm:
+            _resident = (key, b, info)
+    load_s = 0 if hit else time.perf_counter() - t0
+    emit({"type": "loaded", "id": cid, "model_load_s": round(load_s, 3), "cache_hit": hit, "info": info, **b.metrics()})
     cdir = os.path.join(d, "checkpoint")
     start, generation = _restore_checkpoint(cdir, task, msg["backend"], base, b, cid)
     tokens_total = sum(sum(1 for m in r["target_mask"][1:] if m) for r in rows[:start * k])
@@ -245,7 +267,10 @@ def train(msg):
     out = os.path.join(d, "update.safetensors")
     _atomic(out, encode(B))
     m = b.metrics()
-    b.release()
+    if warm and hasattr(b, "reset_task"):
+        b.reset_task()
+    if not warm:
+        b.release()
     return {"update_path": out, "steps": task["local_steps"], "supervised_tokens": tokens_total, "a_unchanged": True,
             "timing": {"model_load_s": round(load_s, 3), "worker_compute_s": round(compute_total / 1000, 3)}, "runtime_version": "kvalah-compute-sidecar/" + __version__, "memory": m}
 
@@ -327,7 +352,7 @@ def export_peft(msg):
     from .peft_export import export
     return export(_safe_dir(msg["adapter_path"]), _safe_dir(msg["out_dir"]), msg["profile"], msg.get("meta", {}))
 
-HANDLERS = {"preflight": preflight, "probe": probe, "verify_model": verify_model, "train": train, "evaluate": evaluate, "tokenize": tokenize, "export_peft": export_peft}
+HANDLERS = {"preflight": preflight, "probe": probe, "verify_model": verify_model, "train": train, "evaluate": evaluate, "tokenize": tokenize, "export_peft": export_peft, "release_model": release_model}
 
 def main():
     while True:
@@ -336,6 +361,7 @@ def main():
             continue
         c, cid = m.get("cmd"), m.get("id")
         if c == "shutdown":
+            release_model()
             return
         if c in ("permit", "stop"):
             continue
@@ -346,12 +372,16 @@ def main():
         try:
             emit({"type": "result", "id": cid, "data": h(m)})
         except Stopped as e:
+            release_model()
             emit({"type": "error", "id": cid, "code": "STOPPED", "message": str(e)})
         except SidecarError as e:
+            release_model()
             emit({"type": "error", "id": cid, "code": e.code, "message": str(e)})
         except MemoryError:
+            release_model()
             emit({"type": "error", "id": cid, "code": "OOM", "message": "out of memory"})
         except Exception as e:
+            release_model()
             msg = str(e)
             code = "OOM" if "out of memory" in msg.lower() else "SIDECAR_ERROR"
             sys.stderr.write(traceback.format_exc()[-2000:])

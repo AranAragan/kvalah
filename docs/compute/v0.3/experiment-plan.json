@@ -1,0 +1,34 @@
+{
+  "version": "0.10.0-compute.4.dev.1",
+  "infra_trial": {
+    "start_checkpoint": "c3fa042f0eb33d09a10e36609cced5d108905b2ec3d843876299dcc953ad3f49",
+    "seed": 20261126,
+    "dataset_id": "kvalah-sft-v1@1",
+    "rounds": 50,
+    "examples": 1500,
+    "supervised_tokens": 172536,
+    "steps_per_slot": 10,
+    "quorum": {"mode": "all", "target": 3, "min": 3},
+    "optimizer": {"name": "sgd", "lr": 0.001, "clip_norm": 1, "reset": "per_round"},
+    "validation_every": 5,
+    "validation_relative_increase_limit": 0.01,
+    "ablations": ["historical", "resident", "resident_and_chunks", "full_v03"]
+  },
+  "algorithm_trial": {
+    "tuning_split": "validation",
+    "test_after_selection": true,
+    "local_steps": [10, 20, 30, 50, 100],
+    "local_lr": [0.0005, 0.001, 0.002, 0.003],
+    "server_lr": [0.5, 1, 2, 3],
+    "algorithms": ["FedAvg", "FedAvg-scaled", "FedProx", "FedAvgM", "FedAdam", "FedYogi"],
+    "finalist_seeds": [20261126, 20261127, 20261128]
+  },
+  "volunteer_trial": {
+    "requires_opt_in": true,
+    "mode": "cooperative",
+    "targets_pct": [5, 10, 20, 30, 50],
+    "strict_window_ms": 60000,
+    "strict_10_budget_ms": 6000,
+    "preflight": ["RTX 5070", "RTX 2070", "M1 Pro"]
+  }
+}

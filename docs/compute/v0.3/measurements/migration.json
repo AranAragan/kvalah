@@ -1,0 +1,43 @@
+{
+  "classification": "MEASURED",
+  "before": {
+    "schema": "2",
+    "integrity": "ok",
+    "experiments": {
+      "n": 4,
+      "digest": "6a45acb5d271e08f27fa16dd7edd8abbad8322b05181873ec1e91875a15779dd"
+    },
+    "checkpoints": {
+      "n": 66,
+      "digest": "831fd1d991c7a2ff89c938613f78fc4019a2532483ea720f3100761f8b445222"
+    },
+    "datasets": {
+      "n": 2,
+      "digest": "7f4b155f0deee2ac545993eed36965b31681c568031c3f81f669a7ea2e995ef7"
+    },
+    "variants": {
+      "n": 2,
+      "digest": "1c1f59066b0e5c0f266990117bf853845d68dedf3dba6b9c3d2b56172e01a2e1"
+    }
+  },
+  "after": {
+    "schema": "3",
+    "integrity": "ok",
+    "experiments": {
+      "n": 4,
+      "digest": "6a45acb5d271e08f27fa16dd7edd8abbad8322b05181873ec1e91875a15779dd"
+    },
+    "checkpoints": {
+      "n": 66,
+      "digest": "831fd1d991c7a2ff89c938613f78fc4019a2532483ea720f3100761f8b445222"
+    },
+    "datasets": {
+      "n": 2,
+      "digest": "7f4b155f0deee2ac545993eed36965b31681c568031c3f81f669a7ea2e995ef7"
+    },
+    "variants": {
+      "n": 2,
+      "digest": "1c1f59066b0e5c0f266990117bf853845d68dedf3dba6b9c3d2b56172e01a2e1"
+    }
+  }
+}

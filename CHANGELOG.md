@@ -5,6 +5,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.10.0-compute.4.dev.1] - 2026-11-27
+
+Compute v0.3 development preview focused on performance and recovery.
+
+- Added a persistent CUDA and MLX sidecar runtime with cold, warm and adaptive residency and policy-driven eviction.
+- Added negotiated, checksummed upload chunks, durable partial transfers, outbox recovery and status reconciliation.
+- Preserve verified accepted updates when a new experiment retries the same round from the same checkpoint and assignment.
+- Added pre-claim traffic budgets, separate LAN and WAN limits, bounded transfer recovery and connection diagnostics.
+- The strict activity policy refuses GPU work when the backend cannot bound the duration of each operation.
+- Existing model files, adapters and Compute archives remain usable. Multi-device R60 Optimized and real volunteer acceptance require separate hardware trials.
+
+[Implementation and acceptance](https://github.com/AranAragan/kvalah/blob/v0.10.0-compute.4.dev.1/docs/compute/v0.3/EXECUTIVE_SUMMARY.md)
+
 ## [0.10.0-compute.3.dev.1] - 2026-11-26
 
 - Fixed central tokenization for MistralCommonBackend. Complete SFT conversations use finetuning mode and assistant targets are checked against serving-mode prefixes.
