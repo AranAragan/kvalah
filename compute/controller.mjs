@@ -24,6 +24,7 @@ import {verifyReport} from './report.mjs';
 import {createSetup,describeHardware,localCandidates,participationProfiles} from './onboarding.mjs';
 import {createManagedRuntime,downloadAssets,modelAssets,runtimeAssets} from './setup-assets.mjs';
 import {parsePairing} from './worker/client.mjs';
+import {detectBase} from './fusion/builder.mjs';
 export const CONSENT_REVISION='kc2-consent-2026-11-1';
 export const VERSION='0.3.0';
 const PROD_PROFILE='ministral3b-ffa-r8-v1';
@@ -131,7 +132,9 @@ export function createController({dir,secretBox=fileSecretBox,startSidecar=rawSi
     const p=st.runtime?.probe||{};
     return {backend:st.runtime?.backend,device_name:p.gpu||(platform==='darwin'?'Apple '+(p.machine||''):p.machine||''),precision:p.precision||null,
       memory_total_bytes:p.memory_total_bytes??(platform==='darwin'?os.totalmem():null),memory_free_bytes:p.memory_free_bytes??null,unified_memory:platform==='darwin',
-      preflight_ok:!!st.preflight?.ok,preflight_max_length:st.preflight?.max_length,variants:st.model?[{profile_id:st.profile_id,variant_id:st.model.variant_id,files_digest:st.model.files_digest}]:[],
+      preflight_ok:!!st.preflight?.ok,preflight_max_length:st.preflight?.max_length,
+      preflight_peak_bytes:st.preflight?.peak_reserved_bytes??st.preflight?.mlx_peak_bytes??null,
+      variants:st.model?[{profile_id:st.profile_id,variant_id:st.model.variant_id,files_digest:st.model.files_digest}]:[],
       runtime_version:`kvalah-compute/${VERSION} python/${p.python||'?'} ${p.torch?'torch/'+p.torch:''}${p.mlx?'mlx/'+p.mlx:''}`.trim()};
   }
   async function startWorker(){
@@ -381,6 +384,18 @@ export function createController({dir,secretBox=fileSecretBox,startSidecar=rawSi
     }),
       self_device:identity?.device_id||null,smoke:smokeReadiness()};
   }
+  let fusionBuilderCache;
+  function fusionInputs(){
+    const model=st.model?.architecture_ok?st.model:null;
+    const key=model?[model.model_dir,model.files_digest,model.provenance,model.verified_at].join('|'):null;
+    if(!fusionBuilderCache||fusionBuilderCache.key!==key){
+      try{fusionBuilderCache={key,model:detectBase(model),reason:null};}
+      catch(error){fusionBuilderCache={key,model:null,reason:error.code||'MODEL_UNVERIFIED'};}
+    }
+    const selected=fusionBuilderCache.model;
+    const datasets=hasLab()?svc().coord.listDatasets().filter(d=>d.group_audited&&d.tokenizer_hash===selected?.tokenizer_sha256):[];
+    return {model:selected,datasets,runs:service?.fusionRuns()??[],composition_runs:service?.compositionRuns()??[],reason:fusionBuilderCache.reason};
+  }
   const smokeRequests=new Map();
   function smokeReadiness(ids){
     const c=service?.coord,p=profile();
@@ -572,6 +587,7 @@ export function createController({dir,secretBox=fileSecretBox,startSidecar=rawSi
     if(method==='GET'&&r==='events')return events.filter(e=>e.seq>(Number(b.after)||0));
     if(method==='GET'&&r==='diagnostics')return diagnostics();
     if(method==='GET'&&r==='onboarding/detect')return describeHardware({platform,dir,candidates:discover()});
+    if(method==='GET'&&r==='fusion/inputs')return fusionInputs();
     if(method!=='POST')fail('NOT_FOUND','not found');
     switch(r){
       case 'consent/accept':return acceptConsent(b);
@@ -580,6 +596,17 @@ export function createController({dir,secretBox=fileSecretBox,startSidecar=rawSi
       case 'pause':return setPause(true);
       case 'resume':return setPause(false);
       case 'policy':return setPolicy(b.policy,b.revision);
+      case 'fusion/start':{
+        if(!st.model?.architecture_ok||(!testMode()&&st.model.provenance!=='verified'))fail('MODEL_UNVERIFIED','Fusion training requires an officially verified BF16 model');
+        return svc().startFusion(b);
+      }
+      case 'fusion/control':return svc().controlFusion(b.id,b.action);
+      case 'fusion/composition-control':return svc().controlComposition(b.id,b.action);
+      case 'fusion/compose':
+        if((b.router_mode==='token'||b.fit_loop===true)&&!testMode()&&st.model?.provenance!=='verified')
+          fail('MODEL_UNVERIFIED','composition training requires an officially verified BF16 model');
+        return svc().evaluateComposition(b);
+      case 'fusion/generate':return svc().generateFusion(b);
       case 'policy/preset':{
         if(!Object.hasOwn(participationProfiles,b.id))fail('INVALID_SCHEMA','unknown participation profile');
         return setPolicy({...participationProfiles[b.id],profile:b.id==='gentle'?'gentle':'custom'},b.revision);

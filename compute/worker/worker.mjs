@@ -17,6 +17,9 @@ import {decode} from '../protocol/safetensors.mjs';
 import {getProfile,verifyTensors,frozenAHash,schemaHash,trainableCount} from '../protocol/schema.mjs';
 import {ComputeError} from '../protocol/errors.mjs';
 import {isPrivateAddress} from '../../lan.mjs';
+import {verifyEnvelope} from '../fusion/registry.mjs';
+import {createStreamStore,indexArtifact,STREAM_CHUNK,checkStreamLayout} from '../fusion/stream.mjs';
+import {fitsFusionMemory} from '../fusion/admission.mjs';
 const sleep=(ms,signal)=>delay(ms,undefined,{signal}).catch(error=>{if(error.name!=='AbortError')throw error;});
 const jitter=ms=>ms*(0.8+Math.random()*0.4);
 const FINAL=['STALE','CONFLICT','DUPLICATE_DIFFERENT','LEASE_EXPIRED','INVALID_SCHEMA','INVALID_TENSOR','NONFINITE','UPDATE_NORM_LIMIT','TOKEN_MISMATCH','HASH_MISMATCH','NOT_OWNER','FORBIDDEN_SCOPE','UNSUPPORTED_PROTOCOL'];
@@ -34,6 +37,8 @@ export function createWorker({stateDir,identity,link,governor,runtime,capabiliti
   const cache=createArtifactCache(path.join(stateDir,'cache-v1',scope),{limitBytes:()=>governor.policy.cache_limit_gib*2**30,onEvent:(code,details)=>ev(code,details)});
   const serverNow=()=>now()+(client.offset||0);
   const entries=()=>outbox.pending().filter(e=>e.scope===scope);
+  const fusionScope='fusion:'+scope;
+  const fusionEntries=()=>outbox.pending().filter(e=>e.scope===fusionScope);
   let state='CONNECTING',reason=null,session=null,stopping=false,loop=null,hb=null,current=null,sidecar=null,abort=new AbortController(),lastAccepted=null,lastRpcError=null,heartbeatRunning=false;
   let sidecarEvents=null,idleWatch=null,sidecarClosing=null,sidecarThreads=null;
   const runtimeMode=()=>governor.policy.runtime_mode??(governor.policy.keep_warm?'warm':'cold');
@@ -46,6 +51,10 @@ export function createWorker({stateDir,identity,link,governor,runtime,capabiliti
     metrics.tasks_accepted++;
     metrics.accepted_tokens+=entry.meta.supervised_tokens||0;
     lastAccepted={at:entry.closed_at,round:entry.task.round,task_id:entry.task.task_id};
+  }
+  for(const entry of outbox.all().filter(e=>e.scope===fusionScope&&['accepted','committed'].includes(e.state))){
+    metrics.tasks_accepted++;
+    metrics.accepted_tokens+=entry.meta.tokens||0;
   }
   outbox.gc();
   function setState(s,r=null,extra){if(s!==state||r!==reason){state=s;reason=r;onState({state:s,reason:r,task:current?publicTask(current):null,...extra});}}
@@ -81,15 +90,21 @@ export function createWorker({stateDir,identity,link,governor,runtime,capabiliti
     const caps=capabilities();
     try{
       const admission=governor.decide({phase:'admission'}),network=networkDecision();
+      const disk=fs.statfsSync(stateDir);
       const r=await client.post('/v2/devices/heartbeat',{session_id:session.session_id,status:{state,pause_reason:reason,
         eligible:admission.run&&network.run&&state!=='BLOCKED_BY_TRAFFIC_POLICY',blocking_reason:admission.reason||network.reason||
           (state==='BLOCKED_BY_TRAFFIC_POLICY'?'traffic_cap':null)},
         metrics:{...metrics,traffic_remaining:trafficRemaining(),temperature_c:governor.sensors?.gpu?.temperature_c??null,
           ram_available_bytes:governor.sensors?.ram_available_bytes??governor.sensors?.ram_free_bytes??null,
-          vram_used_bytes:governor.sensors?.gpu?.memory_used_bytes??null,power_w:governor.sensors?.gpu?.power_w??null},
+          vram_used_bytes:governor.sensors?.gpu?.memory_used_bytes??null,power_w:governor.sensors?.gpu?.power_w??null,
+          fusion_opt_in:Number(governor.policy.fusion_training===true),fusion_duty_pct:governor.policy.gpu_target_pct,
+          fusion_temp_limit:governor.policy.temp_limit_c,fusion_cache_bytes:Math.min(governor.policy.cache_limit_gib*2**30,disk.bavail*disk.bsize)},
         capabilities:caps,runtime_version:caps.runtime_version},{signal:abort.signal});
       session.state=r.state;
-      if(!current&&session.state==='active')await reconcileAccepted();
+      if(!current&&session.state==='active'){
+        await reconcileAccepted();
+        if(client.features?.includes('fusion-work-v2'))await reconcileFusion();
+      }
     }catch(e){
       if(e.code==='SESSION_SUPERSEDED'||e.code==='REVOKED'){ev('session.'+e.code.toLowerCase(),{message:e.message});await halt(e.code==='REVOKED'?'revoked':'session_superseded');}
       if(!stopping)recordRpcError('heartbeat.error',e);
@@ -322,7 +337,7 @@ export function createWorker({stateDir,identity,link,governor,runtime,capabiliti
   async function closeSidecar(){
     clearInterval(idleWatch);idleWatch=null;
     if(sidecar){
-      const sc=sidecar;sidecar=null;metrics.resident_model=0;governor.setSensors?.({worker_memory_bytes:null});
+      const sc=sidecar;sidecar=null;metrics.resident_model=0;metrics.fusion_resident_bytes=0;governor.setSensors?.({worker_memory_bytes:null});
       sidecarClosing=sc.stop(10000).catch(()=>{});
     }
     await sidecarClosing;
@@ -338,7 +353,7 @@ export function createWorker({stateDir,identity,link,governor,runtime,capabiliti
     },1000);
     idleWatch.unref?.();
   }
-  async function train(m,p,dir,lease){
+  async function train(m,p,dir,lease,fusionArgs=null){
     const logical=os.availableParallelism?.()||os.cpus().length,threads=governor.cpuThreads(logical);
     let lastAcc=performance.now(),pausedSince=null,stopSent=false;
     const signal=AbortSignal.any([abort.signal,lease.signal]);
@@ -353,7 +368,9 @@ export function createWorker({stateDir,identity,link,governor,runtime,capabiliti
       sidecarEvents=async e=>{
         if(e.type==='loaded'){
           metrics.model_load_s=e.model_load_s??null;metrics.model_cache_hits=(metrics.model_cache_hits||0)+(e.cache_hit?1:0);
-          metrics.resident_model=retain?1:0;setState('TRAINING');
+          metrics.resident_model=retain?1:0;
+          metrics.fusion_resident_bytes=fusionArgs&&retain&&Number.isSafeInteger(e.resident_bytes)?e.resident_bytes:0;
+          setState('TRAINING');
         }
         if(e.type==='step'){
           current.step=e.step;metrics.last_loss=e.loss;metrics.optimizer_steps++;metrics.busy_ms+=e.compute_ms||0;
@@ -364,7 +381,8 @@ export function createWorker({stateDir,identity,link,governor,runtime,capabiliti
           if(Number.isFinite(e.cpu_ms)&&e.wall_ms>0)metrics.cpu_fraction=Math.round(e.cpu_ms/e.wall_ms/logical*1000)/1000;
           accountNow(e.compute_ms||0);
           current.sleepMs=governor.afterStep(e.compute_ms||0);
-          client.post(`/v2/tasks/${m.task_id}/progress`,{lease_id:m.lease_id,session_id:session.session_id,step:e.step,steps:m.local_steps,supervised_tokens:e.supervised_tokens_total,loss:e.loss,state:'TRAINING'},{signal}).catch(()=>{});
+          if(fusionArgs)void client.post(`/v2/fusion/work/${m.task_id}/renew`,{step:e.step,loss:e.loss,bytes:metrics.bytes_in},{signal}).catch(()=>{});
+          else client.post(`/v2/tasks/${m.task_id}/progress`,{lease_id:m.lease_id,session_id:session.session_id,step:e.step,steps:m.local_steps,supervised_tokens:e.supervised_tokens_total,loss:e.loss,state:'TRAINING'},{signal}).catch(()=>{});
           onState({state,reason,task:publicTask(current),metrics:{...metrics}});
         }
         if(e.type==='permit_request')permitLoop(e).catch(err=>ev('permit.error',{message:err.message}));
@@ -378,8 +396,15 @@ export function createWorker({stateDir,identity,link,governor,runtime,capabiliti
         if(current.sleepMs>0){setState('TRAINING','throttle');await sleep(Math.min(current.sleepMs,2147483647),signal);accountNow();}
         for(;;){
           if(stopping||lease.signal.aborted){if(!stopSent){stopSent=true;sidecar.send({cmd:'stop',id:e.id,reason:stopping?'stopping':'lease_lost'});}return;}
+          if(fusionArgs&&!governor.policy.fusion_training){stopSent=true;sidecar.send({cmd:'stop',id:e.id,reason:'policy:fusion_disabled'});return;}
           const d=governor.decide({phase:e.step===0?'preflight':'compute'});
-          if(d.run){pausedSince=null;setState('TRAINING');sidecar.send({cmd:'permit',id:e.id});return;}
+          if(d.run){
+            if(fusionArgs){
+              try{await client.post(`/v2/fusion/work/${m.task_id}/renew`,{step:current.step,bytes:metrics.bytes_in},{signal});}
+              catch(error){stopSent=true;sidecar.send({cmd:'stop',id:e.id,reason:error.code||'fusion_lease'});return;}
+            }
+            pausedSince=null;setState('TRAINING');sidecar.send({cmd:'permit',id:e.id});return;
+          }
           pausedSince??=performance.now();setState('PAUSED',d.reason);
           const hardBlock=['disabled','temperature','thermal_state','memory_pressure','low_memory','low_vram','worker_memory_limit','strict_operation_unbounded','cpu_zero','gpu_zero'].includes(d.reason);
           if(hardBlock||performance.now()-pausedSince>pauseHoldMs){stopSent=true;sidecar.send({cmd:'stop',id:e.id,reason:'policy:'+d.reason});return;}
@@ -387,7 +412,7 @@ export function createWorker({stateDir,identity,link,governor,runtime,capabiliti
           lastAcc=performance.now();   // paused time is not budget time
         }
       }
-      const call=sidecar.call('train',{task:{task_id:m.task_id,lease_id:m.lease_id,run_id:m.run_id,round:m.round,round_attempt:m.round_attempt,dataset_shard_hash:m.dataset_shard_hash,mask_checksum:m.mask_checksum,model_files_digest:m.model_files_digest,
+      const call=fusionArgs?sidecar.call('fusion_train',{...fusionArgs,retain_model:retain}):sidecar.call('train',{task:{task_id:m.task_id,lease_id:m.lease_id,run_id:m.run_id,round:m.round,round_attempt:m.round_attempt,dataset_shard_hash:m.dataset_shard_hash,mask_checksum:m.mask_checksum,model_files_digest:m.model_files_digest,
         local_steps:m.local_steps,grad_accum:m.grad_accum,max_length:m.max_length,optimizer:m.optimizer,rank:m.rank,alpha:m.alpha,
         profile:p.id,targets:p.targets,layers:p.layers,expected_supervised_tokens:m.expected_supervised_tokens,base_adapter_hash:m.base_adapter_hash,frozen_A_hash:m.frozen_A_hash},
         paths:{task_dir:dir,model_dir:runtime.model_dir},backend:runtime.backend,retain_model:retain});
@@ -399,6 +424,118 @@ export function createWorker({stateDir,identity,link,governor,runtime,capabiliti
       sidecarEvents=null;
       if(!finished||!retain||stopping)await closeSidecar();
       else monitorResident();
+    }
+  }
+  function recordFusionReceipt(entry,confirmed){
+    if(confirmed.id!==entry.task.task_id||!['accepted','committed','cancelled'].includes(confirmed.status)||
+      (confirmed.status!=='cancelled'&&confirmed.sha256!==entry.payload_sha256))
+      throw new ComputeError('HASH_MISMATCH','Fusion receipt does not match its outbox entry');
+    outbox.update(entry.key,{state:confirmed.status,result:confirmed,last_status_check:now(),closed_at:now()});
+    if(entry.state!=='accepted'&&confirmed.status!=='cancelled'){
+      metrics.tasks_accepted++;metrics.accepted_tokens+=entry.meta.tokens;
+      ev('fusion.accepted',{bytes:entry.bytes});
+    }
+    if(confirmed.status==='committed')ev('fusion.committed',{checkpoint:confirmed.checkpoint,round:confirmed.round});
+  }
+  async function reconcileFusion(){
+    const waiting=outbox.accepted().filter(e=>e.scope===fusionScope&&e.state==='accepted'&&now()-(e.last_status_check??0)>=10000);
+    for(const entry of waiting.slice(0,4)){
+      const status=await client.get(`/v2/fusion/work/${entry.task.task_id}/status`,{signal:abort.signal});
+      recordFusionReceipt(entry,status);
+    }
+  }
+  async function deliverFusion(entry,signal){
+    const base=`/v2/fusion/work/${entry.task.task_id}`;
+    const status=await client.get(base+'/status',{signal});
+    if(status.status!=='pending'){recordFusionReceipt(entry,status);return;}
+    const route=base+'/upload';
+    const source=outbox.file(entry.key);
+    const artifact=await indexArtifact(source,{chunk:STREAM_CHUNK,expectedHash:entry.payload_sha256,signal});
+    const started=await client.post(route+'/begin',{artifact,tokens:entry.meta.tokens},{signal});
+    let confirmed=started.receipt;
+    if(!confirmed){
+      const missing=new Set(started.missing);
+      let i=0;
+      await indexArtifact(source,{chunk:STREAM_CHUNK,expectedHash:entry.payload_sha256,signal,onChunk:async(part,bytes)=>{
+        const index=i++;
+        if(!missing.has(index))return;
+        if(!governor.policy.fusion_training||!networkDecision().run)throw new ComputeError('STOPPED','Fusion transfer paused by local policy');
+        await client.put(`${route}/parts/${index}?sha256=${part.sha256}`,bytes,{signal,payload:true,maxPayload:trafficRemaining()});
+      }});
+      confirmed=await client.post(route+'/complete',{}, {signal});
+    }
+    recordFusionReceipt(entry,confirmed);
+  }
+  async function claimFusion(){
+    const pending=fusionEntries()[0];
+    if(pending){
+      try{await deliverFusion(pending,abort.signal);}
+      catch(error){
+        if(['LEASE_EXPIRED','STALE','NOT_OWNER','DUPLICATE_DIFFERENT'].includes(error.code))outbox.update(pending.key,{state:'expired',closed_at:now()});
+        else if(['HASH_MISMATCH','TOKEN_MISMATCH'].includes(error.code)){
+          outbox.update(pending.key,{state:'quarantined',last_error:{code:error.code},closed_at:now()});
+          ev('fusion.result_quarantined',{code:error.code,task_id:pending.task.task_id});
+        }
+        else throw error;
+      }
+      return true;
+    }
+    const r=await client.post('/v2/fusion/work/claim',{consent:true,backend:runtime.backend,model_sha256:runtime.files_digest,available_bytes:trafficRemaining()},{signal:abort.signal});
+    if(!r.task)return false;
+    // The signing key comes from the already pinned and authenticated coordinator connection.
+    const f=verifyEnvelope(r.task,r.public_key);
+    if(f.kind!=='worker-task'||f.device!==identity.device_id||!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(f.id)||
+      f.model_sha256!==runtime.files_digest||f.artifacts?.length!==2||f.expires<=serverNow()||
+      !['backbone','ram','vram'].every(k=>Number.isSafeInteger(f.requirements?.[k])&&f.requirements[k]>=0)||
+      f.artifacts.find(a=>a.kind==='expert')?.sha256!==f.parent||!f.artifacts.some(a=>a.kind==='train'))
+      throw new ComputeError('INVALID_SCHEMA','Fusion assignment does not match this worker');
+    const checkMemory=()=>{
+      const s=governor.sensors,g=s?.gpu??{},ram=s?.ram_available_bytes??s?.ram_free_bytes;
+      const local=governor.policy.max_worker_mem_gib;
+      const measured=runtime.backend==='cuda'?f.requirements.vram:f.requirements.ram;
+      if(!fitsFusionMemory(f.requirements,ram,g.memory_total_bytes-g.memory_used_bytes,metrics.fusion_resident_bytes??0,runtime.backend)||
+        (Number.isFinite(local)&&measured>local*2**30))throw new ComputeError('STOPPED','Fusion assignment exceeds current local memory limits');
+    };
+    checkMemory();
+    const m={task_id:f.id,lease_id:f.id,experiment_id:f.run,run_id:f.run,round:f.round??1,local_steps:f.training.local_steps,expected_supervised_tokens:f.expected_tokens,
+      lease_expires_at:f.expires,round_deadline_at:f.expires+24*3600000};
+    const lease=maintainLease({task:m,renew:async signal=>{
+      const reply=await client.post(`/v2/fusion/work/${f.id}/renew`,{step:current?.step??0,bytes:metrics.bytes_in},{signal});
+      return {lease_expires_at:reply.expires};
+    },serverNow,onEvent:ev});
+    current={manifest:m,lease,step:0,sleepMs:0};
+    const signal=AbortSignal.any([abort.signal,lease.signal]);
+    const working=path.join(stateDir,'tasks','fusion-'+f.id);
+    fs.mkdirSync(working,{recursive:true,mode:0o700});
+    try{
+      const disk=createStreamStore(path.join(stateDir,'fusion-cache'),{quotaBytes:governor.policy.cache_limit_gib*2**30,onEvent:progress=>ev('fusion.download',progress)});
+      const files={};
+      setState('PREPARING','fetching_artifacts');
+      for(const artifact of f.artifacts){
+        checkStreamLayout(artifact);
+        const received=await disk.receive(artifact,async(part,_i,opts)=>{
+          if(!governor.policy.fusion_training||!networkDecision().run)throw new ComputeError('STOPPED','Fusion download paused by local policy');
+          return (await client.get(`/v2/fusion/work/${f.id}/parts/${part.sha256}`,{payload:true,json:false,maxPayload:opts.maxBytes,signal})).bytes;
+        },{permit:trafficRemaining,signal});
+        files[artifact.kind]={...received,hash:artifact.sha256};
+      }
+      lease.check();
+      const pre=governor.decide({phase:'preflight'});
+      if(!pre.run)throw new ComputeError('STOPPED','policy:'+pre.reason);
+      checkMemory();
+      const resultPath=path.join(working,'result.safetensors');
+      const trained=await train(m,null,working,lease,{backend:runtime.backend,model_files_digest:runtime.files_digest,expert:f.spec,
+        checkpoint_sha256:f.parent,rows_sha256:files.train.hash,max_length:f.max_length,training:f.training,expected_supervised_tokens:f.expected_tokens,
+        paths:{model_dir:runtime.model_dir,checkpoint:files.expert.file,rows:files.train.file,result:resultPath}});
+      if(trained.steps!==m.local_steps||trained.supervised_tokens!==f.expected_tokens||trained.frozen_unchanged!==true)
+        throw new ComputeError('TOKEN_MISMATCH','Fusion result differs from its supervised budget');
+      const saved=outbox.putFile(m,resultPath,trained.sha256,{tokens:trained.supervised_tokens},{scope:fusionScope});
+      setState('UPLOADING');
+      await deliverFusion(saved,abort.signal);
+      return true;
+    }finally{
+      lease.stop();current=null;
+      if(fs.existsSync(working))fs.rmSync(working,{recursive:true,force:true});
     }
   }
   async function main(){
@@ -413,6 +550,7 @@ export function createWorker({stateDir,identity,link,governor,runtime,capabiliti
         const network=networkDecision();
         if(d.run&&!network.run){if(network.reason==='traffic_cap')blockedByTraffic();else setState('PAUSED',network.reason);await sleep(2000,abort.signal);continue;}
         if(!d.run){setState('PAUSED',d.reason);await sleep(2000,abort.signal);continue;}
+        if(governor.policy.fusion_training&&client.features?.includes('fusion-work-v2')&&await claimFusion()){backoff=2000;continue;}
         if(runtime.profile_id&&trafficRemaining()<trainableCount(getProfile(runtime.profile_id))*4+64*1024){
           blockedByTraffic();await sleep(3000,abort.signal);continue;
         }

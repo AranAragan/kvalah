@@ -150,7 +150,8 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
     const variants=(Array.isArray(c.variants)?c.variants:[]).slice(0,8).map(v=>({profile_id:String(v.profile_id||'').slice(0,60),variant_id:String(v.variant_id||'').slice(0,40),files_digest:isHex64(v.files_digest)?v.files_digest:null}));
     return {backend:String(c.backend||'').slice(0,20),device_name:String(c.device_name||'').slice(0,60),precision:String(c.precision||'').slice(0,12),
       memory_total_bytes:Number.isFinite(c.memory_total_bytes)?c.memory_total_bytes:null,memory_free_bytes:Number.isFinite(c.memory_free_bytes)?c.memory_free_bytes:null,
-      unified_memory:!!c.unified_memory,preflight_ok:c.preflight_ok===true,preflight_max_length:[256,512].includes(c.preflight_max_length)?c.preflight_max_length:null,variants};
+      unified_memory:!!c.unified_memory,preflight_ok:c.preflight_ok===true,preflight_max_length:[256,512].includes(c.preflight_max_length)?c.preflight_max_length:null,
+      preflight_peak_bytes:Number.isSafeInteger(c.preflight_peak_bytes)&&c.preflight_peak_bytes>0?c.preflight_peak_bytes:null,variants};
   }
   function listDevices(){
     return db.prepare('select * from devices order by created_at').all().map(d=>{
@@ -206,7 +207,7 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
     return {id};
   }
   const datasetManifest=id=>{const d=db.prepare('select * from datasets where id=?').get(String(id));if(!d)fail('DATASET_REQUIRED','dataset '+String(id).slice(0,80)+' is not registered');return JSON.parse(d.manifest);};
-  const listDatasets=()=>db.prepare('select id,manifest,created_at from datasets order by created_at').all().map(d=>{const m=JSON.parse(d.manifest);return {id:d.id,created_at:d.created_at,license:m.license,source:m.source,split_counts:m.split_counts,tokens_by_split:m.tokens_by_split,synthetic:!!m.synthetic,tokenizer_hash:m.tokenizer_hash,profile_id:m.profile_id,max_length:m.max_length,group_audited:!!m.group_audit};});
+  const listDatasets=()=>db.prepare('select id,manifest,manifest_hash,created_at from datasets order by created_at').all().map(d=>{const m=JSON.parse(d.manifest);return {id:d.id,created_at:d.created_at,license:m.license,source:m.source,split_counts:m.split_counts,tokens_by_split:m.tokens_by_split,synthetic:!!m.synthetic,tokenizer_hash:m.tokenizer_hash,profile_id:m.profile_id,max_length:m.max_length,group_audited:!!m.group_audit,manifest_hash:d.manifest_hash};});
   function trainRows(manifest){
     const rows=[];
     for(const s of manifest.shards.train){const shard=JSON.parse(cas.get(s.sha256).toString('utf8'));for(const r of shard.rows)rows.push(r);}

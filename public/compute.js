@@ -20,8 +20,13 @@
   const when=ts=>ts?new Date(ts).toLocaleString(lang()):ct('none');
   const desktop=()=>window.kvalahDesktop;
   const call=(route,body)=>api('/api/compute/v2/'+route,body);
+  const fusionCall=(route,body)=>api('/api/compute/fusion/'+route,body);
+  const fx=(ru,en)=>lang()==='ru'?ru:en;
   let form={},planInput=null;
   let S=null,tab='overview',open=false,busy=false,timer=null,selExp=null,expData=null,coordEvents=[],plan=null,pairing=null,lastResult={};
+  let fusionState=null,fusionTab='summary',fusionEstimate=null,fusionError=null;
+  let fusionLayers=new Set([0]);
+  let fusionOutput=null;
   let mode=localStorage.getItem('kvalah-compute-mode')==='laboratory'?'laboratory':'contribution';
   let refreshId=0,stale=false,hardware=null,smoke=null,requestId=null,smokeIds=[],expanded=new Set(),invitationEpoch=0;
   const presets={gentle:10,balanced:25,productive:50};
@@ -43,6 +48,14 @@
     }
     if(id!==refreshId)return;
     S=next;stale=false;
+    if(S.expert_fusion_enabled&&mode==='laboratory'&&tab==='fusion'){
+      try{
+        const current=await fusionCall('state');
+        if(id!==refreshId)return;
+        if(fusionState?.builder?.model?.id!==current.builder?.model?.id){fusionEstimate=null;fusionLayers=new Set([0]);}
+        fusionState=current;fusionError=null;
+      }catch(error){if(id!==refreshId)return;fusionError=error.message;}
+    }
     if(S.feature_enabled&&S.lab&&mode==='laboratory'&&tab==='monitor'){
       const exps=S.lab.experiments||[];
       if(!selExp||!exps.some(e=>e.id===selExp))selExp=exps[0]?.id||null;
@@ -476,10 +489,11 @@
   function laboratory(){
     const l=S.lab,ready=l?.smoke,online=l?.info?.running&&!stale;
     const n=stale?0:ready?.devices?.filter(d=>!d.reason).length||0;
-    const nav='<nav class="kc-lab-tabs" aria-label="'+esc(tx('nav'))+'">'+[['overview','overview'],['devices','devices'],['experiments','experiments'],['data','models']].map(([id,key])=>{
+    const nav='<nav class="kc-lab-tabs" aria-label="'+esc(tx('nav'))+'">'+[['overview','overview'],['devices','devices'],['experiments','experiments'],['data','models'],['fusion','Expert Fusion']].map(([id,key])=>{
       const selected=tab===id||(tab==='monitor'&&id==='experiments');
-      return '<button type="button" data-act="lab-nav" data-arg="'+id+'"'+(selected?' aria-current="page"':'')+'>'+esc(tx(key))+'</button>';
+      return '<button type="button" data-act="lab-nav" data-arg="'+id+'"'+(selected?' aria-current="page"':'')+'>'+esc(id==='fusion'?key:tx(key))+'</button>';
     }).join('')+'</nav>';
+    if(tab==='fusion')return nav+renderFusion();
     const top=title(tx('laboratory'),tx('labIntro'),online?btn('new-experiment',tx('newExperiment'),{primary:true}):btn('auto-lab',tx('createNetwork'),{primary:true}))+nav;
     const networkControls=row(btn('lab-pairing',tx('inviteDevice'),{primary:tab==='devices'})+
       (!S.link?btn('lab-join-ux',tx('joinSelf')):'')+btn('lab-stop',ct('lab.stop')));
@@ -497,6 +511,140 @@
       (ready?.reason?plain(friendly(ready.reason),'kc-caption'):'')+msg('lab'),'kc-hero')+labDevices()+'</div><div class="kc-stack">'+
       panel(tx('networkStats'),scores([[tx('deviceReady'),n+' / 3'],[tx('experiments'),l.experiments.length],
       [tx('completedRounds'),l.experiments.reduce((a,r)=>a+r.committed_rounds,0)],[tx('devices'),l.devices.length]]))+'</div></div>';
+  }
+  function renderFusion(){
+    if(!S.expert_fusion_enabled)return panel('Expert Fusion',plain(fx('Исследовательская лаборатория для экспертов, маршрутизации и циклических слоёв.','A research lab for experts, routing and looped layers.'))+
+      row(S.feature_enabled?btn('fusion-enable',fx('Включить лабораторию','Enable laboratory'),{primary:true}):btn('feature-on',fx('Включить Compute','Enable Compute'),{primary:true}))+msg('fusion'));
+    const entries=[['summary',fx('Обзор','Overview')],['architecture',fx('Архитектура','Architecture')],['experts',fx('Эксперты','Experts')],
+      ['devices',fx('Устройства','Devices')],['models',fx('Версии моделей','Model versions')],['diagnostics',fx('Диагностика','Diagnostics')]];
+    const nav='<nav class="kc-lab-tabs" aria-label="Expert Fusion">'+entries.map(([id,label])=>'<button type="button" data-act="fusion-nav" data-arg="'+id+'"'+
+      (id===fusionTab?' aria-current="page"':'')+'>'+esc(label)+'</button>').join('')+'</nav>';
+    const controls=title('Expert Fusion',fx('Независимые эксперты на общей модели','Independent experts on a shared model'),btn('fusion-disable',fx('Выключить','Disable')))+nav+msg('fusion');
+    if(fusionError)return controls+notice(fusionError,'warn');
+    if(!fusionState)return controls+plain(tx('checking'));
+    const {experts,models,active}=fusionState;
+    const base=fusionState.builder?.model;
+    const datasets=fusionState.builder?.datasets||[];
+    const runs=fusionState.builder?.runs||[];
+    const runLabel=status=>({CREATED:fx('Создан','Created'),READY:fx('Готов','Ready'),RUNNING:fx('Обучается','Training'),
+      TRAINING:fx('Обучается','Training'),PAUSED:fx('На паузе','Paused'),AGGREGATING:fx('Агрегация','Aggregating'),
+      EVALUATING:fx('Проверка на Validation','Validation in progress'),VALIDATED:fx('Проверен','Validated'),
+      REJECTED:fx('Порог качества не пройден','Quality threshold not met'),PUBLISHED:fx('Опубликован','Published'),
+      QUEUED:fx('В очереди','Queued'),DONE:fx('Завершено','Completed'),FAILED:fx('Ошибка стадии','Stage failed'),
+      CANCELLED:fx('Отменено','Cancelled'),PAUSED_EVALUATION:fx('Проверка на паузе','Validation paused'),
+      STOPPED:fx('Остановлен','Stopped'),ARCHIVED:fx('В архиве','Archived')})[status]??status;
+    const choose=(id,label,options)=>'<label class="kc-field"><span>'+esc(label)+'</span><select id="'+id+'">'+
+      options.map(([value,name])=>'<option value="'+esc(value)+'">'+esc(name)+'</option>').join('')+'</select></label>';
+    const placement=()=>{
+      const start=Number(form.fxLoopStart??0),end=Number(form.fxLoopEnd??Math.min(base.layers,4)),repeated=Number(form.fxPasses??1)>1;
+      return '<div class="kc-fusion-placement" role="group" aria-label="'+esc(fx('Размещение по слоям','Layer placement'))+'">'+
+        Array.from({length:base.layers},(_,i)=>'<button type="button" data-act="fusion-layer" data-arg="'+i+'" data-loop="'+
+          (repeated&&i>=start&&i<end?'true':'false')+'" aria-label="'+esc(fx('Слой ','Layer ')+(i+1))+'" aria-pressed="'+fusionLayers.has(i)+'">'+(i+1)+'</button>').join('')+'</div>'+
+          '<p class="kc-caption">'+esc(fx('Нажмите на слой, чтобы разместить эксперта. Контур показывает повторяемый блок.','Select a layer to place an expert. The outline marks the repeated block.'))+'</p>';
+    };
+    const detected=base?panel(fx('Модель Compute','Compute model'),choose('fxModel',fx('Проверенная локальная копия','Verified local copy'),[[base.id,base.title]])+
+      kv([[fx('Слои','Layers'),base.layers],[fx('Скрытая размерность','Hidden width'),base.width],[fx('Словарь','Vocabulary'),base.vocab],
+        [fx('Размер FFN','FFN width'),base.intermediate],[fx('Параметры в файлах','Parameters in stored shards'),base.parameters.toLocaleString(lang())]])):
+      panel(fx('Модель Compute','Compute model'),notice(fusionState.builder?.reason?friendly(fusionState.builder.reason):
+        fx('Подготовьте и проверьте локальную базовую модель в Compute. Архитектура появится здесь автоматически.','Verify a local base model in Compute. Its architecture will appear here automatically.'))+
+        row(btn('lab-nav',fx('Открыть модели и данные','Open models and data'),{arg:'data'})));
+    const published=models.find(m=>m.hash===active)?.envelope?.manifest;
+    const stats=published?.stats;
+    const fmtN=value=>value==null?'—':value.toLocaleString(lang());
+    if(fusionTab==='summary')return controls+panel('',scores([
+      [fx('Эксперты','Experts'),experts.length],[fx('Устройства Compute','Compute devices'),S.lab?.devices?.length??0],
+      [fx('Уникальные параметры','Unique parameters'),fmtN(stats?.parameters)],
+      [fx('Обучаемые параметры','Trainable parameters'),fmtN(stats?.trainable)],
+      [fx('Верхняя граница активных параметров','Active parameter upper bound'),fmtN(stats?.active_upper_bound)],
+      [fx('Выполнения слоёв','Layer executions'),fmtN(stats?.logical_layers)]])+plain(published?.base?.revision??fx('Активная композиция ещё не опубликована','No active composition has been published')));
+    if(fusionTab==='architecture')return controls+detected+(base?panel(fx('Оценка по формам тензоров','Tensor-based sizing'),placement()+'<div class="kc-experience-grid">'+
+      field('fxContext',fx('Контекст','Context'),Math.min(256,base.context),{type:'number'})+
+      field('fxExperts',fx('Число дополнительных FFN','Additional FFNs'),1,{type:'number'})+field('fxInner',fx('Внутренний размер FFN','FFN intermediate width'),Math.min(512,base.intermediate),{type:'number'})+
+      choose('fxTopK','Top‑K',[[1,1],[2,2],[4,4]])+
+      field('fxLoopStart',fx('Начало цикла, индекс с нуля','Loop start, zero-based'),0,{type:'number'})+field('fxLoopEnd',fx('Конец цикла, исключительно','Loop end, exclusive'),Math.min(base.layers,4),{type:'number'})+
+      choose('fxPasses',fx('Проходы','Passes'),[[1,1],[2,2],[3,3],[4,4]])+'</div>'+
+      row(btn('fusion-estimate',fx('Рассчитать','Estimate'),{primary:true}))+(fusionEstimate?scores([
+        [fx('Уникальные параметры','Unique parameters'),fmtN(fusionEstimate.parameters)],
+        [fx('Верхняя граница активных','Active upper bound'),fmtN(fusionEstimate.active_upper_bound)],
+        [fx('Выполнения слоёв','Layer executions'),fmtN(fusionEstimate.logical_layers)],
+        ['FP16 checkpoint',fmtB(fusionEstimate.fp16_checkpoint_bytes)],['KV FP16',fmtB(fusionEstimate.fp16_kv_bytes)],
+        [fx('Градиенты FP32','FP32 gradients'),fmtB(fusionEstimate.gradient_bytes)],['AdamW',fmtB(fusionEstimate.adamw_state_bytes)]
+      ]):'')):'');
+    if(fusionTab==='experts'){
+      const expertRows=experts.map(e=>{
+        const run=runs.find(r=>r.expert===e.id),dataset=datasets.find(d=>d.manifest_hash===e.dataset_sha256);
+        const running=run&&['RUNNING','PAUSED','EVALUATING','PAUSED_EVALUATION'].includes(run.status);
+        const pauseAction=run?.status?.startsWith('PAUSED')?'resume':'pause';
+        return card(e.name,kv([[fx('Специализация','Domain'),esc(e.domain)],[fx('Тип','Type'),esc(e.kind)],
+        [fx('Версия','Version'),e.version],[fx('Параметры','Parameters'),fmtN(e.parameters)],[fx('Размер весов','Weights size'),fmtB(e.bytes)],
+        [fx('Статус','Status'),'<span data-fusion-status="'+esc(run?.status??e.status)+'">'+esc(runLabel(run?.status??e.status))+'</span>'],
+        [fx('Датасет','Dataset'),esc(dataset?.id??short(e.dataset_sha256))],
+        [fx('Checkpoint','Checkpoint'),esc(short(e.checkpoint?.hash))],['Validation NLL',e.checkpoint?.assessment?.candidate_nll?.toFixed(5)??'—'],
+        ...(run?.plan?[[fx('Раунд','Round'),`${run.round} / ${run.plan.rounds}`],
+          [fx('Учтённые токены','Committed supervised tokens'),`${fmtN(run.plan.tokens)} / ${fmtN(run.plan.tokenBudget)}`],
+          [fx('Позиция Train','Train position'),`${(run.committed_position??run.position).epoch+1} · ${fmtN((run.committed_position??run.position).index)}`]]:[])])+
+        (run?.leases?.length?'<ul class="kc-fusion-leases">'+run.leases.map(l=>{
+          const d=S.lab?.devices?.find(d=>d.id===l.device),m=d?.metrics;
+          const p=l.progress;
+          return '<li>'+esc(d?.alias??short(l.device))+' · '+esc(({leased:fx('Назначено','Assigned'),accepted:fx('Принято, ждёт агрегации','Accepted, awaiting aggregation'),
+            committed:fx('Включено в checkpoint','Committed to checkpoint'),
+            expired:fx('Аренда истекла','Lease expired'),cancelled:fx('Отменено','Cancelled')})[l.state]??l.state)+
+            (p?' · '+esc(`${p.step} / ${e.training.local_steps}`):'')+(m?.tokens_per_s?' · '+esc(m.tokens_per_s+' tok/s'):'')+
+            (m?.peak_reserved_bytes?' · '+esc(fmtB(m.peak_reserved_bytes)):'')+(d?.status?.blocking_reason?' · '+esc(reason(d.status.blocking_reason)):'')+'</li>';
+        }).join('')+'</ul>':'')+
+        (running?row(btn('fusion-control',pauseAction==='pause'?fx('Пауза','Pause'):fx('Продолжить','Resume'),{arg:run.id+'|'+pauseAction})+
+          btn('fusion-control',fx('Остановить','Stop'),{arg:run.id+'|stop'})):'')+
+        (base&&dataset&&['CREATED','READY','VALIDATED','REJECTED','PUBLISHED'].includes(e.status)?row(btn('fusion-start-dialog',
+          e.checkpoint?fx('Обучать с checkpoint','Train from checkpoint'):fx('Запустить обучение','Start training'),{arg:e.id,primary:true})):'')+
+        (['CREATED','READY','VALIDATED','PUBLISHED','REJECTED'].includes(e.status)?row(btn('fusion-archive',fx('Архивировать','Archive'),{arg:e.id})):''));
+      }).join('');
+      return controls+panel(fx('Реестр экспертов','Expert registry'),expertRows||plain(fx('Пока нет экспертов','No experts yet')))+detected+
+        (base?panel(fx('Новый эксперт','New expert'),placement()+'<div class="kc-experience-grid">'+
+        field('fxName',fx('Название','Name'),'')+field('fxKey',fx('Ключ латиницей','Expert key'),'')+
+        field('fxDomain',fx('Специализация','Domain'),'')+choose('fxKind',fx('Тип эксперта','Expert type'),[['ffa-lora','FFA‑LoRA'],['lora','LoRA'],['ffn','FFN']])+
+        choose('fxDataset',fx('Датасет','Dataset'),[['',fx('Выберите датасет','Choose a dataset')],...datasets.map(d=>[d.id,d.id])])+
+        field('fxRank','Rank',8,{type:'number'})+field('fxExpertWidth',fx('Ширина FFN','FFN width'),Math.min(512,base.intermediate),{type:'number'})+
+        choose('fxTrainingMode',fx('Обучение FFN','FFN training'),[['full',fx('Все матрицы','All matrices')],['down',fx('Выходная матрица','Down projection')]])+'</div>'+
+        (!datasets.length?notice(fx('Импортируйте датасет для этой модели. Нужна проверка разделения выборок.','Import a dataset for this model with audited splits.')):'')+
+        row(btn('fusion-create',fx('Создать эксперта','Create expert'),{primary:true,disabled:!datasets.length}))):'');
+    }
+    if(fusionTab==='devices')return controls+panel(fx('Этот воркер','This worker'),plain(S.policy?.fusion_training?
+      fx('Участвует в заданиях Fusion при соблюдении ограничений Compute.','Eligible for Fusion jobs within the Compute resource policy.'):
+      fx('Участие в заданиях Fusion выключено.','Fusion job participation is off.'))+
+      row(btn('fusion-worker-toggle',S.policy?.fusion_training?fx('Остановить участие','Stop participation'):fx('Разрешить задания Fusion','Allow Fusion jobs'))))+labDevices();
+    if(fusionTab==='models'){
+      const available=experts.filter(e=>e.checkpoint?.assessment?.passed&&['VALIDATED','PUBLISHED'].includes(e.status));
+      const draft=available.length?panel(fx('Новая композиция','New composition'),'<fieldset class="kc-field kc-fusion-choices"><legend>'+esc(fx('Проверенные эксперты','Validated experts'))+'</legend>'+
+        available.map(e=>'<label class="kc-check"><input id="fxExpert_'+esc(e.id)+'" type="checkbox" data-fusion-expert="'+esc(e.id)+'"><span>'+esc(e.name)+'</span></label>').join('')+'</fieldset>'+
+        '<div class="kc-experience-grid">'+field('fxComposeStart',fx('Начало Loop','Loop start'),0,{type:'number'})+field('fxComposeEnd',fx('Конец Loop','Loop end'),Math.min(base?.layers??1,4),{type:'number'})+
+        choose('fxComposePasses',fx('Проходы','Passes'),[[1,1],[2,2],[3,3],[4,4]])+
+        choose('fxRouterMode',fx('Маршрутизация','Routing'),[['uniform',fx('Равномерная','Uniform')],['token',fx('Обучаемая','Learned')]])+
+        choose('fxRouterTopK',fx('Экспертов на токен','Experts per token'),[[1,1],[2,2],[4,4]])+
+        field('fxCompositionSteps',fx('Шагов на стадию','Steps per stage'),8,{type:'number'})+'</div>'+
+        '<label class="kc-check"><input id="fxAdaptLoop" type="checkbox"> '+esc(fx('Обучить коэффициенты Loop','Train Loop gates'))+'</label>'+
+        plain(fx('Обучение идёт на Train. Публикация доступна после доверенной Validation.','Training uses Train. Publishing requires trusted Validation.'),'kc-caption')+
+        row(btn('fusion-compose',fx('Собрать и проверить','Compose and evaluate'),{primary:true}))):'';
+      const compositionJobs=(fusionState.builder?.composition_runs??[]).map(job=>{
+        const labels={router:fx('Обучение маршрутизатора','Router training'),loop:fx('Адаптация Loop','Loop adaptation'),validation:fx('Проверка композиции','Composition validation')};
+        const progress=job.stages.map(s=>[labels[s.stage],esc(s.failure?reason(s.failure):runLabel(s.state))+
+          (s.result?.steps?' · '+esc(`${s.result.steps} · ${fmtN(s.result.supervised_tokens)} tok`):'')]);
+        const controllable=['QUEUED','RUNNING','PAUSED'].includes(job.state),action=job.state==='PAUSED'?'resume':'pause';
+        return card(short(job.id),kv(progress)+(controllable?row(btn('fusion-composition-control',action==='resume'?fx('Продолжить','Resume'):fx('Пауза','Pause'),
+          {arg:job.id+'|'+action})+btn('fusion-composition-control',fx('Остановить','Stop'),{arg:job.id+'|stop'})):''));
+      }).join('');
+      return controls+draft+(compositionJobs?panel(fx('Стадии интеграции','Integration stages'),compositionJobs):'')+panel(fx('Композиции','Compositions'),models.map(m=>card(short(m.hash),kv([
+      [fx('Статус','Status'),esc(m.status)], [fx('Эксперты','Experts'),m.envelope.manifest.experts.length],
+      [fx('Маршрутизатор','Router'),esc(m.envelope.manifest.router.mode)],[fx('Проходы','Passes'),m.envelope.manifest.loop.passes],
+      ['Validation NLL',m.assessment?.candidate_nll??'—']])+row(m.hash===active?pill(fx('Активна','Active'),'good'):
+        m.status==='CANDIDATE'?btn('fusion-recheck',fx('Проверить','Evaluate'),{arg:m.hash}):m.status==='VALIDATED'?btn('fusion-publish',fx('Опубликовать','Publish'),{arg:m.hash}):
+        m.status==='PUBLISHED'?btn('fusion-rollback',fx('Вернуться к версии','Roll back to version'),{arg:m.hash}):''))).join('')||
+      plain(fx('Композиции создаются после проверки экспертных checkpoint','Create compositions after validating expert checkpoints')))+
+        (active?panel(fx('Локальный инференс','Local inference'),'<label class="kc-field"><span>'+esc(fx('Запрос к опубликованной версии','Prompt for the published version'))+
+        '</span><textarea id="fxPrompt" maxlength="4096" rows="3"></textarea></label>'+row(btn('fusion-infer',fx('Запустить','Generate'),{primary:true}))+
+          (fusionOutput?plain(fusionOutput.text||fx('Модель завершила ответ','The model ended its response'),'kc-fusion-output'):'')):'');
+    }
+    return controls+panel(fx('Диагностика','Diagnostics'),kv([[fx('Ключ подписания','Signing public key'),esc(fusionState.public_key)],
+      [fx('Связь с координатором Compute','Compute coordinator'),esc(S.lab?.info?.endpoint??ct('none'))]]));
   }
   function labModels(){
     const l=S.lab,variants=l?.variants||[];
@@ -609,6 +757,53 @@
     goto:el=>{tab=el.dataset.arg==='devices'?'devices':'data';setMode('laboratory');},
     'switch-lab':()=>{tab='overview';setMode('laboratory');},
     'lab-nav':el=>{tab=el.dataset.arg;lastResult={};scroll().scrollTop=0;render(true);void refresh(true);},
+    'fusion-enable':()=>run(()=>call('fusion-feature',{enabled:true}),'fusion'),
+    'fusion-disable':()=>run(async()=>{await call('fusion-feature',{enabled:false});fusionState=null;},'fusion'),
+    'fusion-nav':el=>{fusionTab=el.dataset.arg;render(true);},
+    'fusion-layer':el=>{const i=Number(el.dataset.arg);if(fusionLayers.has(i))fusionLayers.delete(i);else fusionLayers.add(i);fusionEstimate=null;render(true);},
+    'fusion-worker-toggle':()=>run(()=>call('policy',{policy:{fusion_training:!S.policy.fusion_training},revision:S.policy.revision}),'fusion'),
+    'fusion-control':el=>{const [id,action]=el.dataset.arg.split('|');run(()=>fusionCall('control',{id,action}),'fusion');},
+    'fusion-start-dialog':el=>{
+      const devices=(S.lab?.devices??[]).filter(d=>d.state==='active');
+      openDialog('fusion-start',fx('Запуск обучения эксперта','Start expert training'),
+        '<label class="kc-field">'+esc(fx('Устройство','Device'))+'<select id="fxDevice"><option value="">'+esc(fx('Автоматическое назначение','Automatic assignment'))+'</option>'+
+          devices.map(d=>'<option value="'+esc(d.id)+'">'+esc(d.alias??d.id)+'</option>').join('')+'</select></label>'+
+        field('fxQuorum',fx('Устройств на раунд','Devices per round'),1,{type:'number'})+
+        field('fxRounds',fx('Максимум раундов','Maximum rounds'),1,{type:'number'})+
+        field('fxEpochs',fx('Максимум эпох','Maximum epochs'),1,{type:'number'})+
+        field('fxSupervision',fx('Бюджет целевых токенов','Supervised token budget'),1000000,{type:'number'})+
+        plain(fx('Train обходится последовательно с сохранённой позиции. Неполный последний шаг эпохи пропускается.','Train is read sequentially from the saved position. An incomplete final step in an epoch is skipped.'),'kc-caption')+
+        '<label class="kc-check"><input id="fxShareTrain" type="checkbox"> '+esc(fx('Разрешаю передать строки Train одобренным устройствам','Allow sending Train rows to approved devices'))+'</label>',
+        btn('fusion-start',fx('Запустить','Start'),{arg:el.dataset.arg,primary:true})+btn('close-dialog',ct('cancel')));
+    },
+    'fusion-start':el=>run(async()=>{
+      const e=fusionState.experts.find(x=>x.id===el.dataset.arg),builder=fusionState.builder;
+      const dataset=builder.datasets.find(d=>d.manifest_hash===e.dataset_sha256),device=val('fxDevice');
+      await fusionCall('start',{expert_id:e.id,dataset_id:dataset.id,model_sha256:builder.model.id,devices:device?[device]:[],
+        quorum:device?1:numv('fxQuorum'),rounds:numv('fxRounds'),epochs:numv('fxEpochs'),supervised_token_budget:numv('fxSupervision'),sampling:'sequential',
+        share_train:dialog().querySelector('#fxShareTrain')?.checked===true});
+      clearDialog();
+    },'fusion'),
+    'fusion-create':()=>run(()=>fusionCall('expert/create',{model_id:val('fxModel'),dataset_id:val('fxDataset'),key:val('fxKey'),name:val('fxName'),
+      domain:val('fxDomain'),kind:val('fxKind'),layers:[...fusionLayers],rank:numv('fxRank'),intermediate:numv('fxExpertWidth'),training_mode:val('fxTrainingMode')}),'fusion'),
+    'fusion-archive':el=>{const e=fusionState?.experts.find(x=>x.id===el.dataset.arg);if(e)run(()=>fusionCall('expert/archive',{id:e.id,from:e.status}),'fusion');},
+    'fusion-publish':el=>run(()=>fusionCall('models/publish',{hash:el.dataset.arg}),'fusion'),
+    'fusion-composition-control':el=>{const [id,action]=el.dataset.arg.split('|');run(()=>fusionCall('composition-control',{id,action}),'fusion');},
+    'fusion-compose':()=>run(()=>fusionCall('compose',{
+      experts:[...body().querySelectorAll('[data-fusion-expert]:checked')].map(el=>{
+        const e=fusionState.experts.find(x=>x.id===el.dataset.fusionExpert);return {id:e.id,version:e.version};
+      }),loop:{start:numv('fxComposeStart'),end:numv('fxComposeEnd'),passes:numv('fxComposePasses')},
+      router_mode:val('fxRouterMode'),top_k:numv('fxRouterTopK'),steps:numv('fxCompositionSteps'),fit_loop:body().querySelector('#fxAdaptLoop')?.checked===true
+    }),'fusion'),
+    'fusion-recheck':el=>run(()=>fusionCall('compose',{hash:el.dataset.arg}),'fusion'),
+    'fusion-infer':()=>run(async()=>{fusionOutput=await fusionCall('generate',{prompt:val('fxPrompt')});},'fusion'),
+    'fusion-rollback':el=>run(()=>fusionCall('models/rollback',{hash:el.dataset.arg}),'fusion'),
+    'fusion-estimate':()=>run(async()=>{
+      const n=numv('fxExperts');
+      if(!Number.isInteger(n)||n<0||n>4096)throw Error(fx('Допустимо от 0 до 4096 экспертов','Choose between 0 and 4096 experts'));
+      fusionEstimate=await fusionCall('estimate',{model_id:val('fxModel'),count:n,layers:[...fusionLayers],intermediate:numv('fxInner'),context:numv('fxContext'),
+        top_k:numv('fxTopK'),loop:{start:numv('fxLoopStart'),end:numv('fxLoopEnd'),passes:numv('fxPasses')}});
+    },'fusion'),
     'join-wizard':()=>run(async()=>{await rememberFeature();inviteDialog();},'join'),
     'close-dialog':clearDialog,
     'submit-invitation':()=>run(async()=>{
@@ -741,6 +936,7 @@
         form[t.id]=t.type==='checkbox'?t.checked:t.value;if(t.closest('.kc-form')){plan=null;const start=dialog().querySelector('[data-act=create]');if(start)start.disabled=true;}
       }
       if(t.dataset.actChange&&acts[t.dataset.actChange])return acts[t.dataset.actChange](t);
+      if(['fxLoopStart','fxLoopEnd','fxPasses'].includes(t.id)){fusionEstimate=null;render(true);}
       if(t.dataset.pol!==undefined){const p=collectPolicy();run(async()=>{lastResult.policy=null;await call('policy',{policy:p,revision:S.policy.revision});},'policy');}
     };
     root().addEventListener('change',change);dialog().addEventListener('change',change);

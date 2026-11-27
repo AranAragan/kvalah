@@ -5,6 +5,34 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.10.0-fusion.1.dev.3] - 2026-11-27
+
+- Use the central serving-prefix encoder for Expert Fusion inference. MistralCommon now receives the local model identifier required for user-ended generation requests.
+
+## [0.10.0-fusion.1.dev.2] - 2026-11-27
+
+Test build for Expert Fusion reacceptance. Physical Fusion‑01 remains open.
+
+- Added durable expert rounds, explicit sequential sampling, epoch and supervised-token budgets, and continuation from the latest aggregate.
+- Enforced scheduler admission for both manual and automatic assignments with model and expert memory accounting.
+- Separated staged and committed receipts and allowed bounded late delivery of unsuperseded results from the durable worker outbox.
+- Added separately scheduled learned Router and Loop stages, signed checkpoint export/import, trusted Validation and cached inference with saved parameters.
+- Added candidate expansion after expert Validation and exposed training and integration controls in the desktop laboratory.
+
+## [0.10.0-fusion.1.dev.1] - 2026-11-27
+
+Draft branch builds for Expert Fusion acceptance. Three-device Fusion-01 and cross-host CUDA/MLX pipeline remain open.
+
+- Integrated single-expert Fusion jobs with the standard Compute Worker and sidecar, signed leases, file-backed resumable uploads, per-expert FedAvg and trusted Validation.
+- Added CUDA NF4 and native MLX training runtimes for independent Fusion experts. The local RTX 5070 smoke exercised real Ministral 3B for FFA-LoRA, LoRA and FFN.
+- Added architecture detection from local model headers, visual layer placement and an expert training form in the Compute laboratory.
+- Added local composed-model evaluation and generation for uniform-routing Torch experts with optional uncached Loop. The RTX 5070 smoke verified Router and Loop backward on a real NF4 composition.
+- Added quota-bound file-backed Fusion checkpoints, chunk-indexed distribution and a streaming FedAvg reducer that preserves frozen tensors.
+
+- Added an opt-in Expert Fusion research laboratory with immutable expert and composition versions, signed artifact grants and a local architecture calculator.
+- Added deterministic PyTorch reference experiments for independent LoRA and FFN training, sparse routing, looped depth, logical KV caching and staged backward across local worker processes.
+- Added an offline expert aggregation path for FedAvg, FedProx, FedAvgM, FedAdam, FedYogi and a DiLoCo-inspired outer update.
+
 ## [0.10.0-compute.4.dev.1] - 2026-11-27
 
 Compute v0.3 development preview focused on performance and recovery.
