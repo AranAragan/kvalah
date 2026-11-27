@@ -24,6 +24,7 @@ import {verifyReport} from './report.mjs';
 import {createSetup,describeHardware,localCandidates,participationProfiles} from './onboarding.mjs';
 import {createManagedRuntime,downloadAssets,modelAssets,runtimeAssets} from './setup-assets.mjs';
 import {parsePairing} from './worker/client.mjs';
+import {detectBase} from './fusion/builder.mjs';
 export const CONSENT_REVISION='kc2-consent-2026-11-1';
 export const VERSION='0.3.0';
 const PROD_PROFILE='ministral3b-ffa-r8-v1';
@@ -381,6 +382,18 @@ export function createController({dir,secretBox=fileSecretBox,startSidecar=rawSi
     }),
       self_device:identity?.device_id||null,smoke:smokeReadiness()};
   }
+  let fusionBuilderCache;
+  function fusionInputs(){
+    const model=st.model?.architecture_ok?st.model:null;
+    const key=model?[model.model_dir,model.files_digest,model.provenance,model.verified_at].join('|'):null;
+    if(!fusionBuilderCache||fusionBuilderCache.key!==key){
+      try{fusionBuilderCache={key,model:detectBase(model),reason:null};}
+      catch(error){fusionBuilderCache={key,model:null,reason:error.code||'MODEL_UNVERIFIED'};}
+    }
+    const selected=fusionBuilderCache.model;
+    const datasets=hasLab()?svc().coord.listDatasets().filter(d=>d.group_audited&&d.tokenizer_hash===selected?.tokenizer_sha256):[];
+    return {model:selected,datasets,runs:service?.fusionRuns()??[],reason:fusionBuilderCache.reason};
+  }
   const smokeRequests=new Map();
   function smokeReadiness(ids){
     const c=service?.coord,p=profile();
@@ -572,6 +585,7 @@ export function createController({dir,secretBox=fileSecretBox,startSidecar=rawSi
     if(method==='GET'&&r==='events')return events.filter(e=>e.seq>(Number(b.after)||0));
     if(method==='GET'&&r==='diagnostics')return diagnostics();
     if(method==='GET'&&r==='onboarding/detect')return describeHardware({platform,dir,candidates:discover()});
+    if(method==='GET'&&r==='fusion/inputs')return fusionInputs();
     if(method!=='POST')fail('NOT_FOUND','not found');
     switch(r){
       case 'consent/accept':return acceptConsent(b);
@@ -580,6 +594,11 @@ export function createController({dir,secretBox=fileSecretBox,startSidecar=rawSi
       case 'pause':return setPause(true);
       case 'resume':return setPause(false);
       case 'policy':return setPolicy(b.policy,b.revision);
+      case 'fusion/start':{
+        if(!st.model?.architecture_ok||(!testMode()&&st.model.provenance!=='verified'))fail('MODEL_UNVERIFIED','Fusion training requires an officially verified BF16 model');
+        return svc().startFusion(b);
+      }
+      case 'fusion/control':return svc().controlFusion(b.id,b.action);
       case 'policy/preset':{
         if(!Object.hasOwn(participationProfiles,b.id))fail('INVALID_SCHEMA','unknown participation profile');
         return setPolicy({...participationProfiles[b.id],profile:b.id==='gentle'?'gentle':'custom'},b.revision);

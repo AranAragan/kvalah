@@ -15,7 +15,7 @@ const TENSOR=/^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*$/;
 const unsafeKeys=new Set(['constructor','prototype','__proto__']);
 const migrations={
   CREATED:['PROVISIONING','ARCHIVED'], PROVISIONING:['READY','PAUSED','REJECTED'], READY:['TRAINING','EVALUATING','ARCHIVED'],
-  TRAINING:['PAUSED','AGGREGATING','EVALUATING','REJECTED'], PAUSED:['PROVISIONING','TRAINING','ARCHIVED'],
+  TRAINING:['PAUSED','AGGREGATING','EVALUATING','REJECTED'], PAUSED:['PROVISIONING','TRAINING','REJECTED','ARCHIVED'],
   AGGREGATING:['READY','EVALUATING','REJECTED'], EVALUATING:['VALIDATED','REJECTED'], VALIDATED:['INTEGRATING','EVALUATING','ARCHIVED'],
   INTEGRATING:['PUBLISHED','REJECTED','VALIDATED'], PUBLISHED:['ARCHIVED'], REJECTED:['ARCHIVED'], ARCHIVED:[]
 };
@@ -123,7 +123,15 @@ export function openFusion(root){
     CREATE TABLE IF NOT EXISTS expert_events(id INTEGER PRIMARY KEY,expert TEXT NOT NULL, status TEXT NOT NULL,created INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS compositions(hash TEXT PRIMARY KEY,envelope TEXT NOT NULL,status TEXT NOT NULL,parent TEXT,created INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS assessments(hash TEXT PRIMARY KEY REFERENCES compositions(hash),metrics TEXT NOT NULL,passed INTEGER NOT NULL);`);
-  const txn=fn=>{db.exec('BEGIN IMMEDIATE');try{const v=fn();db.exec('COMMIT');return v;}catch(e){db.exec('ROLLBACK');throw e;}};
+  let transactionDepth=0;
+  function txn(fn){
+    const savepoint=transactionDepth?`fusion_nested_${transactionDepth}`:null;
+    db.exec(savepoint?`SAVEPOINT ${savepoint}`:'BEGIN IMMEDIATE');
+    transactionDepth++;
+    try{const value=fn();db.exec(savepoint?`RELEASE ${savepoint}`:'COMMIT');return value;}
+    catch(e){db.exec(savepoint?`ROLLBACK TO ${savepoint}; RELEASE ${savepoint}`:'ROLLBACK');throw e;}
+    finally{transactionDepth--;}
+  }
   const getSetting=k=>db.prepare('SELECT value FROM settings WHERE key=?').get(k)?.value;
   const setting=(k,v)=>db.prepare('INSERT INTO settings VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(k,v);
   const keys=txn(()=>{
@@ -168,7 +176,7 @@ export function openFusion(root){
     return {hash,status:row.status,parent:row.parent,envelope:JSON.parse(row.envelope),assessment:assessment&&{...JSON.parse(assessment.metrics),passed:!!assessment.passed}};
   }
   return {
-    close:()=>db.close(), publicKey:keys.publicKey, cas, get, change:(id,from,to)=>txn(()=>{
+    close:()=>db.close(), db,transaction:txn, publicKey:keys.publicKey, cas, get, change:(id,from,to)=>txn(()=>{
       if(['VALIDATED','INTEGRATING','PUBLISHED'].includes(to))fail('CONFLICT','expert acceptance requires a pinned Validation result');
       change(id,from,to);return get(id);
     }),

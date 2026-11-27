@@ -6,6 +6,7 @@ import {canonicalJSON,isHex64,sha256} from '../protocol/hash.mjs';
 import {chunkSizes,defaultChunkSize} from '../protocol/transfer.mjs';
 import {fail} from '../protocol/errors.mjs';
 import {validateTensors,verifyEnvelope} from './registry.mjs';
+import {createStreamStore,checkStreamLayout,indexArtifact,MAX_STREAM_BYTES} from './stream.mjs';
 
 const MAX_ARTIFACT=64*1024*1024;
 const kinds=new Set(['backbone','tokenizer','expert','expert-config','train','architecture','runtime-lock']);
@@ -22,14 +23,40 @@ export function putArtifact(cas,kind,bytes,source,chunkBytes=defaultChunkSize){
   return {kind,sha256:cas.put(bytes),bytes:bytes.length,source,chunk_bytes:chunkBytes,parts};
 }
 
+export async function putArtifactFile(cas,kind,file,source,{quotaBytes,maxBytes=MAX_STREAM_BYTES,expectedHash}={}){
+  if(!kinds.has(kind)||typeof source!=='string'||!source.trim()||source.length>256||
+    !Number.isSafeInteger(quotaBytes)||quotaBytes<1)fail('INVALID_SCHEMA','stream source and explicit quota are required');
+  let used=0;
+  for(const dir of fs.readdirSync(cas.root,{withFileTypes:true}).filter(d=>d.isDirectory()&&/^[a-f0-9]{2}$/.test(d.name))){
+    for(const entry of fs.readdirSync(path.join(cas.root,dir.name),{withFileTypes:true})){
+      if(entry.isFile()&&isHex64(entry.name))used+=fs.statSync(cas.file(entry.name)).size;
+    }
+  }
+  const {bavail,bsize}=fs.statfsSync(cas.root);
+  const available=bavail*bsize;
+  let written=0;
+  const descriptor=await indexArtifact(file,{maxBytes,expectedHash,onChunk(part,bytes){
+    if(cas.has(part.sha256)){
+      if(cas.get(part.sha256,{maxBytes:part.bytes}).length!==part.bytes)fail('HASH_MISMATCH','existing part length mismatch');
+      return;
+    }
+    if(used+written+part.bytes>quotaBytes||written+part.bytes>available)fail('DISK_SPACE','Fusion source quota exceeded');
+    if(cas.put(bytes)!==part.sha256)fail('HASH_MISMATCH','could not index stream part');
+    written+=part.bytes;
+  }});
+  return {...descriptor,kind,source,stream:true};
+}
+
 function checkArtifacts(artifacts){
   if(!Array.isArray(artifacts)||artifacts.length<1||artifacts.length>64)fail('INVALID_SCHEMA','invalid provision artifact list');
+  let count=0;
   for(const a of artifacts){
-    if(!a||!kinds.has(a.kind)||!isHex64(a.sha256)||!Number.isSafeInteger(a.bytes)||a.bytes<=0||a.bytes>MAX_ARTIFACT||
-      typeof a.source!=='string'||!a.source||a.source.length>256||!chunkSizes.includes(a.chunk_bytes)||!Array.isArray(a.parts)||
-      a.parts.length!==Math.ceil(a.bytes/a.chunk_bytes)||!a.parts.every((p,i)=>p&&isHex64(p.sha256)&&p.bytes===Math.min(a.bytes-i*a.chunk_bytes,a.chunk_bytes)))
-      fail('INVALID_SCHEMA','invalid provision chunk manifest');
+    if(!a||!kinds.has(a.kind)||typeof a.source!=='string'||!a.source||a.source.length>256||
+      (a.stream!==undefined&&a.stream!==true))fail('INVALID_SCHEMA','invalid provision artifact');
+    checkStreamLayout(a,{maxBytes:a.stream?MAX_STREAM_BYTES:MAX_ARTIFACT});
+    count+=a.parts.length;
   }
+  if(count>32768)fail('TOO_LARGE','assignment declares too many transfer parts');
 }
 
 export function signAssignment(registry,{device,expert,artifacts,ttl=3600000,now=Date.now(),referenceJob=null}){
@@ -45,6 +72,7 @@ export function signAssignment(registry,{device,expert,artifacts,ttl=3600000,now
       artifacts.find(a=>a.kind==='architecture').sha256!==expert.base.architecture_sha256||
       expert.bytes>48*1024||expert.training.local_steps>64||expert.training.grad_accum>8)
       fail('INVALID_SCHEMA','invalid or oversized CPU reference job');
+    if(artifacts.some(a=>a.stream))fail('INVALID_SCHEMA','reference jobs use the original bounded artifact format');
     job={runtime:'torch-cpu',tokens:referenceJob.tokens,spec:{key:expert.key,kind:expert.kind,layers:expert.layers,rank:expert.rank,alpha:expert.alpha},training:expert.training};
   }
   return registry.signed({kind:'assignment',id:randomUUID(),device,expert:expert.id,parent:expert.checkpoint.hash,schema:expert.schema_sha256,
@@ -68,6 +96,7 @@ export function createProvisionStore({root,quotaBytes,onEvent=()=>{}}){
     async provision(envelope,{publicKey,device,consented,fetchCoordinator,peers=[],allowPeerDownload=false,permit=()=>0,charge=()=>{},signal}){
       if(!consented)fail('FORBIDDEN_SCOPE','artifact provisioning requires local consent');
       const manifest=validateAssignment(envelope,{publicKey,device});
+      if(manifest.artifacts.some(a=>a.stream))fail('INVALID_SCHEMA','use streamed provisioning for large artifacts');
       const items=[];
       for(const artifact of manifest.artifacts){
         signal?.throwIfAborted();
@@ -97,6 +126,25 @@ export function createProvisionStore({root,quotaBytes,onEvent=()=>{}}){
         },artifact.bytes);
         if(bytes.length!==artifact.bytes)fail('HASH_MISMATCH','incorrect artifact length');
         items.push({kind:artifact.kind,sha256:artifact.sha256,bytes});
+      }
+      return {assignment:manifest.id,expert:manifest.expert,items};
+    }
+  };
+}
+
+export function createStreamingProvisionStore({root,quotaBytes,artifactLimit,onEvent}){
+  const store=createStreamStore(root,{quotaBytes,artifactLimit,onEvent});
+  return {
+    async provision(envelope,{publicKey,device,consented,fetchCoordinator,permit,signal}){
+      if(!consented)fail('CONSENT_REQUIRED','streamed delivery requires local consent');
+      const manifest=validateAssignment(envelope,{publicKey,device});
+      const items=[];
+      for(const artifact of manifest.artifacts){
+        const result=await store.receive(artifact,(part,_i,opts)=>{
+          if(manifest.expires<=Date.now())fail('FORBIDDEN_SCOPE','assignment expired during download');
+          return fetchCoordinator(manifest,part,opts);
+        },{permit,signal});
+        items.push({kind:artifact.kind,sha256:artifact.sha256,...result});
       }
       return {assignment:manifest.id,expert:manifest.expert,items};
     }
@@ -135,7 +183,7 @@ export function createGrantStore(registry,root){
       const m=active(device,assignment);
       const part=m.artifacts.flatMap(a=>a.parts).find(p=>p.sha256===hash);
       if(!part)fail('FORBIDDEN_SCOPE','chunk is outside the active assignment');
-      const result=registry.cas.get(hash);
+      const result=registry.cas.get(hash,{maxBytes:part.bytes});
       if(result.length!==part.bytes)fail('HASH_MISMATCH','chunk length does not match assignment');
       return result;
     },

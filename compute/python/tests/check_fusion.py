@@ -99,7 +99,7 @@ class FusionTests(unittest.TestCase):
 
     def test_mistral_hook_keeps_base_and_changes_only_selected_request(self):
         from transformers import MistralConfig, MistralForCausalLM
-        from kvalah_compute.fusion_ministral import attach_to_mistral, insert_expert, request
+        from kvalah_compute.fusion_ministral import attach_to_mistral, insert_expert, loop_text_layers, request
 
         config=MistralConfig(vocab_size=64,hidden_size=24,intermediate_size=48,num_hidden_layers=2,
                              num_attention_heads=4,num_key_value_heads=2,max_position_embeddings=64)
@@ -120,6 +120,17 @@ class FusionTests(unittest.TestCase):
             with request(weights={}):
                 self.assertTrue(torch.equal(model(input_ids,use_cache=False).logits,baseline))
             self.assertTrue(torch.equal(model(input_ids,use_cache=False).logits,out))
+        with loop_text_layers(model,start=0,end=2,passes=1):
+            one=model(input_ids,use_cache=False).logits
+        self.assertTrue(torch.equal(one,model(input_ids,use_cache=False).logits))
+        originals=tuple(model.model.layers)
+        with loop_text_layers(model,start=0,end=2,passes=2) as gates:
+            loop=model(input_ids,use_cache=False).logits
+            self.assertFalse(torch.equal(one,loop))
+            loop.square().mean().backward()
+            self.assertTrue(torch.isfinite(gates.grad).all())
+            self.assertGreater(float(gates.grad.norm()),0)
+        self.assertEqual(tuple(model.model.layers),originals)
 
     def test_pipeline_backward_and_restart_from_step_boundary(self):
         layouts=[[(10,False)],[(11,True)],[(12,False)]]

@@ -206,7 +206,7 @@ export function createCoordinator({dir,now=Date.now,evaluate=null,log=()=>{}}){
     return {id};
   }
   const datasetManifest=id=>{const d=db.prepare('select * from datasets where id=?').get(String(id));if(!d)fail('DATASET_REQUIRED','dataset '+String(id).slice(0,80)+' is not registered');return JSON.parse(d.manifest);};
-  const listDatasets=()=>db.prepare('select id,manifest,created_at from datasets order by created_at').all().map(d=>{const m=JSON.parse(d.manifest);return {id:d.id,created_at:d.created_at,license:m.license,source:m.source,split_counts:m.split_counts,tokens_by_split:m.tokens_by_split,synthetic:!!m.synthetic,tokenizer_hash:m.tokenizer_hash,profile_id:m.profile_id,max_length:m.max_length,group_audited:!!m.group_audit};});
+  const listDatasets=()=>db.prepare('select id,manifest,manifest_hash,created_at from datasets order by created_at').all().map(d=>{const m=JSON.parse(d.manifest);return {id:d.id,created_at:d.created_at,license:m.license,source:m.source,split_counts:m.split_counts,tokens_by_split:m.tokens_by_split,synthetic:!!m.synthetic,tokenizer_hash:m.tokenizer_hash,profile_id:m.profile_id,max_length:m.max_length,group_audited:!!m.group_audit,manifest_hash:d.manifest_hash};});
   function trainRows(manifest){
     const rows=[];
     for(const s of manifest.shards.train){const shard=JSON.parse(cas.get(s.sha256).toString('utf8'));for(const r of shard.rows)rows.push(r);}

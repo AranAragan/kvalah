@@ -1,6 +1,7 @@
 import path from 'node:path';
 import {openFusion,validateBase,normalizeExpert,compositionStats} from './registry.mjs';
 import {fail} from '../protocol/errors.mjs';
+import {buildExpert} from './builder.mjs';
 
 export function estimateComposition({base,experts=[],loop={},top_k=1,context=256,kv_width=null}){
   base=validateBase(base);
@@ -28,7 +29,7 @@ export function estimateComposition({base,experts=[],loop={},top_k=1,context=256
     fp16_kv_bytes:kv_width===null?null:4*kv_width*context*counts.logical_layers};
 }
 
-export function createFusionLab(root){
+export function createFusionLab(root,{inputs=()=>({model:null,datasets:[]})}={}){
   let registry;
   const open=()=>registry??=openFusion(path.resolve(root));
   function state(){
@@ -36,11 +37,21 @@ export function createFusionLab(root){
   }
   return {
     close:()=>registry?.close(),
-    handle(method,route,input){
-      if(method==='GET'&&route==='state')return state();
+    async handle(method,route,input){
+      if(method==='GET'&&route==='state')return {...state(),builder:await inputs()};
       if(method!=='POST')fail('NOT_FOUND','unknown Fusion operation');
-      if(route==='estimate')return estimateComposition(input);
-      if(route==='expert/create')return open().create(input);
+      if(route==='estimate'||route==='expert/create'){
+        const {model,datasets}=await inputs();
+        if(!model||model.id!==input.model_id)fail('MODEL_REQUIRED','select the detected model');
+        if(route==='expert/create')return open().create(buildExpert(input,model,datasets.find(d=>d.id===input.dataset_id)));
+        const context=input.context??Math.min(model.context,256),count=input.count??0;
+        if(!Number.isInteger(count)||count<0||count>4096)fail('INVALID_SCHEMA','invalid number of FFN modules');
+        if(context>model.context)fail('INVALID_SCHEMA','context exceeds the detected model limit');
+        const base={revision:model.source_revision??('local-'+model.id.slice(0,12)),backbone_sha256:model.id,tokenizer_sha256:model.tokenizer_sha256,
+          architecture_sha256:model.architecture_sha256,layers:model.layers,width:model.width,parameters:model.parameters};
+        return estimateComposition({base,experts:Array.from({length:count},()=>({kind:'ffn',intermediate:input.intermediate,layers:input.layers})),
+          top_k:input.top_k,loop:input.loop,context,kv_width:model.kv_width});
+      }
       if(route==='expert/clone')return open().clone(input.id,input.version,input);
       if(route==='expert/archive')return open().change(input.id,input.from,'ARCHIVED');
       if(route==='models/assemble')return open().assemble(input);

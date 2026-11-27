@@ -3,7 +3,7 @@
 import {tx} from './db.mjs';
 import {fail} from '../protocol/errors.mjs';
 import {sha256} from '../protocol/hash.mjs';
-import {chunkSizes} from '../protocol/transfer.mjs';
+import {chunkSizes,partLength} from '../protocol/transfer.mjs';
 
 export function createTransferStore(db,{now,authorize,store,status}){
   const get=id=>db.prepare('SELECT * FROM upload_sessions WHERE update_id=?').get(id);
@@ -45,7 +45,7 @@ export function createTransferStore(db,{now,authorize,store,status}){
       const session=get(id);
       if(!session)fail('INVALID_TRANSITION','begin upload first');
       const size=session.chunk_bytes;
-      if(!Number.isSafeInteger(idx)||idx<0||idx>=Math.ceil(u.bytes/size)||bytes.length!==Math.min(size,u.bytes-idx*size))
+      if(bytes.length!==partLength(u.bytes,size,idx))
         fail('INVALID_SCHEMA','invalid update chunk index or length');
       if(sha256(bytes)!==hash)fail('CHUNK_RETRY','chunk digest mismatch');
       const previous=db.prepare('SELECT digest FROM upload_chunks WHERE update_id=? AND idx=?').get(id,idx);

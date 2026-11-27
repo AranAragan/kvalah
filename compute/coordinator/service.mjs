@@ -15,9 +15,11 @@ import {getProfile} from '../protocol/schema.mjs';
 import {fail,ComputeError} from '../protocol/errors.mjs';
 import {exportReport} from '../report.mjs';
 import {PINNED,verifyAgainstHub} from '../registry.mjs';
-import {verifyLocalConversion} from '../mlx-conversion.mjs';
+import {researchProvenance,verifyLocalConversion} from '../mlx-conversion.mjs';
 import {openFusion} from '../fusion/registry.mjs';
 import {createGrantStore} from '../fusion/provision.mjs';
+import {createFusionQueue} from '../fusion/queue.mjs';
+import {createDiskUploads} from '../fusion/upload.mjs';
 export const DEFAULT_PORT=8765;
 export const FIXTURE=fileURLToPath(new URL('../fixtures/smoke-sft-v1.jsonl',import.meta.url));
 const isPrivateV4=ip=>/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|127\.|169\.254\.)/.test(ip);
@@ -26,9 +28,21 @@ export function lanAddresses(){
   for(const [name,list] of Object.entries(os.networkInterfaces()))for(const a of list||[])if(a.family==='IPv4'&&!a.internal)out.push({interface:name,address:a.address,private:isPrivateV4(a.address)});
   return out;
 }
-export function createCoordinatorService({dir,startSidecar=defaultSidecar,evaluator=()=>null,canRunHeavy=()=>({run:true}),log=()=>{},now=Date.now,tickMs=1000}){
+export function createCoordinatorService({dir,startSidecar=defaultSidecar,evaluator=()=>null,canRunHeavy=()=>({run:true}),log=()=>{},now=Date.now,tickMs=1000,
+  fusionQuotaBytes=2*1024**3}){
   fs.mkdirSync(dir,{recursive:true});
-  let server=null,timer=null,bind=null,cert=null,evalBusy=false,closed=false,fusionRegistry=null;
+  let server=null,timer=null,bind=null,cert=null,evalBusy=false,closed=false,fusionRegistry=null,fusionQueue=null,fusionUploads=null,fusionEvalBusy=false,fusionRetryAt=0;
+  const fusionDir=path.join(dir,'..','fusion');
+  function managed(){
+    if(fusionQueue)return fusionQueue;
+    fusionRegistry??=openFusion(fusionDir);
+    fusionQueue=createFusionQueue(fusionRegistry,{now,devices:()=>coord.listDevices()});
+    return fusionQueue;
+  }
+  function workUploads(){
+    return fusionUploads??=createDiskUploads(path.join(fusionDir,'uploads'),{quotaBytes:fusionQuotaBytes,maxArtifact:65*1024**2,
+      authorize:(...args)=>managed().limits(...args),seal:(...args)=>managed().result(...args)});
+  }
   const work=path.join(dir,'work');fs.mkdirSync(work,{recursive:true});
   async function withSidecar(rt,fn,{heavy=false}={}){
     if(!rt?.python)fail('RUNTIME_REQUIRED','configure a Python compute runtime on this coordinator first');
@@ -69,13 +83,31 @@ export function createCoordinatorService({dir,startSidecar=defaultSidecar,evalua
     }finally{evalBusy=false;}
   }
   const coord=createCoordinator({dir,now,evaluate,log});
+  async function runFusionEvaluation(){
+    if(!fusionQueue||fusionEvalBusy||closed||now()<fusionRetryAt||!canRunHeavy().run)return;
+    const item=fusionQueue.nextEvaluation(),rt=evaluator();
+    if(!item||!rt?.python||rt.files_digest!==item.config.modelDigest)return;
+    fusionEvalBusy=true;
+    const d=fs.mkdtempSync(path.join(work,'fusion-eval-'));
+    try{
+      const ck=path.join(d,'candidate.safetensors'),rows=path.join(d,'validation.json'),e=item.expert;
+      fs.writeFileSync(ck,fusionRegistry.cas.get(item.checkpoint));fs.writeFileSync(rows,fusionRegistry.cas.get(item.config.validation));
+      const spec={key:e.key,kind:e.kind,layers:e.layers,rank:e.rank,alpha:e.alpha,
+        intermediate:e.tensors.find(t=>t.name.endsWith('.gate.weight'))?.shape[0]??null,
+        training_mode:e.tensors.find(t=>t.name.endsWith('.gate.weight'))?.trainable===false?'down':'full'};
+      const result=await withSidecar(rt,sc=>sc.call('fusion_evaluate',{backend:rt.backend,model_files_digest:rt.files_digest,expert:spec,
+        checkpoint_sha256:item.checkpoint,rows_sha256:item.config.validation,max_length:item.config.maxLength,
+        paths:{model_dir:rt.model_dir,rows,checkpoint:ck}}).promise,{heavy:true});
+      if(!closed)fusionQueue.finishEvaluation(item.id,result);
+    }catch(e){fusionRetryAt=now()+15000;log('Fusion evaluation: '+e.message);}
+    finally{fs.rmSync(d,{recursive:true,force:true});fusionEvalBusy=false;}
+  }
   async function start({bindIp,port=DEFAULT_PORT,allowPublic=false}){
     if(server)return info();
     const addrs=lanAddresses().map(a=>a.address).concat(['127.0.0.1']);
     if(!addrs.includes(bindIp))fail('INVALID_SCHEMA','choose one of this computer\'s addresses: '+addrs.join(', '));
     if(!isPrivateV4(bindIp)&&!allowPublic)fail('FORBIDDEN_SCOPE','the coordinator binds to private LAN addresses only');
     cert=coordinatorCertificate(path.join(dir,'tls'),[...new Set([bindIp,'127.0.0.1'])]);
-    const fusionDir=path.join(dir,'..','fusion');
     const grantMarker=path.join(fusionDir,'serve-grants');
     let fusion=null;
     // Artifact serving is separately enabled by the local administrator and private-LAN only.
@@ -86,11 +118,17 @@ export function createCoordinatorService({dir,startSidecar=defaultSidecar,evalua
       fusion={manifest(dev){check();return grants.manifest(dev);},chunk(dev,id,hash){check();return grants.chunk(dev,id,hash);},
         result(dev,id,hash,tokens,bytes){check();return grants.result(dev,id,hash,tokens,bytes);}};
     }
-    const srv=createApi(coord,{cert:cert.cert,key:cert.key,now,log,fusion});
+    const fusionWork=isPrivateV4(bindIp)?{
+      claim:(dev,b)=>fs.existsSync(path.join(fusionDir,'production-work'))?managed().claim(dev,b):{task:null},
+      renew:(...args)=>managed().renew(...args),chunk:(...args)=>managed().chunk(...args),
+      begin:(...args)=>workUploads().begin(...args),put:(...args)=>workUploads().put(...args),complete:(...args)=>workUploads().complete(...args)
+    }:null;
+    if(fusionWork&&fs.existsSync(path.join(fusionDir,'production-work')))managed();
+    const srv=createApi(coord,{cert:cert.cert,key:cert.key,now,log,fusion,fusionWork});
     await new Promise((resolve,reject)=>{srv.once('error',reject);srv.listen(port,bindIp,()=>{srv.off('error',reject);resolve();});}).catch(e=>{
       fail('UNAVAILABLE',e.code==='EADDRINUSE'?`port ${port} is already in use on ${bindIp}`:'cannot listen: '+e.message);});
     server=srv;bind={ip:bindIp,port:srv.address().port};
-    timer=setInterval(()=>{try{coord.tick();}catch(e){log('tick error '+e.message);}},tickMs);timer.unref?.();
+    timer=setInterval(()=>{try{coord.tick();void runFusionEvaluation().catch(e=>log('Fusion evaluation: '+e.message));}catch(e){log('tick error '+e.message);}},tickMs);timer.unref?.();
     coord.db.prepare('insert into audit_log(ts,actor,action,details) values(?,?,?,?)').run(now(),'admin','coordinator.start',JSON.stringify(bind));
     return info();
   }
@@ -166,6 +204,35 @@ export function createCoordinatorService({dir,startSidecar=defaultSidecar,evalua
       return {id:reg.id,manifest:built.manifest,rejected_lines:rejected,excluded:built.excluded.slice(0,200)};
     }finally{fs.rmSync(d,{recursive:true,force:true});}
   }
+  function startFusion(input){
+    if(!info().running||!isPrivateV4(bind.ip))fail('UNAVAILABLE','start a private Compute coordinator first');
+    if(input.share_train!==true)fail('CONSENT_REQUIRED','confirm that Train rows may be sent to registered devices');
+    const rt=evaluator();
+    if(!rt?.files_digest||rt.files_digest!==input.model_sha256)fail('MODEL_UNVERIFIED','trusted evaluator model differs from Fusion assignment');
+    const datasets=coord.listDatasets(),dataset=datasets.find(d=>d.id===input.dataset_id);
+    if(!dataset?.group_audited||!dataset.license)fail('DATASET_REQUIRED','registered audited Train and Validation are required');
+    const queue=managed(),expert=fusionRegistry.get(input.expert_id);
+    if(dataset.manifest_hash!==expert.dataset_sha256)fail('DATASET_INVALID','dataset was not pinned to this expert');
+    if(!Array.isArray(input.devices)||input.devices.some(id=>!coord.listDevices().some(d=>d.id===id&&d.state==='active')))
+      fail('NOT_FOUND','assigned Fusion device is not approved');
+    const m=coord.datasetManifest(dataset.id);
+    function read(split,max){
+      const rows=[];
+      for(const shard of m.shards[split]??[]){
+        const data=JSON.parse(coord.cas.get(shard.sha256,{maxBytes:16*1024**2}).toString('utf8'));
+        rows.push(...data.rows.slice(0,max-rows.length));
+        if(rows.length>=max)break;
+      }
+      return rows;
+    }
+    const variants=coord.variants().filter(v=>v.variant_id==='mlx-4bit'&&researchProvenance(v)&&v.manifest.local_conversion.source.revision===expert.base.revision)
+      .map(v=>({backend:'mlx',digest:v.files_digest}));
+    const result=queue.start({expertId:expert.id,rows:read('train',input.quorum*expert.training.local_steps*expert.training.grad_accum),
+      validation:read('validation',4096),devices:input.devices,quorum:input.quorum,modelDigest:rt.files_digest,backend:rt.backend,modelVariants:variants,maxLength:m.max_length});
+    fs.writeFileSync(path.join(fusionDir,'production-work'),'1\n',{mode:0o600});
+    return result;
+  }
   return {coord,start,stop,info,createPairing,verifyModel,registerModel,checkProvenance,importMlxConversion,importDataset,evaluate,
+    startFusion,fusionRuns:()=>fusionQueue?.list()??[],controlFusion:(id,action)=>managed().control(id,action),
     exportReport:o=>exportReport(coord,o),close:async()=>{closed=true;await stop();fusionRegistry?.close();coord.close();}};
 }

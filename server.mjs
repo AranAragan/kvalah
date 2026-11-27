@@ -66,7 +66,7 @@ const desktopSecrets=new Map();let desktopSecretSeq=0;
 const computeV2=createComputeHost({dir:path.join(DATA,'compute-v2'),log:m=>console.error('[compute-v2] '+m),
   onSecret:process.send?(op,data)=>new Promise((resolve,reject)=>{const id=++desktopSecretSeq;const t=setTimeout(()=>{desktopSecrets.delete(id);reject(Error('no answer from the desktop secret store'));},10000);
     desktopSecrets.set(id,{resolve,reject,t});process.send({type:'compute-secret',id,op,data});}):null});
-const fusionLab=createFusionLab(path.join(DATA,'compute-v2','fusion'));
+const fusionLab=createFusionLab(path.join(DATA,'compute-v2','fusion'),{inputs:()=>computeV2.request('GET','fusion/inputs',{})});
 process.on('message',m=>{
   if(m?.type==='compute-sensors')computeV2.sensors(m.sensors||{});
   else if(m?.type==='compute-secret-reply'){const w=desktopSecrets.get(m.id);if(w){desktopSecrets.delete(m.id);clearTimeout(w.t);m.ok?w.resolve(m.data):w.reject(Error(m.error||'secret store error'));}}
@@ -684,7 +684,11 @@ const server=http.createServer(async(req,res)=>{
     if(route==='/api/compute'&&req.method==='GET')return json(res,await compute.snapshot());
     if(route.startsWith('/api/compute/fusion/')){
       if(!settings.computeV2||!settings.expertFusion)return json(res,{code:'DISABLED'},409);
-      try{return json(res,fusionLab.handle(req.method,route.slice('/api/compute/fusion/'.length),req.method==='POST'?await body(req):{}));}
+      try{
+        const sub=route.slice('/api/compute/fusion/'.length),input=req.method==='POST'?await body(req):{};
+        if(req.method==='POST'&&['start','control'].includes(sub))return json(res,await computeV2.request('POST','fusion/'+sub,input));
+        return json(res,await fusionLab.handle(req.method,sub,input));
+      }
       catch(e){return json(res,{code:e.code||'ERROR',error:e.message},e.status>=400&&e.status<600?e.status:400);}
     }
     if(route==='/api/compute/v2/fusion-feature'&&req.method==='POST'){

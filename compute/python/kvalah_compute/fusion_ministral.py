@@ -4,6 +4,7 @@ import contextvars
 import re
 from contextlib import contextmanager
 
+import torch
 from torch import nn
 
 from .fusion import ExpertMLP, FFN, LoRA, Router
@@ -61,6 +62,8 @@ def attach_to_mistral(model, *, router=None, replacement=False):
 def insert_expert(slots, *, name, kind, layers, rank=8, alpha=16, intermediate=None, copy_base=False):
     if not layers or len(set(layers))!=len(layers) or not set(layers).issubset(slots):
         raise ValueError("invalid expert placement")
+    if any(name in slots[i].experts for i in layers):
+        raise ValueError("expert key already exists in one of the requested layers")
     modules={}
     for i in layers:
         slot=slots[i]
@@ -84,6 +87,60 @@ def insert_expert(slots, *, name, kind, layers, rank=8, alpha=16, intermediate=N
     for i,module in modules.items():
         slots[i].add(name,module)
     return modules
+
+
+class _IdentityLayer(nn.Module):
+    def forward(self,hidden,**kwargs):
+        return hidden
+
+
+class _LoopSpan(nn.Module):
+    def __init__(self,layers,gates):
+        super().__init__()
+        self.layers=nn.ModuleList(layers)
+        self.gates=gates
+
+    def forward(self,hidden,**kwargs):
+        if any(kwargs.get(key) is not None for key in ("cache","past_key_values")) or kwargs.get("use_cache"):
+            raise ValueError("HF Fusion Loop requires uncached execution")
+        for iteration in range(self.gates.numel()+1):
+            candidate=hidden
+            for layer in self.layers:
+                candidate=layer(candidate,**kwargs)
+            if iteration:
+                old=(hidden.float().square().mean(-1,keepdim=True)+1e-8).sqrt()
+                new=(candidate.float().square().mean(-1,keepdim=True)+1e-8).sqrt()
+                candidate=candidate*(old/new).clamp(max=1).to(candidate.dtype)
+                hidden=torch.lerp(hidden,candidate,self.gates[iteration-1].sigmoid().to(hidden.dtype))
+            else:
+                hidden=candidate
+        return hidden
+
+
+@contextmanager
+def loop_text_layers(model, *, start, end, passes,gate_parameters=None):
+    """Temporarily repeat one contiguous text-layer span, sharing the original layer objects."""
+    roots=[module for module in model.modules() if isinstance(getattr(module,"layers",None),nn.ModuleList) and
+           len(module.layers) and isinstance(getattr(module.layers[0],"mlp",None),RoutedMLP)]
+    if len(roots)!=1 or type(passes)!=int or not 1<=passes<=4 or not 0<=start<end<=len(roots[0].layers):
+        raise ValueError("invalid HF Fusion Loop placement")
+    root=roots[0]
+    original=root.layers
+    if passes==1:
+        yield None
+        return
+    device=next(original[start].parameters()).device
+    gates=gate_parameters if gate_parameters is not None else nn.Parameter(torch.full((passes-1,),-2.,device=device))
+    if not isinstance(gates,nn.Parameter) or gates.shape!=(passes-1,) or gates.device!=device:
+        raise ValueError("incompatible Fusion Loop gates")
+    # Keep the physical ModuleList length that the HF model iterates over. Placeholders must return
+    # the residual untouched. The same original layer modules are used for every iteration.
+    span=_LoopSpan(list(original[start:end]),gates)
+    root.layers=nn.ModuleList([*original[:start],span,*(_IdentityLayer() for _ in range(end-start-1)),*original[end:]])
+    try:
+        yield gates
+    finally:
+        root.layers=original
 
 
 def load_verified_model(model_dir, expected_digest, *, router=None):

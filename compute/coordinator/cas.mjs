@@ -20,8 +20,10 @@ export function createCAS(root){
       fs.rmSync(tmp,{force:true});
       return h;
     },
-    get(h){
+    get(h,{maxBytes=Infinity}={}){
       const f=file(h);if(!fs.existsSync(f))fail('NOT_FOUND','artifact not found');
+      const info=fs.lstatSync(f);
+      if(!info.isFile()||info.isSymbolicLink()||info.size>maxBytes)fail('HASH_MISMATCH','artifact has an invalid type or byte length');
       const b=fs.readFileSync(f);if(sha256(b)!==h)fail('HASH_MISMATCH','artifact '+h.slice(0,12)+' is corrupt');
       return b;
     }

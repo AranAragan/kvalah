@@ -102,8 +102,9 @@ jobs:
           KVALAH_COMPUTE_PYTHON: ${{ steps.python.outputs.python-path }}
         run: |
           set -o pipefail
-          node --test --test-concurrency=1 test/compute2-stability.test.mjs test/compute2-e2e.test.mjs test/compute2-python.test.mjs test/fusion.test.mjs | tee compute-cpu-test.log
+          node --test --test-concurrency=1 test/compute2-stability.test.mjs test/compute2-e2e.test.mjs test/compute2-python.test.mjs test/fusion.test.mjs test/fusion-production.test.mjs | tee compute-cpu-test.log
           ! grep -Ei '^.*# skip .* (not available|runtime)' compute-cpu-test.log | grep -vi 'mlx'
+      - run: node scripts/fusion-stream-smoke.mjs fusion-stream-smoke.jsonl short
       - name: Upload CPU test log
         if: always()
         uses: actions/upload-artifact@v7

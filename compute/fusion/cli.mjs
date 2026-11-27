@@ -5,7 +5,7 @@ import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {openFusion} from './registry.mjs';
 import {aggregateExpert} from './aggregate.mjs';
-import {putArtifact,createGrantStore,signAssignment,createProvisionStore,validateAssignment} from './provision.mjs';
+import {putArtifact,putArtifactFile,createGrantStore,signAssignment,createProvisionStore,createStreamingProvisionStore,validateAssignment} from './provision.mjs';
 import {estimateComposition} from './lab.mjs';
 import {sealFusionDataset,validateTrainShard} from './datasets.mjs';
 import {hashJSON,sha256} from '../protocol/hash.mjs';
@@ -41,12 +41,25 @@ async function receiveAssignment(root,opts,{train=false}={}){
     if(entry?.state==='accepted')return {assignment:manifest.id,receipt:entry.result,cached_result:true,traffic};
     const budget=()=>opts.maxTrafficBytes-traffic;
     if(train&&!entry&&os.freemem()<2*1024**3)throw Error('not enough free RAM for reference training');
+    const fetchPart=async(m,part,{signal,maxBytes})=>(await client.get(`/v2/fusion/parts/${m.id}/${part.sha256}`,{
+      signal,payload:true,json:false,maxPayload:maxBytes
+    })).bytes;
+    if(manifest.artifacts.some(a=>a.stream)){
+      if(train)throw Error('use the production Worker for streamed training assignments');
+      const cache=createStreamingProvisionStore({root:path.join(root,'stream-cache'),quotaBytes:opts.cacheBytes});
+      const response=await cache.provision(envelope,{publicKey:opts.publicKey,device:identity.device_id,consented:true,permit:budget,fetchCoordinator:fetchPart});
+      fs.mkdirSync(output,{recursive:true});
+      for(const item of response.items){
+        const destination=path.join(output,item.sha256);
+        if(!fs.existsSync(destination))fs.copyFileSync(item.file,destination,fs.constants.COPYFILE_EXCL);
+      }
+      writeJson(path.join(output,'assignment.json'),envelope);
+      return {...response,items:response.items.map(({file,...item})=>item),traffic};
+    }
     const cache=createProvisionStore({root:path.join(root,'provision'),quotaBytes:opts.cacheBytes});
     if(!entry){
       const response=await cache.provision(envelope,{publicKey:opts.publicKey,device:identity.device_id,consented:true,
-        permit:budget,fetchCoordinator:async(m,part,{signal,maxBytes})=>(await client.get(`/v2/fusion/parts/${m.id}/${part.sha256}`,{
-          signal,payload:true,json:false,maxPayload:maxBytes
-        })).bytes});
+        permit:budget,fetchCoordinator:fetchPart});
       const work=train?fs.mkdtempSync(path.join(root,'reference-')):output;
       try{
         if(!train)fs.mkdirSync(work,{recursive:true});
@@ -124,14 +137,19 @@ async function main(){
       return {enabled:true,restart_coordinator:true};
     }
     if(command==='grant'){
-      const {device,expert,ttl,items,datasetManifest,cpuReference}=readJson(args[0]);
+      const {device,expert,ttl,items,datasetManifest,cpuReference,streamQuotaBytes}=readJson(args[0]);
       const current=registry.get(expert);
       const records=[putArtifact(registry.cas,'expert',registry.cas.get(current.checkpoint.hash),current.checkpoint.hash)];
       const manifest=fs.readFileSync(datasetManifest);
       let referenceJob=null;
-      for(const {kind,file,source} of items){
+      for(const {kind,file,source,stream,expectedHash} of items){
         if(kind==='expert')throw Error('the expert is provided from its registry checkpoint');
-        if(fs.statSync(file).size>64*1024*1024)throw Error('artifact requires chunks under 64 MiB');
+        if(stream){
+          if(cpuReference||kind==='train')throw Error('streamed Train data needs a sharded dataset manifest');
+          records.push(await putArtifactFile(registry.cas,kind,file,source,{quotaBytes:streamQuotaBytes,expectedHash}));
+          continue;
+        }
+        if(fs.statSync(file).size>64*1024*1024)throw Error('enable explicit streaming for large artifacts');
         const bytes=fs.readFileSync(file);
         if(kind==='train'){
           validateTrainShard(manifest,bytes,current.dataset_sha256);

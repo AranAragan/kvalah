@@ -5,6 +5,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.10.0-fusion.1.dev.1] - 2026-11-27
+
+Draft branch builds for Expert Fusion acceptance. Three-device Fusion-01, cross-host CUDA/MLX pipeline, sharded expert aggregation and published model inference remain open.
+
+- Integrated single-expert Fusion jobs with the standard Compute Worker and sidecar, signed leases, file-backed resumable uploads, per-expert FedAvg and trusted Validation.
+- Added CUDA NF4 and native MLX training runtimes for independent Fusion experts. The local RTX 5070 smoke exercised real Ministral 3B for FFA-LoRA, LoRA and FFN.
+- Added architecture detection from local model headers, visual layer placement and an expert training form in the Compute laboratory.
+
 - Added an opt-in Expert Fusion research laboratory with immutable expert and composition versions, signed artifact grants and a local architecture calculator.
 - Added deterministic PyTorch reference experiments for independent LoRA and FFN training, sparse routing, looped depth, logical KV caching and staged backward across local worker processes.
 - Added an offline expert aggregation path for FedAvg, FedProx, FedAvgM, FedAdam, FedYogi and a DiLoCo-inspired outer update.

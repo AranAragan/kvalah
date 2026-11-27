@@ -2,12 +2,23 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {desktop,until} from './compute-desktop-review.mjs';
+import {python,tinyModel,tmp} from '../test/compute-helpers.mjs';
+import {createIdentity,fileSecretBox} from '../compute/worker/identity.mjs';
+import {pairWithCoordinator} from '../compute/worker/pair.mjs';
+import {createWorker} from '../compute/worker/worker.mjs';
+import {createGovernor} from '../compute/governor/governor.mjs';
 
 const [exe,destination,...args]=process.argv.slice(2);
 if(!exe||!destination)throw Error('node scripts/fusion-desktop-smoke.mjs <electron-or-kvalah> <output-dir> [app-path]');
 const output=path.resolve(destination);
 fs.mkdirSync(output,{recursive:true});
-const app=await desktop(path.resolve(exe),args);
+const py=python(['torch','transformers','safetensors']),model=tinyModel();
+assert.ok(py&&model,'KVALAH_COMPUTE_PYTHON must provide the pinned local CPU runtime');
+const app=await desktop(path.resolve(exe),args,{KVALAH_COMPUTE_TEST:'1'});
+const api=(route,data)=>app.evaluate(`api('/api/compute/v2/'+${JSON.stringify(route)},${JSON.stringify(data)})`);
+const state=()=>app.evaluate('api("/api/compute/fusion/state")');
+const set=(id,value)=>app.evaluate(`(()=>{const input=document.getElementById(${JSON.stringify(id)});input.value=${JSON.stringify(value)};input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+let worker,pulse;
 try{
   await app.click('#openCompute');
   await app.click('[data-mode=laboratory]');
@@ -21,6 +32,20 @@ try{
   await until(()=>app.evaluate('Boolean(document.querySelector("[data-act=fusion-nav][data-arg=architecture]"))'),'Fusion laboratory');
   await app.shot(path.join(output,'fusion-overview.png'));
   await app.click('[data-act=fusion-nav][data-arg=architecture]');
+  await app.shot(path.join(output,'fusion-no-model.png'));
+  assert.equal((await state()).builder.model,null);
+  await api('profile',{profile_id:'tiny-test-ffa-r4'});
+  const before=await api('state');
+  await api('policy',{revision:before.policy.revision,policy:{only_idle:false,only_ac:false,pause_on_games:false}});
+  await api('runtime',{python:py,backend:'torch-cpu-test'});
+  await api('model',{model_dir:model,variant_id:'cpu-test'});
+  await api('lab/start',{bind_ip:'127.0.0.1',port:0});
+  const dataset=await api('lab/import-dataset',{fixture:true,dataset_id:'fusion-ui',max_length:96});
+  const detected=(await state()).builder.model;
+  assert.equal(detected.layers,2);
+  await until(()=>app.evaluate('Boolean(document.querySelector("#fxModel"))'),'detected model is rendered');
+  await set('fxPasses','2');
+  await app.evaluate('document.getElementById("fxPasses").dispatchEvent(new Event("change",{bubbles:true}))');
   await app.click('[data-act=fusion-estimate]');
   await until(()=>app.evaluate('document.querySelector("#computeContent")?.textContent.includes("FP16 checkpoint")'),'tensor estimate');
   await app.shot(path.join(output,'fusion-architecture.png'));
@@ -29,16 +54,31 @@ try{
   assert.ok(size.scroll<=size.width+1,JSON.stringify(size));
   await app.shot(path.join(output,'fusion-architecture-450.png'));
   await app.click('[data-act=fusion-nav][data-arg=experts]');
-  const input={key:'code',name:'Code fixture',domain:'code',kind:'ffa-lora',
-    base:{revision:'reference',backbone_sha256:'a'.repeat(64),tokenizer_sha256:'b'.repeat(64),architecture_sha256:'c'.repeat(64),layers:4,width:4,parameters:400},
-    layers:[1],tensors:[{name:'layers.1.mlp.A',shape:[1,4],dtype:'F32'},{name:'layers.1.mlp.B',shape:[4,1],dtype:'F32'}],rank:1,alpha:2,
-    training:{optimizer:'sgd',lr:0.1,local_steps:1,grad_accum:1,clip:1},dataset_sha256:'d'.repeat(64),license:'CC0-1.0'};
-  await app.evaluate(`(()=>{const input=document.querySelector('#fxSpec');input.value=${JSON.stringify(JSON.stringify(input))};input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+  await app.viewport(1140,920);
+  await set('fxName','Code fixture');await set('fxKey','code');await set('fxDomain','code');await set('fxDataset',dataset.id);
+  await app.shot(path.join(output,'fusion-expert-form.png'));
   await app.click('[data-act=fusion-create]');
   await until(()=>app.evaluate('document.querySelector("#computeContent h3")?.textContent==="Code fixture"'),'new expert record');
   await app.shot(path.join(output,'fusion-experts.png'));
-  await app.click('[data-act=fusion-archive]');
-  await until(()=>app.evaluate('document.querySelector("#computeContent")?.textContent.includes("ARCHIVED")'),'expert archive');
+  const workerRoot=tmp('fusion-desktop-worker-');
+  const identity=await createIdentity(path.join(workerRoot,'identity'),fileSecretBox);
+  const invitation=await api('lab/pairing',{});
+  const link=await pairWithCoordinator({pairing:invitation.pairing,identity,alias:'Fusion CPU'});
+  await api('lab/approve',{id:identity.device_id});
+  const gov=createGovernor({stateDir:workerRoot,policy:{profile:'full',only_ac:false,only_idle:false,pause_on_games:false,gpu_target_pct:100,fusion_training:true}});
+  gov.setEnabled(true);gov.setSensors({ram_free_bytes:8*2**30});
+  pulse=setInterval(()=>gov.setSensors({ram_free_bytes:8*2**30}),3000);pulse.unref();
+  worker=createWorker({stateDir:workerRoot,identity,link,governor:gov,runtime:{python:py,backend:'torch-cpu-test',model_dir:model,files_digest:detected.id},
+    capabilities:()=>({backend:'torch-cpu-test',variants:[],runtime_version:'test'})});
+  await app.click('[data-act=fusion-start-dialog]');
+  await app.click('#fxShareTrain');
+  await app.click('[data-act=fusion-start]');
+  await until(async()=>(await state()).builder.runs[0]?.status==='RUNNING','real Fusion training scheduled');
+  await app.shot(path.join(output,'fusion-queued.png'));
+  worker.start();
+  await until(async()=>['VALIDATED','REJECTED'].includes((await state()).builder.runs[0]?.status),'checkpoint and trusted Validation',65000);
+  await until(()=>app.evaluate('Boolean(document.querySelector("[data-fusion-status=VALIDATED],[data-fusion-status=REJECTED]"))'),'trusted result rendered');
+  await app.shot(path.join(output,'fusion-evaluated.png'));
   assert.deepEqual(app.errors,[]);
   console.log('Fusion desktop smoke passed');
-}finally{app.quit();}
+}finally{clearInterval(pulse);await worker?.stop();app.quit();}

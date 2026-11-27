@@ -15,12 +15,17 @@ _resident = None
 
 
 def release_model(_msg=None):
+    _release_legacy()
+    if __package__+".fusion_runtime" in sys.modules:
+        sys.modules[__package__+".fusion_runtime"].release()
+    return {"resident": False}
+
+def _release_legacy():
     global _resident
     if _resident is not None:
         _, model, _ = _resident
         _resident = None
         model.release()
-    return {"resident": False}
 
 def emit(obj):
     OUT.write(json.dumps(obj, separators=(",", ":")) + "\n")
@@ -352,7 +357,13 @@ def export_peft(msg):
     from .peft_export import export
     return export(_safe_dir(msg["adapter_path"]), _safe_dir(msg["out_dir"]), msg["profile"], msg.get("meta", {}))
 
+def fusion_operation(msg):
+    from .fusion_runtime import run
+    _release_legacy()
+    return run(msg,permit=wait_permit,emit=emit,evaluation=msg["cmd"]=="fusion_evaluate")
+
 HANDLERS = {"preflight": preflight, "probe": probe, "verify_model": verify_model, "train": train, "evaluate": evaluate, "tokenize": tokenize, "export_peft": export_peft, "release_model": release_model}
+HANDLERS.update(fusion_train=fusion_operation,fusion_evaluate=fusion_operation)
 
 def main():
     while True:
@@ -370,6 +381,8 @@ def main():
             emit({"type": "error", "id": cid, "code": "UNKNOWN_COMMAND", "message": "unknown command"})
             continue
         try:
+            if c in ("preflight","train","evaluate") and __package__+".fusion_runtime" in sys.modules:
+                sys.modules[__package__+".fusion_runtime"].release()
             emit({"type": "result", "id": cid, "data": h(m)})
         except Stopped as e:
             release_model()

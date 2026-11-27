@@ -10,7 +10,7 @@ export const DEFAULT_POLICY=Object.freeze({
   battery_floor_pct:50,cache_limit_gib:20,daily_traffic_mb:1024,allow_metered:false,
   quiet_hours:{enabled:false,from:'23:00',to:'07:00'},background_after_close:false,keep_warm:false,
   runtime_mode:'adaptive',runtime_idle_s:60,activity_mode:'cooperative',transfer_mode:'auto',update_chunk_bytes:1048576,
-  lan_traffic_mb:null,wan_traffic_mb:null
+  lan_traffic_mb:null,wan_traffic_mb:null,fusion_training:false
 });
 const step5=(v,name)=>{if(!Number.isInteger(v)||v<0||v>100||v%5)fail('INVALID_SCHEMA',name+' must be 0–100 in steps of 5');return v;};
 const range=(v,lo,hi,name,nullable=false)=>{if(nullable&&v===null)return null;if(typeof v!=='number'||!Number.isFinite(v)||v<lo||v>hi)fail('INVALID_SCHEMA',`${name} must be between ${lo} and ${hi}`);return v;};
@@ -38,7 +38,8 @@ export function validatePolicy(input,current=DEFAULT_POLICY){
     transfer_mode:['auto','legacy'].includes(p.transfer_mode)?p.transfer_mode:fail('INVALID_SCHEMA','invalid transfer mode'),
     update_chunk_bytes:[262144,524288,1048576,2097152,4194304].includes(p.update_chunk_bytes)?p.update_chunk_bytes:fail('INVALID_SCHEMA','invalid update chunk size'),
     lan_traffic_mb:range(p.lan_traffic_mb,10,1e6,'lan_traffic_mb',true),
-    wan_traffic_mb:range(p.wan_traffic_mb,10,1e6,'wan_traffic_mb',true)
+    wan_traffic_mb:range(p.wan_traffic_mb,10,1e6,'wan_traffic_mb',true),
+    fusion_training:p.fusion_training===true
   };
   out.daily_hours=range(p.daily_hours,1,out.extended_hours?24:12,'daily_hours');
   // An aggressive profile must be chosen explicitly (spec §4.1 "Установка агрессивного профиля требует явного выбора").
