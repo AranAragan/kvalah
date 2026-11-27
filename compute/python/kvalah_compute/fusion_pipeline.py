@@ -5,7 +5,7 @@ import os
 import subprocess
 import sys
 import tempfile
-from contextlib import ExitStack
+from contextlib import ExitStack,suppress
 from pathlib import Path
 from threading import Timer
 
@@ -135,15 +135,19 @@ class StageProcess:
         return header,result
 
     def close(self):
-        if self.process.poll() is None:
-            self.process.terminate()
-            try:
-                self.process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-                self.process.wait(timeout=5)
-        self.process.stdin.close()
-        self.process.stdout.close()
+        try:
+            if self.process.poll() is None:
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self.process.kill()
+                    self.process.wait(timeout=5)
+        finally:
+            with suppress(OSError):
+                self.process.stdin.close()
+            with suppress(OSError):
+                self.process.stdout.close()
 
 
 def commit_snapshot(file, tensors):

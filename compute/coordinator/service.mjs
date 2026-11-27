@@ -83,7 +83,8 @@ export function createCoordinatorService({dir,startSidecar=defaultSidecar,evalua
       fusionRegistry??=openFusion(fusionDir);
       const grants=createGrantStore(fusionRegistry,path.join(fusionDir,'grants'));
       const check=()=>{if(!fs.existsSync(grantMarker))fail('FORBIDDEN_SCOPE','Fusion grants are disabled');};
-      fusion={manifest(dev){check();return grants.manifest(dev);},chunk(dev,id,hash){check();return grants.chunk(dev,id,hash);}};
+      fusion={manifest(dev){check();return grants.manifest(dev);},chunk(dev,id,hash){check();return grants.chunk(dev,id,hash);},
+        result(dev,id,hash,tokens,bytes){check();return grants.result(dev,id,hash,tokens,bytes);}};
     }
     const srv=createApi(coord,{cert:cert.cert,key:cert.key,now,log,fusion});
     await new Promise((resolve,reject)=>{srv.once('error',reject);srv.listen(port,bindIp,()=>{srv.off('error',reject);resolve();});}).catch(e=>{

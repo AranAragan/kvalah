@@ -55,11 +55,13 @@ class FusionTests(unittest.TestCase):
         self.assertGreater(sum(float(p.grad.norm()) for p in model.router.parameters()),0)
         self.assertTrue((stats["counts"]<=4).all())
         model.eval()
-        y,_=model(x)
+        y,before=model(x)
         changed=x.clone()
         changed[:,3:]+=100
-        observed,_=model(changed)
-        torch.testing.assert_close(y[:,:3],observed[:,:3],rtol=0,atol=0)
+        observed,after=model(changed)
+        self.assertTrue(torch.equal(before["logits"][:,:3].argmax(-1),after["logits"][:,:3].argmax(-1)))
+        # Later tokens may change the grouped GEMM batch size and last-bit FP32 rounding.
+        torch.testing.assert_close(y[:,:3],observed[:,:3],rtol=0,atol=1e-7)
         model.disabled.add("math")
         _,stats=model(x)
         self.assertEqual(stats["keys"],["code"])

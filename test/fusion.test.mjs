@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {spawnSync} from 'node:child_process';
+import {execFile,spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
+import {promisify} from 'node:util';
 import {test} from 'node:test';
 import {openFusion,verifyEnvelope} from '../compute/fusion/registry.mjs';
 import {aggregateExpert} from '../compute/fusion/aggregate.mjs';
@@ -15,6 +16,8 @@ import {createCoordinatorService} from '../compute/coordinator/service.mjs';
 import {createClient} from '../compute/worker/client.mjs';
 import {pairWithCoordinator} from '../compute/worker/pair.mjs';
 import {newKeyPair} from '../compute/protocol/sign.mjs';
+import {createIdentity,fileSecretBox} from '../compute/worker/identity.mjs';
+import {createOutbox} from '../compute/worker/outbox.mjs';
 import {decode,encode} from '../compute/protocol/safetensors.mjs';
 import {hashJSON,sha256} from '../compute/protocol/hash.mjs';
 
@@ -127,7 +130,7 @@ test('empty Fusion cache resumes by verified chunk, falls back from a corrupt pe
   const env=signAssignment(r,{device:'dev-test',expert,artifacts:descriptors});
   const registry=createGrantStore(r,path.join(root,'grants'));
   registry.grant(env);
-  assert.throws(()=>registry.chunk('dev-test','wrong',descriptors[1].parts[0].sha256),/outside/);
+  assert.throws(()=>registry.chunk('dev-test','wrong',descriptors[1].parts[0].sha256),{code:'FORBIDDEN_SCOPE'});
   let seen=[],interrupted=true;
   const config={device:'dev-test',publicKey:r.publicKey,consented:true,allowPeerDownload:true,permit:()=>1024**3,
     peers:[async()=>Buffer.from('corrupted')],fetchCoordinator:async(m,p)=>{
@@ -203,6 +206,82 @@ test('Fusion dataset manifest enforces group isolation and distributes only appr
   assert.throws(()=>validateTrainShard(sealed.manifest,sealed.files.test,sealed.sha256),{code:'DATASET_INVALID'});
   assert.throws(()=>sealFusionDataset({...input,redistribution:false},tokenizer),{code:'DATASET_INVALID'});
   assert.throws(()=>sealFusionDataset({...input,samples:{...input.samples,test:[row('c','g1')]}},tokenizer),{code:'DATASET_SPLIT_OVERLAP'});
+});
+
+test('three freshly paired CPU reference workers fetch their own expert, train and submit durable results',{
+  skip:!process.env.KVALAH_COMPUTE_PYTHON,timeout:100000
+},async t=>{
+  const root=rootFor(t),state=path.join(root,'fusion'),r=openFusion(state);
+  const service=createCoordinatorService({dir:path.join(root,'coordinator')});
+  const run=promisify(execFile);
+  try{
+    const python=process.env.KVALAH_COMPUTE_PYTHON;
+    await run(python,[path.join(repo,'compute','python','tests','fusion_job_fixture.py'),root],{
+      cwd:repo,timeout:30000,env:{...process.env,PYTHONPATH:path.join(repo,'compute','python')}
+    });
+    const registry=new Map();
+    fs.writeFileSync(path.join(state,'serve-grants'),'1\n');
+    const lab=await service.start({bindIp:'127.0.0.1',port:0});
+    const store=createGrantStore(r,path.join(state,'grants'));
+    const backbone=putArtifact(r.cas,'backbone',fs.readFileSync(path.join(root,'backbone.safetensors')),'fixture-379');
+    const architecture=putArtifact(r.cas,'architecture',fs.readFileSync(path.join(root,'architecture.json')),'fixture-379');
+    const cli=path.join(repo,'compute','fusion','cli.mjs');
+    for(const [i,key] of ['code','math','language'].entries()){
+      const own=path.join(root,`worker-${key}`);
+      const idDir=path.join(own,'identity');
+      const identity=await createIdentity(idDir,fileSecretBox);
+      await pairWithCoordinator({pairing:service.createPairing().pairing,identity,alias:`Fusion ${key}`});
+      service.coord.approveDevice(identity.device_id);
+      assert.equal(fs.existsSync(path.join(own,'provision')),false);
+      const weights=fs.readFileSync(path.join(root,`${key}.safetensors`));
+      const expertConfig=putArtifact(r.cas,'expert-config',fs.readFileSync(path.join(root,`${key}.json`)),'fixture expert config');
+      const row=(n)=>({id:`row-${n}`,group:`group-${n}`,input_ids:[i+1,n+4,i+14],target_mask:[false,false,true]});
+      const dataset=sealFusionDataset({name:key,revision:'fixture-379',license:'CC0-1.0',source:'local fixture',preprocessing:'fixed ids',redistribution:true,
+        samples:{train:[row(0),row(1)],validation:[row(2)],test:[row(3)]}},{context:20,vocab:32});
+      const train=putArtifact(r.cas,'train',dataset.files.train,dataset.sha256);
+      const weightArt=putArtifact(r.cas,'expert',weights,'initial-379');
+      const tensors=Object.entries(decode(weights).tensors).map(([name,value])=>({name,shape:value.shape,dtype:'F32'}));
+      const e=r.create({...spec,key,name:key,domain:key,layers:[1],rank:3,alpha:6,tensors,dataset_sha256:dataset.sha256,
+        training:{...spec.training,local_steps:3},base:{...base,width:16,layers:2,backbone_sha256:backbone.sha256,architecture_sha256:architecture.sha256}});
+      r.change(e.id,'CREATED','PROVISIONING');
+      r.checkpoint(e.id,weights);
+      const loaded=r.change(e.id,'PROVISIONING','READY');
+      const grant=signAssignment(r,{device:identity.device_id,expert:loaded,artifacts:[backbone,architecture,expertConfig,train,weightArt],referenceJob:{tokens:3}});
+      store.grant(grant);
+      const opts=path.join(own,'run.json');
+      fs.writeFileSync(opts,JSON.stringify({python,identityDir:idDir,publicKey:r.publicKey,endpoint:lab.endpoint,fingerprint:lab.fingerprint,consent:true,
+        cacheBytes:256*1024*1024,maxTrafficBytes:2*1024*1024,cpu_wall_limit_ms:30000}));
+      const execWorker=async()=>JSON.parse((await run(process.execPath,[cli,'worker-train-reference',own,opts],{cwd:repo,timeout:45000})).stdout);
+      const result=await execWorker();
+      assert.equal(result.receipt.id,grant.manifest.id);
+      assert.equal(result.receipt.expert,e.id);
+      assert.equal(result.receipt.tokens,3);
+      const value=r.cas.get(result.receipt.sha256);
+      assert.ok(Object.values(decode(value).tensors).some(t=>t.data.some(v=>v!==0)));
+      registry.set(e.id,result.receipt);
+      if(i===0){
+        const outbox=createOutbox(path.join(own,'fusion-outbox'));
+        const prior=outbox.all()[0];
+        outbox.update(prior.key,{state:'pending'});
+        const retry=await execWorker();
+        assert.deepEqual(retry.receipt,result.receipt);
+        assert.equal(outbox.all().length,1);
+        assert.equal(outbox.all()[0].state,'accepted');
+        const round={id:'reference-round-1',algorithm:'fedavg',expert:loaded.id,parent:loaded.checkpoint.hash,schema:loaded.schema_sha256,
+          frozen:loaded.checkpoint.frozen};
+        const id=result.receipt.id,device=identity.device_id;
+        const aggregated=aggregateExpert({expert:loaded,base:weights,round,assignments:[{id,device,tokens:3,group:'loopback'}],updates:[
+          {id,device,tokens:3,round:round.id,expert:round.expert,parent:round.parent,frozen:round.frozen,schema:round.schema,
+            config:hashJSON({algorithm:round.algorithm,config:{}}),payload:value,payload_sha256:result.receipt.sha256}
+        ]});
+        r.change(loaded.id,'READY','TRAINING');r.change(loaded.id,'TRAINING','AGGREGATING');
+        const committed=r.checkpoint(loaded.id,aggregated.payload,{parent:round.parent});
+        assert.equal(committed.version,2);
+        assert.equal(committed.checkpoint.frozen,loaded.checkpoint.frozen);
+      }
+    }
+    assert.equal(registry.size,3);
+  }finally{await service.close();r.close();}
 });
 
 test('Fusion PyTorch gradient, cache, depth and pipeline parity', {skip:!process.env.KVALAH_COMPUTE_PYTHON},()=>{

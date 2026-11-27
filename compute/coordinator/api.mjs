@@ -72,6 +72,10 @@ export function createApi(coord,{cert,key,now=Date.now,maxConcurrent=32,ratePerS
         res.writeHead(200,{'content-type':'application/octet-stream','content-length':bytes.length,'cache-control':'no-store'});
         return res.end(bytes);
       }
+      if(fusion&&req.method==='PUT'&&(m=p.match(/^\/v2\/fusion\/results\/([0-9a-f]{8}(?:-[0-9a-f]+){4})$/))){
+        coord.authDevice(dev);
+        return json(res,200,fusion.result(dev,m[1],url.searchParams.get('sha256'),Number(url.searchParams.get('tokens')),body));
+      }
       if(req.method==='POST'&&p==='/v2/devices/session')return json(res,200,coord.startSession(dev));
       if(req.method==='GET'&&p==='/v2/devices/state')return json(res,200,{state:coord.authDevice(dev,{allowPending:true}).state});
       if(req.method==='POST'&&p==='/v2/devices/heartbeat')return json(res,200,coord.heartbeat(dev,parse()));

@@ -5,10 +5,10 @@ import {createArtifactCache} from '../worker/artifacts.mjs';
 import {canonicalJSON,isHex64,sha256} from '../protocol/hash.mjs';
 import {chunkSizes,defaultChunkSize} from '../protocol/transfer.mjs';
 import {fail} from '../protocol/errors.mjs';
-import {verifyEnvelope} from './registry.mjs';
+import {validateTensors,verifyEnvelope} from './registry.mjs';
 
 const MAX_ARTIFACT=64*1024*1024;
-const kinds=new Set(['backbone','tokenizer','expert','train','architecture','runtime-lock']);
+const kinds=new Set(['backbone','tokenizer','expert','expert-config','train','architecture','runtime-lock']);
 
 // Build descriptors from locally registered bytes. Logical names never become peer-controlled paths.
 export function putArtifact(cas,kind,bytes,source,chunkBytes=defaultChunkSize){
@@ -32,18 +32,29 @@ function checkArtifacts(artifacts){
   }
 }
 
-export function signAssignment(registry,{device,expert,artifacts,ttl=3600000,now=Date.now()}){
+export function signAssignment(registry,{device,expert,artifacts,ttl=3600000,now=Date.now(),referenceJob=null}){
   checkArtifacts(artifacts);
   if(typeof device!=='string'||!device||device.length>128||!expert?.checkpoint||!Number.isSafeInteger(ttl)||ttl<=0||ttl>24*3600000||
     artifacts.filter(a=>a.kind==='expert').length!==1||artifacts.find(a=>a.kind==='expert')?.sha256!==expert.checkpoint.hash||
     !artifacts.some(a=>a.kind==='train'))fail('INVALID_SCHEMA','assignment requires a pinned expert and its training shard');
+  let job=null;
+  if(referenceJob){
+    if(!expert.runtimes.includes('torch-cpu')||!['lora','ffa-lora'].includes(expert.kind)||!Number.isSafeInteger(referenceJob.tokens)||referenceJob.tokens<=0||
+      !['backbone','architecture','expert-config','train','expert'].every(k=>artifacts.filter(a=>a.kind===k).length===1)||
+      artifacts.find(a=>a.kind==='backbone').sha256!==expert.base.backbone_sha256||
+      artifacts.find(a=>a.kind==='architecture').sha256!==expert.base.architecture_sha256||
+      expert.bytes>48*1024||expert.training.local_steps>64||expert.training.grad_accum>8)
+      fail('INVALID_SCHEMA','invalid or oversized CPU reference job');
+    job={runtime:'torch-cpu',tokens:referenceJob.tokens,spec:{key:expert.key,kind:expert.kind,layers:expert.layers,rank:expert.rank,alpha:expert.alpha},training:expert.training};
+  }
   return registry.signed({kind:'assignment',id:randomUUID(),device,expert:expert.id,parent:expert.checkpoint.hash,schema:expert.schema_sha256,
-    base:expert.base,expires:now+ttl,artifacts});
+    base:expert.base,expires:now+ttl,artifacts,job});
 }
 
 export function validateAssignment(envelope,{publicKey,device,now=Date.now()}){
   const m=verifyEnvelope(envelope,publicKey);
-  if(m.kind!=='assignment'||m.device!==device||!Number.isSafeInteger(m.expires)||m.expires<=now||!isHex64(m.parent)||!isHex64(m.schema))
+  if(m.kind!=='assignment'||m.device!==device||typeof m.id!=='string'||!/^[0-9a-f]{8}(?:-[0-9a-f]+){4}$/.test(m.id)||
+    !Number.isSafeInteger(m.expires)||m.expires<=now||!isHex64(m.parent)||!isHex64(m.schema))
     fail('FORBIDDEN_SCOPE','assignment expired or is bound to another device');
   checkArtifacts(m.artifacts);
   return m;
@@ -96,12 +107,19 @@ export function createProvisionStore({root,quotaBytes,onEvent=()=>{}}){
 // grants are indexed by the authenticated device and checked again for every ranged operation.
 export function createGrantStore(registry,root){
   fs.mkdirSync(root,{recursive:true});
+  const results=path.join(root,'results');
+  fs.mkdirSync(results,{recursive:true,mode:0o700});
   const file=id=>{
     if(typeof id!=='string'||!/^[a-zA-Z0-9_-]{1,128}$/.test(id))fail('INVALID_SCHEMA','invalid device identity');
     return path.join(root,id+'.json');
   };
   function find(device){
     try{return JSON.parse(fs.readFileSync(file(device),'utf8'));}catch(e){if(e.code==='ENOENT')fail('NOT_FOUND','no expert assigned');throw e;}
+  }
+  function active(device,id){
+    const m=validateAssignment(find(device),{device,publicKey:registry.publicKey});
+    if(m.id!==id)fail('FORBIDDEN_SCOPE','assignment was replaced');
+    return m;
   }
   return {
     grant(envelope){
@@ -114,12 +132,42 @@ export function createGrantStore(registry,root){
     revoke(device){fs.rmSync(file(device),{force:true});},
     manifest(device){const envelope=find(device);validateAssignment(envelope,{device,publicKey:registry.publicKey});return {envelope,publicKey:registry.publicKey};},
     chunk(device,assignment,hash){
-      const m=validateAssignment(find(device),{device,publicKey:registry.publicKey});
+      const m=active(device,assignment);
       const part=m.artifacts.flatMap(a=>a.parts).find(p=>p.sha256===hash);
-      if(m.id!==assignment||!part)fail('FORBIDDEN_SCOPE','chunk is outside the active assignment');
+      if(!part)fail('FORBIDDEN_SCOPE','chunk is outside the active assignment');
       const result=registry.cas.get(hash);
       if(result.length!==part.bytes)fail('HASH_MISMATCH','chunk length does not match assignment');
       return result;
+    },
+    result(device,assignment,hash,tokens,payload){
+      const m=active(device,assignment);
+      if(!m.job||m.job.tokens!==tokens||!isHex64(hash)||sha256(payload)!==hash||payload.length>64*1024)
+        fail('INVALID_SCHEMA','reference result does not match its grant');
+      const expert=registry.get(m.expert);
+      if(expert.schema_sha256!==m.schema||expert.checkpoint?.hash!==m.parent||!['READY','TRAINING','AGGREGATING'].includes(expert.status))
+        fail('STALE','expert checkpoint moved or is unavailable');
+      const reference=validateTensors(registry.cas.get(m.parent),expert.tensors);
+      const activeTensors=validateTensors(payload,expert.tensors.filter(t=>t.trainable));
+      let norm=0;
+      for(const [k,t] of Object.entries(activeTensors))for(let i=0;i<t.data.length;i++)norm+=(t.data[i]-reference[k].data[i])**2;
+      if(!Number.isFinite(norm)||Math.sqrt(norm)>1024)fail('UPDATE_NORM_LIMIT','reference update exceeded its norm limit');
+      const dest=path.join(results,assignment+'.json');
+      if(fs.existsSync(dest)){
+        const receipt=JSON.parse(fs.readFileSync(dest,'utf8'));
+        if(receipt.sha256!==hash)fail('DUPLICATE_DIFFERENT','assignment already has a different result');
+        return receipt;
+      }
+      if(fs.readdirSync(results).length>=256)fail('RATE_LIMITED','reference result queue is full');
+      const receipt={status:'accepted',id:assignment,device,expert:expert.id,parent:m.parent,schema:m.schema,tokens,sha256:registry.cas.put(payload)};
+      const temporary=dest+'.'+randomUUID();
+      try{fs.writeFileSync(temporary,canonicalJSON(receipt),{flag:'wx',mode:0o600,flush:true});fs.linkSync(temporary,dest);}
+      catch(error){
+        if(error.code!=='EEXIST')throw error;
+        const prior=JSON.parse(fs.readFileSync(dest,'utf8'));
+        if(prior.sha256!==hash)fail('DUPLICATE_DIFFERENT','assignment already has a different result');
+        return prior;
+      }finally{fs.rmSync(temporary,{force:true});}
+      return receipt;
     }
   };
 }

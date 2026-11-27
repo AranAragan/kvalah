@@ -1,13 +1,17 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
+import {spawnSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
 import {openFusion} from './registry.mjs';
 import {aggregateExpert} from './aggregate.mjs';
-import {putArtifact,createGrantStore,signAssignment,createProvisionStore} from './provision.mjs';
+import {putArtifact,createGrantStore,signAssignment,createProvisionStore,validateAssignment} from './provision.mjs';
 import {estimateComposition} from './lab.mjs';
 import {sealFusionDataset,validateTrainShard} from './datasets.mjs';
-import {sha256} from '../protocol/hash.mjs';
+import {hashJSON,sha256} from '../protocol/hash.mjs';
 import {createClient} from '../worker/client.mjs';
 import {loadIdentity,fileSecretBox} from '../worker/identity.mjs';
+import {createOutbox} from '../worker/outbox.mjs';
 
 const [command,dir,...args]=process.argv.slice(2);
 const help='node compute/fusion/cli.mjs <command> <fusion-state-dir> [arguments]';
@@ -15,32 +19,72 @@ const readJson=file=>JSON.parse(fs.readFileSync(file,'utf8'));
 const writeJson=(file,v)=>fs.writeFileSync(file,JSON.stringify(v,null,2)+'\n',{flag:'wx'});
 const save=(file,b)=>fs.writeFileSync(file,b,{flag:'wx'});
 
-async function receiveAssignment(root,opts){
-  if(!opts.consent||!opts.identityDir||!opts.publicKey||!opts.maxTrafficBytes||!opts.cacheBytes)throw Error('existing device identity, pinned Fusion signing key, local consent and explicit budgets required');
+async function receiveAssignment(root,opts,{train=false}={}){
+  if(opts.consent!==true||!opts.identityDir||!opts.publicKey||!Number.isSafeInteger(opts.maxTrafficBytes)||opts.maxTrafficBytes<1||
+    !Number.isSafeInteger(opts.cacheBytes)||opts.cacheBytes<1)throw Error('existing device identity, pinned Fusion signing key, local consent and explicit budgets required');
   const identity=await loadIdentity(opts.identityDir,fileSecretBox);
   if(!identity)throw Error('device must already be paired and approved in Compute');
-  const output=path.resolve(opts.output);
-  if(fs.existsSync(output))throw Error('output directory already exists');
+  const output=train?null:path.resolve(opts.output);
+  if(output&&fs.existsSync(output))throw Error('output directory already exists');
+  if(train&&(!path.isAbsolute(opts.python??'')||!Number.isSafeInteger(opts.cpu_wall_limit_ms)||opts.cpu_wall_limit_ms<1000||opts.cpu_wall_limit_ms>120000))
+    throw Error('a trusted local Python and an explicit reference CPU wall-clock budget are required');
   let traffic=0;
   const client=createClient({endpoint:opts.endpoint,fingerprint:opts.fingerprint,identity,onTraffic:bytes=>{traffic+=bytes;}});
   try{
     await client.syncTime();
     const {envelope}=await client.get('/v2/fusion/assignment');
+    const manifest=validateAssignment(envelope,{device:identity.device_id,publicKey:opts.publicKey});
+    const scope=hashJSON([opts.publicKey,opts.endpoint,opts.fingerprint,identity.device_id]);
+    const outbox=train?createOutbox(path.join(root,'fusion-outbox')):null;
+    let entry=outbox?.all().find(r=>r.scope===scope&&r.task.task_id===manifest.id);
+    if(train&&!manifest.job)throw Error('assignment grants downloads only');
+    if(entry?.state==='accepted')return {assignment:manifest.id,receipt:entry.result,cached_result:true,traffic};
+    const budget=()=>opts.maxTrafficBytes-traffic;
+    if(train&&!entry&&os.freemem()<2*1024**3)throw Error('not enough free RAM for reference training');
     const cache=createProvisionStore({root:path.join(root,'provision'),quotaBytes:opts.cacheBytes});
-    const response=await cache.provision(envelope,{publicKey:opts.publicKey,device:identity.device_id,consented:true,
-      permit:()=>opts.maxTrafficBytes-traffic,fetchCoordinator:async(m,part,{signal,maxBytes})=>(await client.get(`/v2/fusion/parts/${m.id}/${part.sha256}`,{
-        signal,payload:true,json:false,maxPayload:maxBytes
-      })).bytes});
-    fs.mkdirSync(output,{recursive:true});
-    for(const item of response.items)save(path.join(output,item.sha256),item.bytes);
-    writeJson(path.join(output,'assignment.json'),envelope);
-    return {assignment:response.assignment,expert:response.expert,artifacts:response.items.map(({kind,sha256})=>({kind,sha256})),traffic};
+    if(!entry){
+      const response=await cache.provision(envelope,{publicKey:opts.publicKey,device:identity.device_id,consented:true,
+        permit:budget,fetchCoordinator:async(m,part,{signal,maxBytes})=>(await client.get(`/v2/fusion/parts/${m.id}/${part.sha256}`,{
+          signal,payload:true,json:false,maxPayload:maxBytes
+        })).bytes});
+      const work=train?fs.mkdtempSync(path.join(root,'reference-')):output;
+      try{
+        if(!train)fs.mkdirSync(work,{recursive:true});
+        for(const item of response.items){const file=path.join(work,item.sha256);if(!fs.existsSync(file))save(file,item.bytes);}
+        if(!train){
+          writeJson(path.join(work,'assignment.json'),envelope);
+          return {assignment:response.assignment,expert:response.expert,artifacts:response.items.map(({kind,sha256})=>({kind,sha256})),traffic};
+        }
+        writeJson(path.join(work,'job.json'),{artifacts:Object.fromEntries(response.items.map(a=>[a.kind,a.sha256])),training:manifest.job.training,
+          expert:manifest.job.spec});
+        const candidate=path.join(work,'candidate.safetensors');
+        const pythonPath=fileURLToPath(new URL('../python',import.meta.url));
+        const executed=spawnSync(opts.python,['-m','kvalah_compute.fusion_job',work,candidate],{
+          env:{...process.env,PYTHONPATH:pythonPath,HF_HUB_OFFLINE:'1',TRANSFORMERS_OFFLINE:'1',CUDA_VISIBLE_DEVICES:'',PYTHONDONTWRITEBYTECODE:'1'},
+          timeout:Math.min(opts.cpu_wall_limit_ms,Math.max(1,manifest.expires-Date.now())),encoding:'utf8',maxBuffer:64*1024,windowsHide:true
+        });
+        if(executed.status!==0)throw Error(executed.error?.message??executed.stderr.trim().slice(-512));
+        const stats=JSON.parse(executed.stdout),weights=fs.readFileSync(candidate);
+        if(stats.sha256!==sha256(weights)||stats.tokens!==manifest.job.tokens||weights.length>64*1024)throw Error('reference result failed checksum, size or token verification');
+        entry=outbox.put({task_id:manifest.id,lease_id:manifest.id},weights,{tokens:stats.tokens,seconds:stats.seconds,last_nll:stats.last_nll},{scope});
+      }finally{if(train){
+        // Only remove our three kinds of locally created transient files. The signed grant cannot
+        // control the directory name or the resolved root.
+        for(const file of fs.readdirSync(work))fs.unlinkSync(path.join(work,file));
+        fs.rmdirSync(work);
+      }}
+    }
+    const weights=outbox.bytes(entry.key),receipt=await client.put(`/v2/fusion/results/${manifest.id}?sha256=${entry.payload_sha256}&tokens=${entry.meta.tokens}`,weights,{payload:true,maxPayload:budget()});
+    if(receipt.sha256!==entry.payload_sha256||receipt.id!==manifest.id||receipt.status!=='accepted')throw Error('result acknowledgement does not match the outbox');
+    outbox.update(entry.key,{state:'accepted',result:receipt,closed_at:Date.now()});
+    return {assignment:manifest.id,receipt,training:entry.meta,traffic};
   }finally{client.close();}
 }
 
 async function main(){
   if(!command||!dir)throw Error(help);
   if(command==='worker-receive')return receiveAssignment(dir,readJson(args[0]));
+  if(command==='worker-train-reference')return receiveAssignment(dir,readJson(args[0]),{train:true});
   if(command==='estimate')return estimateComposition(readJson(args[0]));
   if(command==='grants-disable'){
     fs.rmSync(path.join(dir,'serve-grants'),{force:true});
@@ -80,18 +124,28 @@ async function main(){
       return {enabled:true,restart_coordinator:true};
     }
     if(command==='grant'){
-      const {device,expert,ttl,items,datasetManifest}=readJson(args[0]);
+      const {device,expert,ttl,items,datasetManifest,cpuReference}=readJson(args[0]);
       const current=registry.get(expert);
       const records=[putArtifact(registry.cas,'expert',registry.cas.get(current.checkpoint.hash),current.checkpoint.hash)];
       const manifest=fs.readFileSync(datasetManifest);
+      let referenceJob=null;
       for(const {kind,file,source} of items){
         if(kind==='expert')throw Error('the expert is provided from its registry checkpoint');
         if(fs.statSync(file).size>64*1024*1024)throw Error('artifact requires chunks under 64 MiB');
         const bytes=fs.readFileSync(file);
-        if(kind==='train')validateTrainShard(manifest,bytes,current.dataset_sha256);
+        if(kind==='train'){
+          validateTrainShard(manifest,bytes,current.dataset_sha256);
+          if(cpuReference){
+            const {rows}=JSON.parse(bytes.toString('utf8'));
+            const calls=current.training.local_steps*current.training.grad_accum;
+            const tokens=Array.from({length:calls},(_,i)=>rows[i%rows.length].target_mask.slice(1).filter(Boolean).length).reduce((a,b)=>a+b,0);
+            referenceJob={tokens};
+          }
+        }
         records.push(putArtifact(registry.cas,kind,bytes,source));
       }
-      const envelope=signAssignment(registry,{device,expert:current,artifacts:records,ttl});
+      if(cpuReference&&!referenceJob)throw Error('reference job requires a Train shard');
+      const envelope=signAssignment(registry,{device,expert:current,artifacts:records,ttl,referenceJob});
       return {id:createGrantStore(registry,path.join(dir,'grants')).grant(envelope),publicKey:registry.publicKey};
     }
     if(command==='revoke-grant'){
