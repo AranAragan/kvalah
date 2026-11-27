@@ -614,8 +614,8 @@
       row(btn('fusion-worker-toggle',S.policy?.fusion_training?fx('Остановить участие','Stop participation'):fx('Разрешить задания Fusion','Allow Fusion jobs'))))+labDevices();
     if(fusionTab==='models'){
       const available=experts.filter(e=>e.checkpoint?.assessment?.passed&&['VALIDATED','PUBLISHED'].includes(e.status));
-      const draft=available.length?panel(fx('Новая композиция','New composition'),'<fieldset class="kc-field"><legend>'+esc(fx('Проверенные эксперты','Validated experts'))+'</legend>'+
-        available.map(e=>'<label class="kc-check"><input id="fxExpert_'+esc(e.id)+'" type="checkbox" data-fusion-expert="'+esc(e.id)+'"> '+esc(e.name)+'</label>').join('')+'</fieldset>'+
+      const draft=available.length?panel(fx('Новая композиция','New composition'),'<fieldset class="kc-field kc-fusion-choices"><legend>'+esc(fx('Проверенные эксперты','Validated experts'))+'</legend>'+
+        available.map(e=>'<label class="kc-check"><input id="fxExpert_'+esc(e.id)+'" type="checkbox" data-fusion-expert="'+esc(e.id)+'"><span>'+esc(e.name)+'</span></label>').join('')+'</fieldset>'+
         '<div class="kc-experience-grid">'+field('fxComposeStart',fx('Начало Loop','Loop start'),0,{type:'number'})+field('fxComposeEnd',fx('Конец Loop','Loop end'),Math.min(base?.layers??1,4),{type:'number'})+
         choose('fxComposePasses',fx('Проходы','Passes'),[[1,1],[2,2],[3,3],[4,4]])+
         choose('fxRouterMode',fx('Маршрутизация','Routing'),[['uniform',fx('Равномерная','Uniform')],['token',fx('Обучаемая','Learned')]])+

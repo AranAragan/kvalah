@@ -82,6 +82,8 @@ try{
   const completed=(await state()).builder.runs[0];
   assert.equal(completed.round,2);
   assert.equal(completed.leases.filter(x=>x.state==='committed').length,2);
+  await app.send('Page.bringToFront');
+  await app.evaluate('document.activeElement?.blur(); window.kvCompute.refresh(true)');
   await until(()=>app.evaluate('Boolean(document.querySelector("[data-fusion-status=VALIDATED],[data-fusion-status=REJECTED]"))'),'trusted result rendered');
   await app.shot(path.join(output,'fusion-evaluated.png'));
   assert.deepEqual(app.errors,[]);

@@ -30,6 +30,8 @@ At a 128-token context, the MSI finished five actual optimizer steps for FFA‑L
 
 A subsequent serial process trial completed five Router and five Loop optimizer steps on the MSI. Reload then exposed MistralCommon's mandatory serving-mode model identifier. The dev.3 inference path uses the same central user-ended prefix encoder as dataset preparation. The native tokenizer regression covers English and Russian one-turn and multi-turn prefixes.
 
+With the fix, the MSI repeated all five training stages and started separate fresh inference processes. Router and Loop each saw 317 supervised tokens over five optimizer steps. The maximum observed gradient norms were 0.031951 and 0.015952, respectively. Both inference processes loaded the saved parameter hashes. The same prompt produced eight matching greedy tokens with and without the logical-layer cache. This is a functional comparison at 128-token context. The measured wall times include model load and checks. [Raw CUDA measurements](measurements/dev3-cuda.jsonl)
+
 ## Reproduction
 
 ```powershell

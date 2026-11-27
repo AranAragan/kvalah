@@ -109,6 +109,13 @@ html[data-theme=dark] .kc-lab-tabs [aria-current=page] { color:var(--accent); }
 #computeConsent .dialog-heading { gap:12px; margin-bottom:14px; }
 #computeConsent .kc-row-actions { justify-content:flex-end; }
 #computeConsent .kc-check { margin:10px 0; display:flex; }
+fieldset.kc-field.kc-fusion-choices {
+  display:grid;
+  grid-template-columns:repeat(auto-fit,minmax(min(12rem,100%),1fr));
+}
+.kc-fusion-choices .kc-check { align-items:center; min-width:0; }
+.kc-fusion-choices .kc-check input[type="checkbox"] { width:auto; margin:0; padding:0; flex:none; }
+.kc-fusion-choices .kc-check span { overflow-wrap:anywhere; }
 [data-act=lab-nav]:focus-visible,.kc-profile:focus-visible,.kc-panel summary:focus-visible,#computeConsent summary:focus-visible { outline:2px solid var(--accent); outline-offset:4px; }
 body.compute-open #openCompute { background:var(--accent-soft); color:var(--text); border-radius:8px; }
 @container compute (max-width:780px) {
